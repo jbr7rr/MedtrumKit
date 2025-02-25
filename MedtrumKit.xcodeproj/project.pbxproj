@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3E1390102D6E534C00A146C1 /* BluetoothManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E13900F2D6E534600A146C1 /* BluetoothManager.swift */; };
+		3E1390122D6E59B500A146C1 /* MedtrumPumpState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1390112D6E59B000A146C1 /* MedtrumPumpState.swift */; };
+		3E1390152D6E5C5E00A146C1 /* ScanResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1390142D6E5C5200A146C1 /* ScanResult.swift */; };
+		3E1390172D6E5EA000A146C1 /* ConnectResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1390162D6E5E9A00A146C1 /* ConnectResult.swift */; };
+		3E1390192D6E5F3600A146C1 /* PeripheralManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1390182D6E5F2B00A146C1 /* PeripheralManager.swift */; };
 		3E767D022D67B315004B1971 /* LocalizedString.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E767CFD2D67B192004B1971 /* LocalizedString.swift */; };
 		3E767D032D67B319004B1971 /* OSLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E767CE42D67AF35004B1971 /* OSLog.swift */; };
 		3E767D042D67B3FC004B1971 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 3E767CFB2D67B13C004B1971 /* Localizable.strings */; };
@@ -60,6 +65,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		3E13900F2D6E534600A146C1 /* BluetoothManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BluetoothManager.swift; sourceTree = "<group>"; };
+		3E1390112D6E59B000A146C1 /* MedtrumPumpState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedtrumPumpState.swift; sourceTree = "<group>"; };
+		3E1390142D6E5C5200A146C1 /* ScanResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanResult.swift; sourceTree = "<group>"; };
+		3E1390162D6E5E9A00A146C1 /* ConnectResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectResult.swift; sourceTree = "<group>"; };
+		3E1390182D6E5F2B00A146C1 /* PeripheralManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeripheralManager.swift; sourceTree = "<group>"; };
 		3E767CE22D67ADFA004B1971 /* MedtrumKitPumpManager+UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MedtrumKitPumpManager+UI.swift"; sourceTree = "<group>"; };
 		3E767CE42D67AF35004B1971 /* OSLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSLog.swift; sourceTree = "<group>"; };
 		3E767CE52D67B13C004B1971 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = ../Localization/ar.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -132,6 +142,15 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		3E1390132D6E5C4900A146C1 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				3E1390162D6E5E9A00A146C1 /* ConnectResult.swift */,
+				3E1390142D6E5C5200A146C1 /* ScanResult.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
 		3E767CE12D67AD91004B1971 /* MedtrumKitUI */ = {
 			isa = PBXGroup;
 			children = (
@@ -164,6 +183,10 @@
 		B7189AE62C15A52800703DE2 /* PumpManager */ = {
 			isa = PBXGroup;
 			children = (
+				3E1390132D6E5C4900A146C1 /* Models */,
+				3E1390112D6E59B000A146C1 /* MedtrumPumpState.swift */,
+				3E13900F2D6E534600A146C1 /* BluetoothManager.swift */,
+				3E1390182D6E5F2B00A146C1 /* PeripheralManager.swift */,
 				B7189AE52C15A52800703DE2 /* MedtrumPumpManager.swift */,
 			);
 			path = PumpManager;
@@ -420,14 +443,19 @@
 			buildActionMask = 2147483647;
 			files = (
 				3E767D562D67BCD6004B1971 /* MedtrumKitUICoordinator.swift in Sources */,
+				3E1390172D6E5EA000A146C1 /* ConnectResult.swift in Sources */,
 				3E98B8512D6BB2BC00DD5123 /* TimeInterval.swift in Sources */,
 				3E767D022D67B315004B1971 /* LocalizedString.swift in Sources */,
 				3E767D522D67BC2E004B1971 /* MedtrumKitPumpManager+UI.swift in Sources */,
+				3E1390192D6E5F3600A146C1 /* PeripheralManager.swift in Sources */,
+				3E1390102D6E534C00A146C1 /* BluetoothManager.swift in Sources */,
 				3E767D032D67B319004B1971 /* OSLog.swift in Sources */,
+				3E1390122D6E59B500A146C1 /* MedtrumPumpState.swift in Sources */,
 				B7D3A8F12C14F0EF002EE003 /* MedtrumKitPlugin.swift in Sources */,
 				B7189AE72C15A52800703DE2 /* MedtrumPumpManager.swift in Sources */,
 				3E767D532D67BC33004B1971 /* MedtrumHUDProvider.swift in Sources */,
 				B7D3A8D52C148CC4002EE003 /* MedtrumKit.docc in Sources */,
+				3E1390152D6E5C5E00A146C1 /* ScanResult.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

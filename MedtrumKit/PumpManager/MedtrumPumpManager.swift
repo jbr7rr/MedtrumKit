@@ -6,12 +6,26 @@ public class MedtrumPumpManager: DeviceManager {
     public static let pluginIdentifier = "Medtrum"
     public let localizedTitle = LocalizedString("Medtrum", comment: "Generic title of the Medtrum pump manager")
     public let managerIdentifier: String = "MedtrumKit"
-    public var rawState: RawStateValue
+
     private let log = MedtrumLogger(category: "MedtrumPumpManager")
     public let pumpDelegate = WeakSynchronizedDelegate<PumpManagerDelegate>()
+    
+    var state: MedtrumPumpState
+    public var rawState: PumpManager.RawStateValue {
+        state.rawValue
+    }
+    
+    private let bluetooth: BluetoothManager
 
-    public required init?(rawState _: RawStateValue) {
-        nil
+    init(state: MedtrumPumpState) {
+        self.state = state
+        self.bluetooth = BluetoothManager()
+        
+        self.bluetooth.pumpManager = self
+    }
+    
+    public required convenience init?(rawState: RawStateValue) {
+        self.init(state: MedtrumPumpState(rawValue: rawState))
     }
 
     public var isOnboarded: Bool {
@@ -67,7 +81,9 @@ public class MedtrumPumpManager: DeviceManager {
         TimeInterval(minutes: 30)
     }
 
-    public var debugDescription: String
+    public var debugDescription: String {
+        ""
+    }
 
     public func acknowledgeAlert(alertIdentifier _: LoopKit.Alert.AlertIdentifier, completion: @escaping ((any Error)?) -> Void) {
         completion(nil)
