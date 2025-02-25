@@ -15,6 +15,8 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     var manager: CBCentralManager!
     let managerQueue = DispatchQueue(label: "com.nightscout.MedtrumKit.bluetoothManagerQueue", qos: .unspecified)
     
+    private var peripheralManager: PeripheralManager?
+    
     var scanCompletion: ((ScanResult) -> Void)?
     var connectCompletion: ((ConnectResult) -> Void)?
     
@@ -76,7 +78,14 @@ extension BluetoothManager {
     }
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        log.info("Connected to pump!")
+        log.info("Connected to pump: \(peripheral.name ?? "<NO_NAME>")!")
+        
+        guard let completion = connectCompletion, let pumpManager = pumpManager else {
+            return
+        }
+        
+        peripheralManager = PeripheralManager(peripheral, self, pumpManager, completion)
+        peripheral.discoverServices([PeripheralManager.SERVICE_UUID])
     }
 
     func centralManager(_: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
