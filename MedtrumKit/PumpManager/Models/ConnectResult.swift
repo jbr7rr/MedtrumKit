@@ -13,4 +13,5 @@ enum ConnectResult {
 enum ConnectError {
     case failedToDiscoverServices(localizedError: String)
     case failedToDiscoverCharacteristics(localizedError: String)
+    case failedToEnableNotify(localizedError: String)
 }

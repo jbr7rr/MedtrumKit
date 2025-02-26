@@ -74,7 +74,14 @@ extension BluetoothManager {
             return
         }
         
-        scanCompletion?(.success(peripheral: peripheral))
+        // TODO: Validate processing advertismentData for Serial Number
+        let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey]
+        guard let manufacturerData = manufacturerData as? Data, manufacturerData.count >= 5 else {
+            log.warning("No ManufacturerData or too short - " + advertisementData.keys.joined(separator: ", "))
+            return
+        }
+        
+        scanCompletion?(.success(peripheral: peripheral, pumpSN: manufacturerData[0...4], deviceType: manufacturerData[4], version: manufacturerData[5]))
     }
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {

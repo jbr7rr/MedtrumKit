@@ -23,6 +23,8 @@ class PeripheralManager : NSObject {
     private static let CONFIG_UUID = CBUUID(string: "00002902-0000-1000-8000-00805f9b34fb")
     private var configCharacteristic: CBCharacteristic!
     
+    private var writeSequence: UInt8 = 0
+    
     public init(_ peripheral: CBPeripheral, _ bluetoothManager: BluetoothManager, _ pumpManager: MedtrumPumpManager,_ completion: @escaping (ConnectResult) -> Void) {
         self.connectedDevice = peripheral
         self.bluetoothManager = bluetoothManager
@@ -33,13 +35,25 @@ class PeripheralManager : NSObject {
         
         peripheral.delegate = self
     }
+    
+    func writePacket(_ packet: any MedtrumBasePacket) {
+        let packages = WritePacket.encode(packet, sequenceNumber: self.writeSequence)
+        self.writeSequence = UInt8(self.writeSequence + 1)
+        
+        for package in packages {
+            self.connectedDevice.writeValue(package, for: self.writeCharacteristic, type: .withResponse)
+        }
+        
+        
+        // TODO: Add async flow to wait for response
+    }
 }
 
 extension PeripheralManager : CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard error == nil else {
-            log.error("\(error!.localizedDescription)")
-            completion?(.failure(error: .failedToDiscoverServices(localizedError: error?.localizedDescription ?? "")))
+        if let error = error {
+            log.error("\(error.localizedDescription)")
+            completion?(.failure(error: .failedToDiscoverServices(localizedError: error.localizedDescription)))
             return
         }
         
@@ -55,9 +69,9 @@ extension PeripheralManager : CBPeripheralDelegate {
     }
     
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        guard error == nil else {
-            log.error("\(error!.localizedDescription)")
-            completion?(.failure(error: .failedToDiscoverCharacteristics(localizedError: error?.localizedDescription ?? "")))
+        if let error = error {
+            log.error("\(error.localizedDescription)")
+            completion?(.failure(error: .failedToDiscoverCharacteristics(localizedError: error.localizedDescription)))
             return
         }
         
@@ -84,7 +98,22 @@ extension PeripheralManager : CBPeripheralDelegate {
         }
         
         log.info("Notify enabled and ready to start auth flow!")
-        // TODO: Send AuthPacket
+        writePacket(AuthorizePacket(pumpSN: self.pumpManager.state.pumpSN, sessionToken: self.pumpManager.state.sessionToken))
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            log.error("\(error.localizedDescription)")
+            if let connectCompletion = self.completion {
+                connectCompletion(.failure(error: .failedToEnableNotify(localizedError: error.localizedDescription)))
+            }
+            return
+        }
         
+        guard let data = characteristic.value else {
+            return
+        }
+        
+        // TODO: Process message
     }
 }
