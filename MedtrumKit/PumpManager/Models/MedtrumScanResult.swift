@@ -7,12 +7,12 @@
 
 import CoreBluetooth
 
-enum ScanResult {
-    case failure(error: ScanError)
+enum MedtrumScanResult {
     case success(peripheral: CBPeripheral, pumpSN: Data, deviceType: UInt8, version: UInt8)
+    case failure(error: MedtrumScanError)
 }
 
-enum ScanError {
+enum MedtrumScanError {
     case invalidBluetoothState(state: CBManagerState)
     case alreadyScanning
 }

@@ -5,13 +5,14 @@
 //  Created by Bastiaan Verhaar on 25/02/2025.
 //
 
-enum ConnectResult {
+enum MedtrumConnectResult {
     case success
-    case failure(error: ConnectError)
+    case failure(error: MedtrumConnectError)
 }
 
-enum ConnectError {
+enum MedtrumConnectError {
     case failedToDiscoverServices(localizedError: String)
     case failedToDiscoverCharacteristics(localizedError: String)
     case failedToEnableNotify(localizedError: String)
+    case failedToCompleteAuthorizationFlow(localizedError: String)
 }

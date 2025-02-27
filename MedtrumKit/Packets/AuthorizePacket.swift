@@ -34,7 +34,7 @@ class AuthorizePacket: MedtrumBasePacket {
         return output
     }
     
-    static func parseResponse(data: Data) throws -> AuthorizeResponse {
+    static func parseResponse(data: Data) -> AuthorizeResponse {
         return AuthorizeResponse(
             deviceType: data[7],
             swVersion: "\(data[8]).\(data[9]).\(data[10])"

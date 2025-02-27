@@ -17,8 +17,8 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     
     private var peripheralManager: PeripheralManager?
     
-    var scanCompletion: ((ScanResult) -> Void)?
-    var connectCompletion: ((ConnectResult) -> Void)?
+    var scanCompletion: ((MedtrumScanResult) -> Void)?
+    var connectCompletion: ((MedtrumConnectResult) -> Void)?
     
     override init() {
         super.init()
@@ -28,7 +28,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         }
     }
     
-    func startScan(_ completion: @escaping (_ result: ScanResult) -> Void) {
+    func startScan(_ completion: @escaping (_ result: MedtrumScanResult) -> Void) {
         guard manager.state == .poweredOn else {
             completion(.failure(error: .invalidBluetoothState(state: manager.state)))
             return
@@ -45,7 +45,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         log.info("Started scanning")
     }
     
-    func connect(peripheral: CBPeripheral, _ completion: @escaping (ConnectResult) -> Void) {
+    func connect(peripheral: CBPeripheral, _ completion: @escaping (MedtrumConnectResult) -> Void) {
         if manager.isScanning {
             manager.stopScan()
             scanCompletion = nil

@@ -11,5 +11,5 @@ protocol MedtrumBasePacket {
     var commandType: UInt8 { get }
     
     func getRequestBytes() -> Data
-    static func parseResponse(data: Data) throws -> T
+    static func parseResponse(data: Data) -> T
 }

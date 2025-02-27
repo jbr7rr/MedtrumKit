@@ -1,0 +1,25 @@
+//
+//  SetTimePacket.swift
+//  MedtrumKit
+//
+//  Created by Bastiaan Verhaar on 27/02/2025.
+//
+
+struct SetTimePacketResponse {}
+
+class SetTimePacket : MedtrumBasePacket {
+    typealias T = SetTimePacketResponse
+    
+    let commandType: UInt8 = CommandType.SET_TIME
+    
+    func getRequestBytes() -> Data {
+        var output = Data([2])
+        output.append(Date.toMedtrumSeconds())
+        
+        return output
+    }
+    
+    static func parseResponse(data: Data) -> SetTimePacketResponse {
+        return SetTimePacketResponse()
+    }
+}
