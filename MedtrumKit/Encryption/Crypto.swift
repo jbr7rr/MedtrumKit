@@ -6,13 +6,13 @@
 //
 
 class Crypto {
-    private static let MEDTRUM_CIPHER: UInt64 = 1344751489
+    private static let MEDTRUM_CIPHER: Int64 = 1344751489
     
     static func genKey(_ pumpSN: Data) -> Data {
-        let sn = pumpSN.toUInt64()
+        let sn = pumpSN.toInt64()
         let key = randomGen(randomGen(MEDTRUM_CIPHER ^ sn))
         
-        return Data()
+        return simpleCrypt(key).toData(length: 4)
     }
     
     static func genSessionToken() -> Data {
@@ -25,19 +25,19 @@ class Crypto {
         return Data(bytes)
     }
     
-    static func simpleDecrypt(_ input: UInt64) -> UInt64 {
-        var temp = input
-        for i in 0..<32 {
-            temp = rotateRight(changeByTable(temp, RIJNDEAL_S_BOX), 32, 1)
+    static func simpleDecrypt(_ input: Data) -> Data {
+        var temp = input.toInt64()
+        for _ in 0..<32 {
+            temp = rotateRight(changeByTable(temp, RIJNDEAL_INVERSE_S_BOX), 32, 1)
         }
         
-        return temp ^ MEDTRUM_CIPHER
+        return (temp ^ MEDTRUM_CIPHER).toData(length: 4)
     }
     
-    private static func randomGen(_ input: UInt64) -> UInt64 {
-        let a: UInt64 = 16807
-        let q: UInt64 = 127773
-        let r: UInt64 = 2836
+    private static func randomGen(_ input: Int64) -> Int64 {
+        let a: Int64 = 16807
+        let q: Int64 = 127773
+        let r: Int64 = 2836
 
         let tmp1 = input / q
         var ret = (input - (tmp1 * q)) * a - (tmp1 * r)
@@ -48,23 +48,23 @@ class Crypto {
         return ret
     }
     
-    private static func simpleCrypt(_ input: UInt64) -> UInt64 {
+    private static func simpleCrypt(_ input: Int64) -> Int64 {
         var temp = input ^ MEDTRUM_CIPHER
-        for i in 0..<32 {
+        for _ in 0..<32 {
             temp = changeByTable(rotateLeft(temp, 32, 1), RIJNDEAL_S_BOX)
         }
         return temp
     }
     
-    private static func rotateLeft(_ x: UInt64, _ s: UInt8, _ n: UInt8) -> UInt64 {
+    private static func rotateLeft(_ x: Int64, _ s: Int8, _ n: Int8) -> Int64 {
         return (x << n) | (x >> (s - n))
     }
 
-    private static func rotateRight(_ x: UInt64, _ s: UInt8, _ n: UInt8) -> UInt64 {
-        return UInt64(x >> n | (x << (s - n)))
+    private static func rotateRight(_ x: Int64, _ s: Int8, _ n: Int8) -> Int64 {
+        return Int64(x >> n | (x << (s - n)))
     }
     
-    private static func changeByTable(_ input: UInt64, _ tableData: [UInt8]) -> UInt64 {
+    private static func changeByTable(_ input: Int64, _ tableData: [UInt8]) -> Int64 {
         let value = input.toData(length: 4)
         var result = Data(count: 4)
         
@@ -72,7 +72,7 @@ class Crypto {
             result[i] = tableData[Int(value[i])]
         }
         
-        return result.toUInt64()
+        return result.toInt64()
     }
     
     

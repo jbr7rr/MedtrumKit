@@ -24,9 +24,9 @@ class PeripheralManager : NSObject {
     private var configCharacteristic: CBCharacteristic!
     
     private var writeSequence: UInt8 = 0
-    private var readPacket: ReadPacket?
+    private var currentPacket: (any MedtrumBasePacketProtocol)?
     
-    private var writeQueue: Dictionary<UInt8, CheckedContinuation<MedtrumWriteResult, any Error>> = [:]
+    private var writeQueue: Dictionary<UInt8, CheckedContinuation<MedtrumWriteResult<Any>, Never>> = [:]
     private var writeTimeoutTask: Task<(), Never>?
     private let writeSemaphore = DispatchSemaphore(value: 1)
     
@@ -41,14 +41,15 @@ class PeripheralManager : NSObject {
         peripheral.delegate = self
     }
     
-    func writePacket(_ packet: any MedtrumBasePacket) async throws -> MedtrumWriteResult {
-        return try await withCheckedThrowingContinuation { continuation in
+    func writePacket(_ packet: any MedtrumBasePacketProtocol) async -> MedtrumWriteResult<Any> {
+        return await withCheckedContinuation { continuation in
             // Wait for the other write to complete...
             self.writeSemaphore.wait()
             
             writeQueue[packet.commandType] = continuation
+            currentPacket = packet
             
-            let packages = WritePacket.encode(packet, sequenceNumber: self.writeSequence)
+            let packages = packet.encode(sequenceNumber: self.writeSequence)
             self.writeSequence = UInt8(self.writeSequence + 1)
             
             for package in packages {
@@ -83,174 +84,131 @@ extension PeripheralManager {
     
     // Connect step 1
     private func doAuthorize() async {
-        do {
-            let authData = try await writePacket(
-                AuthorizePacket(pumpSN: self.pumpManager.state.pumpSN, sessionToken: self.pumpManager.state.sessionToken)
-            )
+        let authData = await writePacket(
+            AuthorizePacket(pumpSN: self.pumpManager.state.pumpSN, sessionToken: self.pumpManager.state.sessionToken)
+        )
+        
+        switch authData {
+        case .failure(let error):
+            log.error("Failed to complete authorization flow: \(error.toString())")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            break
             
-            switch authData {
-            case .failure(let error):
-                log.error("Failed to complete authorization flow: \(error.toString())")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
-                break
-                
-            case .success(let data):
-                let authResponse = AuthorizePacket.parseResponse(data: data)
-                pumpManager.state.deviceType = authResponse.deviceType
-                pumpManager.state.swVersion = authResponse.swVersion
-                
-                await getDeviceType()
+        case .success(let data):
+            guard let authResponse = data as? AuthorizeResponse else {
+                log.error("Failed to complete authorization flow: invalid response")
+                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: "invalid response")))
+                return
             }
-        } catch {
-            let localizedError = "Failed to write authorization packet: \(error.localizedDescription)"
-            log.error(localizedError)
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: localizedError)))
+            
+            pumpManager.state.deviceType = authResponse.deviceType
+            pumpManager.state.swVersion = authResponse.swVersion
+            
+            await getTime()
         }
     }
     
     // Connect step 2
-    private func getDeviceType() async {
-        do {
-            let deviceTypeData = try await writePacket(GetDeviceTypePacket())
+    private func getTime() async {
+        let timeData = await writePacket(GetTimePacket())
+        
+        switch timeData {
+        case .failure(let error):
+            log.error("Failed to get time: \(error.toString())")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            break
             
-            switch deviceTypeData {
-            case .failure(let error):
-                log.error("Failed to get device type: \(error.toString())")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
-                break
-                
-            case .success(let data):
-                await getTime()
+        case .success(let data):
+            guard let timeResponse = data as? GetTimePacketResponse else {
+                log.error("Failed to get time: invalid response")
+                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: "invalid response")))
+                return
             }
-        } catch {
-            let localizedError = "Failed to write GetDeviceType packet: \(error.localizedDescription)"
-            log.error(localizedError)
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: localizedError)))
+            
+            // Allow 10sec time drift
+            if abs(Date.now.timeIntervalSince1970 - timeResponse.time.timeIntervalSince1970) < .seconds(10) {
+                pumpManager.state.pumpTime = timeResponse.time
+                pumpManager.state.pumpTimeSyncedAt = Date.now
+                
+                await synchronize()
+            } else {
+                await setTime()
+            }
+        }
+    }
+    
+    // Connect step 2.1 -> Fix timedrift
+    private func setTime() async {
+        let timeData = await writePacket(SetTimePacket())
+        
+        switch timeData {
+        case .failure(let error):
+            log.error("Failed to set time: \(error.toString())")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            break
+            
+        case .success:
+            log.info("Successfully set time")
+            await setTimeZone()
+        }
+    }
+    
+    // Connect step 2.2 -> Fix timezone
+    private func setTimeZone() async {
+        let timeZoneData = await writePacket(SetTimeZonePacket())
+        
+        switch timeZoneData {
+        case .failure(let error):
+            log.error("Failed to set time: \(error.toString())")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            break
+            
+        case .success:
+            log.info("Successfully set time")
+            
+            pumpManager.state.pumpTime = Date.now
+            pumpManager.state.pumpTimeSyncedAt = Date.now
+            
+            await synchronize()
         }
     }
     
     // Connect step 3
-    private func getTime() async {
-        do {
-            let timeData = try await writePacket(GetTimePacket())
-            
-            switch timeData {
-            case .failure(let error):
-                log.error("Failed to get time: \(error.toString())")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
-                break
-                
-            case .success(let data):
-                let timeResponse = GetTimePacket.parseResponse(data: data)
-                
-                // Allow 10sec time drift
-                if abs(Date.now.timeIntervalSince1970 - timeResponse.time.timeIntervalSince1970) < .seconds(10) {
-                    pumpManager.state.pumpTime = timeResponse.time
-                    pumpManager.state.pumpTimeSyncedAt = Date.now
-                    
-                    await synchronize()
-                } else {
-                    await setTime()
-                }
-            }
-        } catch {
-            let localizedError = "Failed to write GetTime packet: \(error.localizedDescription)"
-            log.error(localizedError)
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: localizedError)))
-        }
-    }
-    
-    // Connect step 3.1 -> Fix timedrift
-    private func setTime() async {
-        do {
-            let timeData = try await writePacket(SetTimePacket())
-            
-            switch timeData {
-            case .failure(let error):
-                log.error("Failed to set time: \(error.toString())")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
-                break
-                
-            case .success(let data):
-                log.info("Successfully set time")
-                await setTimeZone()
-            }
-        } catch {
-            let localizedError = "Failed to write SetTime packet: \(error.localizedDescription)"
-            log.error(localizedError)
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: localizedError)))
-        }
-    }
-    
-    // Connect step 3.2 -> Fix timezone
-    private func setTimeZone() async {
-        do {
-            let timeZoneData = try await writePacket(SetTimeZonePacket())
-            
-            switch timeZoneData {
-            case .failure(let error):
-                log.error("Failed to set time: \(error.toString())")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
-                break
-                
-            case .success(let data):
-                log.info("Successfully set time")
-                
-                pumpManager.state.pumpTime = Date.now
-                pumpManager.state.pumpTimeSyncedAt = Date.now
-                
-                await synchronize()
-            }
-        } catch {
-            let localizedError = "Failed to write SetTime packet: \(error.localizedDescription)"
-            log.error(localizedError)
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: localizedError)))
-        }
-    }
-    
-    // Connect step 4
     private func synchronize() async {
-        do {
-            let syncData = try await writePacket(SynchronizePacket())
+        let syncData = await writePacket(SynchronizePacket())
+        
+        switch syncData {
+        case .failure(let error):
+            log.error("Failed to synchronize: \(error.toString())")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            break
             
-            switch syncData {
-            case .failure(let error):
-                log.error("Failed to synchronize: \(error.toString())")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
-                break
-                
-            case .success(let data):
-                let syncResponse = SynchronizePacket.parseResponse(data: Data(data))
-                pumpManager.state.pumpState = syncResponse.state
-                
-                await subscribe()
+        case .success(let data):
+            guard let syncResponse = data as? SynchronizePacketResponse else {
+                log.error("Failed to Synchronize packet: invalid response")
+                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: "invalid response")))
+                return
             }
-        } catch {
-            let localizedError = "Failed to write Synchronize packet: \(error.localizedDescription)"
-            log.error(localizedError)
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: localizedError)))
+
+            pumpManager.state.pumpState = syncResponse.state
+            // TODO: Map other data here
+            await subscribe()
         }
     }
     
-    // Connect step 5 (last)
+    // Connect step 4 (last)
     private func subscribe() async {
-        do {
-            let subscribeData = try await writePacket(SubscribePacket())
+        let subscribeData = await writePacket(SubscribePacket())
+        
+        switch subscribeData {
+        case .failure(let error):
+            log.error("Failed to subscribe: \(error.toString())")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            break
             
-            switch subscribeData {
-            case .failure(let error):
-                log.error("Failed to subscribe: \(error.toString())")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
-                break
-                
-            case .success(let data):
-                log.info("Connected to pump!")
-                completion?(.success)
-            }
-        } catch {
-            let localizedError = "Failed to write Synchronize packet: \(error.localizedDescription)"
-            log.error(localizedError)
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: localizedError)))
+        case .success:
+            log.info("Connected to pump!")
+            completion?(.success)
         }
     }
 }
@@ -333,25 +291,35 @@ extension PeripheralManager : CBPeripheralDelegate {
         }
         
         // Processing data
-        if let readPacket = self.readPacket {
-            readPacket.addData(data)
-        } else {
-            readPacket = ReadPacket(data)
+        guard var packet = self.currentPacket else {
+            // No packet available to validate against
+            return
         }
         
-        guard let readPacket = readPacket, readPacket.isComplete else {
+        packet.decode(data)
+        self.currentPacket = packet
+
+        guard packet.isComplete else {
             // Wait for more data
             return
         }
         
-        guard let writeCallback = writeQueue[readPacket.commandType] else {
+        guard let writeCallback = writeQueue[packet.commandType] else {
             // Timeout is hit...
+            self.currentPacket = nil
             self.writeSemaphore.signal()
             return
         }
         
-        writeCallback.resume(returning: .success(data: readPacket.totalData))
-        writeQueue[readPacket.commandType] = nil
+        if packet.failed {
+            writeCallback.resume(returning: .failure(error: .invalidResponse))
+        } else {
+            writeCallback.resume(returning: .success(data: packet.parseResponse()))
+        }
+        
+        
+        self.writeQueue[packet.commandType] = nil
+        self.currentPacket = nil
         self.writeSemaphore.signal()
     }
 }

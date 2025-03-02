@@ -9,7 +9,7 @@ struct GetTimePacketResponse {
     let time: Date
 }
 
-class GetTimePacket : MedtrumBasePacket {
+class GetTimePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = GetTimePacketResponse
     
     let commandType: UInt8 = CommandType.GET_TIME
@@ -18,8 +18,8 @@ class GetTimePacket : MedtrumBasePacket {
         return Data()
     }
     
-    static func parseResponse(data: Data) -> GetTimePacketResponse {
-        let secondsPassed = data[6..<10].toUInt64()
+    func parseResponse() -> GetTimePacketResponse {
+        let secondsPassed = totalData[6..<10].toUInt64()
         return GetTimePacketResponse(
             time: Date.fromMedtrumSeconds(secondsPassed)
         )

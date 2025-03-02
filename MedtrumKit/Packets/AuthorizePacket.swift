@@ -10,7 +10,7 @@ struct AuthorizeResponse {
     let swVersion: String
 }
 
-class AuthorizePacket: MedtrumBasePacket {
+class AuthorizePacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = AuthorizeResponse
     
     let commandType: UInt8 = CommandType.AUTH_REQ
@@ -34,10 +34,10 @@ class AuthorizePacket: MedtrumBasePacket {
         return output
     }
     
-    static func parseResponse(data: Data) -> AuthorizeResponse {
+    func parseResponse() -> AuthorizeResponse {
         return AuthorizeResponse(
-            deviceType: data[7],
-            swVersion: "\(data[8]).\(data[9]).\(data[10])"
+            deviceType: totalData[7],
+            swVersion: "\(totalData[8]).\(totalData[9]).\(totalData[10])"
         )
     }
 }

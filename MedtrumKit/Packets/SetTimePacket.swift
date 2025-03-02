@@ -7,7 +7,7 @@
 
 struct SetTimePacketResponse {}
 
-class SetTimePacket : MedtrumBasePacket {
+class SetTimePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = SetTimePacketResponse
     
     let commandType: UInt8 = CommandType.SET_TIME
@@ -19,7 +19,7 @@ class SetTimePacket : MedtrumBasePacket {
         return output
     }
     
-    static func parseResponse(data: Data) -> SetTimePacketResponse {
+    func parseResponse() -> SetTimePacketResponse {
         return SetTimePacketResponse()
     }
 }

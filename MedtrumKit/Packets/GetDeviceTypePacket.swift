@@ -10,7 +10,7 @@ struct GetDeviceTypeResponse {
     let deviceSN: Data
 }
 
-class GetDeviceTypePacket: MedtrumBasePacket {
+class GetDeviceTypePacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = GetDeviceTypeResponse
     let commandType: UInt8 = CommandType.GET_DEVICE_TYPE
     
@@ -18,10 +18,10 @@ class GetDeviceTypePacket: MedtrumBasePacket {
         return Data()
     }
     
-    static func parseResponse(data: Data) -> GetDeviceTypeResponse {
+    func parseResponse() -> GetDeviceTypeResponse {
         return GetDeviceTypeResponse(
-            deviceType: data[6],
-            deviceSN: data[7..<11]
+            deviceType: totalData[6],
+            deviceSN: totalData[7..<11]
         )
     }
 }

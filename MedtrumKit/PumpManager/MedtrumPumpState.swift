@@ -16,6 +16,8 @@ class MedtrumPumpState: RawRepresentable {
         swVersion = rawValue["swVersion"] as? String ?? "0.0.0"
         pumpTime = rawValue["pumpTime"] as? Date ?? Date()
         pumpTimeSyncedAt = rawValue["pumpTimeSyncedAt"] as? Date ?? Date()
+        maxHourlyInsulin = rawValue["maxHourlyInsulin"] as? Double ?? 20
+        maxDailyInsulin = rawValue["maxDailyInsulin"] as? Double ?? 100
         
         if let pumpStateRaw = rawValue["pumpState"] as? MedtrumState.RawValue {
             pumpState = MedtrumState(rawValue: pumpStateRaw) ?? .none
@@ -32,6 +34,9 @@ class MedtrumPumpState: RawRepresentable {
         pumpTime = Date()
         pumpTimeSyncedAt = Date()
         pumpState = .none
+        
+        maxHourlyInsulin = 20
+        maxDailyInsulin = 100
     }
     
     public var rawValue: RawValue {
@@ -44,6 +49,8 @@ class MedtrumPumpState: RawRepresentable {
         value["pumpTime"] = pumpTime
         value["pumpTimeSyncedAt"] = pumpTimeSyncedAt
         value["pumpState"] = pumpState.rawValue
+        value["maxHourlyInsulin"] = maxHourlyInsulin
+        value["maxDailyInsulin"] = maxDailyInsulin
         
         return value
     }
@@ -58,4 +65,8 @@ class MedtrumPumpState: RawRepresentable {
     public var pumpTimeSyncedAt: Date
     
     public var pumpState: MedtrumState
+    
+    // Patch limits
+    public var maxHourlyInsulin: Double
+    public var maxDailyInsulin: Double
 }

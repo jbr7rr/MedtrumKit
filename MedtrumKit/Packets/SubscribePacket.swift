@@ -7,7 +7,7 @@
 
 struct SubscribePacketResponse {}
 
-class SubscribePacket : MedtrumBasePacket {
+class SubscribePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = SubscribePacketResponse
     
     let commandType: UInt8 = CommandType.SUBSCRIBE
@@ -16,7 +16,7 @@ class SubscribePacket : MedtrumBasePacket {
         return UInt64(4095).toData(length: 2)
     }
     
-    static func parseResponse(data: Data) -> SubscribePacketResponse {
+    func parseResponse() -> SubscribePacketResponse {
         return SubscribePacketResponse()
     }
 }

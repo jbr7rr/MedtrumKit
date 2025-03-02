@@ -11,7 +11,7 @@ struct SynchronizePacketResponse {
     let syncData: Data
 }
 
-class SynchronizePacket : MedtrumBasePacket {
+class SynchronizePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = SynchronizePacketResponse
     
     let commandType: UInt8 = CommandType.SYNCHRONIZE
@@ -20,12 +20,12 @@ class SynchronizePacket : MedtrumBasePacket {
         return Data()
     }
     
-    static func parseResponse(data: Data) -> SynchronizePacketResponse {
-        let fieldMask = data[7..<9]
-        let syncData = data[9...]
+    func parseResponse() -> SynchronizePacketResponse {
+        let fieldMask = totalData[7..<9]
+        let syncData = totalData[9...]
         
         return SynchronizePacketResponse(
-            state: MedtrumState(rawValue: data[6]) ?? .none,
+            state: MedtrumState(rawValue: totalData[6]) ?? .none,
             fieldMask: UInt16((fieldMask[0] << 8) | fieldMask[1]),
             syncData: syncData
         )
