@@ -49,28 +49,28 @@ extension MedtrumBasePacketProtocol {
         var packages: [Data] = []
         
         var pkgIndex: UInt8 = 1
-        var remainingCommand = totalCommand[4...]
+        var remainingCommand = totalCommand.subdata(in: 4..<totalCommand.count)
         
         while remainingCommand.count > 15 {
             header[3] = pkgIndex
             
-            let tmp2 = header + remainingCommand[0..<15]
+            let tmp2 = header + remainingCommand.subdata(in: 0..<15)
             packages.append(tmp2 + Crc8.calculate(tmp2))
 
-            remainingCommand = remainingCommand[15...]
+            remainingCommand = remainingCommand.subdata(in: 15..<remainingCommand.count)
             pkgIndex = UInt8(pkgIndex + 1)
         }
         
         header[3] = pkgIndex
         let tmp3 = header + remainingCommand
         
-        packages.append(tmp + Crc8.calculate(tmp3))
+        packages.append(tmp3 + Crc8.calculate(tmp3))
         return packages
     }
     
     mutating func decode(_ data: Data) {
         if totalData.isEmpty {
-            if totalData[1] != self.commandType {
+            if data[1] != self.commandType {
                 failed = true
             }
             

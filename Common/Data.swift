@@ -16,6 +16,10 @@ extension Data {
         return self.map { String(format: format, $0) }.joined()
     }
     
+    func toDouble() -> Double {
+        return Double(self.toInt64())
+    }
+    
     func toUInt64() -> UInt64 {
         guard self.count <= 8 else {
             preconditionFailure("Cannot convert Data to UInt64, size too long")

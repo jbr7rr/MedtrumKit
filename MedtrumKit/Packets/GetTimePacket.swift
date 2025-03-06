@@ -19,7 +19,7 @@ class GetTimePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
     }
     
     func parseResponse() -> GetTimePacketResponse {
-        let secondsPassed = totalData[6..<10].toUInt64()
+        let secondsPassed = totalData.subdata(in: 6..<10).toUInt64()
         return GetTimePacketResponse(
             time: Date.fromMedtrumSeconds(secondsPassed)
         )

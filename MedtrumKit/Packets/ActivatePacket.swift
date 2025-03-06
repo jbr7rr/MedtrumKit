@@ -5,18 +5,18 @@
 //  Created by Bastiaan Verhaar on 01/03/2025.
 //
 
-struct AuthorizePacketResponse {
+struct ActivatePacketResponse {
     let patchId: Data
     let time: Date
     let basalType: BasalType
     let basalValue: Double
     let basalSequence: Double
-    let basalPatchId: Data
+    let basalPatchId: Double
     let basalStartTime: Date
 }
 
 class ActivatePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
-    typealias T = AuthorizePacketResponse
+    typealias T = ActivatePacketResponse
     
     let commandType: UInt8 = CommandType.ACTIVATE
     
@@ -56,24 +56,47 @@ class ActivatePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
      * bytes 15 - end -> Basal profile
      */
     func getRequestBytes() -> Data {
-        let base = Data([
+        var base = Data([
             autoSuspendEnable,
             autoSuspendTime,
             expirationTimer,
             alarmSetting.rawValue,
             lowSuspend,
             predictiveLowSuspend,
-            predictiveLowSuspendRange,
-            UInt8(round(hourlyMaxInsulin / 0.05)),
-            UInt8(round(dailyMaxInsulin / 0.05)),
-            UInt8(round(currentTDD / 0.05)),
-            1,
+            predictiveLowSuspendRange
         ])
+        
+        let calcHourlyInsulin = UInt16(round(hourlyMaxInsulin / 0.05))
+        base.append(Data([
+            UInt8(calcHourlyInsulin & 0xFF),
+            UInt8(calcHourlyInsulin >> 8)
+        ]))
+        
+        let calcDailyMaxInsulin = UInt16(round(dailyMaxInsulin / 0.05))
+        base.append(Data([
+            UInt8(calcDailyMaxInsulin & 0xFF),
+            UInt8(calcDailyMaxInsulin >> 8)
+        ]))
+        
+        let calcCurrentTDD = UInt16(round(currentTDD / 0.05))
+        base.append(Data([
+            UInt8(calcCurrentTDD & 0xFF),
+            UInt8(calcCurrentTDD >> 8),
+            1
+        ]))
         
         return base + basalProfile
     }
     
-    func parseResponse() -> AuthorizePacketResponse {
-        <#code#>
+    func parseResponse() -> ActivatePacketResponse {
+        return ActivatePacketResponse(
+            patchId: totalData.subdata(in: 6..<10),
+            time: Date.fromMedtrumSeconds(totalData.subdata(in: 10..<14).toUInt64()),
+            basalType: BasalType(rawValue: totalData[14]) ?? .NONE,
+            basalValue: totalData.subdata(in: 15..<17).toDouble() * 0.05,
+            basalSequence: totalData.subdata(in: 17..<19).toDouble(),
+            basalPatchId: totalData.subdata(in: 19..<21).toDouble(),
+            basalStartTime:Date.fromMedtrumSeconds(totalData.subdata(in: 21..<25).toUInt64())
+        )
     }
 }
