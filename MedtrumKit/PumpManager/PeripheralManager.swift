@@ -139,7 +139,7 @@ extension PeripheralManager {
     
     // Connect step 2.1 -> Fix timedrift
     private func setTime() async {
-        let timeData = await writePacket(SetTimePacket())
+        let timeData = await writePacket(SetTimePacket(date: Date.now))
         
         switch timeData {
         case .failure(let error):
@@ -155,7 +155,7 @@ extension PeripheralManager {
     
     // Connect step 2.2 -> Fix timezone
     private func setTimeZone() async {
-        let timeZoneData = await writePacket(SetTimeZonePacket())
+        let timeZoneData = await writePacket(SetTimeZonePacket(date: Date.now, timeZone: TimeZone.current))
         
         switch timeZoneData {
         case .failure(let error):

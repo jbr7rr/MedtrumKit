@@ -11,17 +11,34 @@ class SetTimeZonePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = SetTimeZonePacketResponse
     
     let commandType: UInt8 = CommandType.SET_TIME_ZONE
+    let date: Date
+    let timeZone: TimeZone
+    
+    init(date: Date, timeZone: TimeZone) {
+        self.date = date
+        self.timeZone = timeZone
+    }
     
     func getRequestBytes() -> Data {
-        var offsetInSeconds = TimeZone.current.secondsFromGMT(for: Date.now)
-        if offsetInSeconds < 0 {
-            offsetInSeconds += 65536
+        var offset = TimeInterval(seconds: Double(timeZone.secondsFromGMT(for: date)))
+        
+        // Workaround for bug where it fails to set timezone > GMT + 12
+        // if offset is > 12 hours, subtract 24 hours
+        if offset > .hours(12) {
+            offset -= .hours(24)
         }
         
-        let offsetData = UInt64(offsetInSeconds).toData(length: 2)
-        let timeData = Date.toMedtrumSeconds()
+        var offsetInMinutes = Int(offset.minutes)
+        if offsetInMinutes < 0 {
+            offsetInMinutes += 65536
+        }
         
-        return offsetData + timeData
+        var base = Data([
+            UInt8(offsetInMinutes & 0xFF),
+            UInt8(offsetInMinutes >> 8)
+        ])
+        
+        return base + date.toMedtrumSeconds()
     }
     
     func parseResponse() -> SetTimeZonePacketResponse {

@@ -20,8 +20,8 @@ class MedtrumPumpState: RawRepresentable {
         maxHourlyInsulin = rawValue["maxHourlyInsulin"] as? Double ?? 20
         maxDailyInsulin = rawValue["maxDailyInsulin"] as? Double ?? 100
         
-        if let pumpStateRaw = rawValue["pumpState"] as? MedtrumState.RawValue {
-            pumpState = MedtrumState(rawValue: pumpStateRaw) ?? .none
+        if let pumpStateRaw = rawValue["pumpState"] as? PatchState.RawValue {
+            pumpState = PatchState(rawValue: pumpStateRaw) ?? .none
         } else {
             pumpState = .none
         }
@@ -77,7 +77,7 @@ class MedtrumPumpState: RawRepresentable {
     public var pumpTime: Date
     public var pumpTimeSyncedAt: Date
     
-    public var pumpState: MedtrumState
+    public var pumpState: PatchState
     
     // Patch limits
     public var maxHourlyInsulin: Double

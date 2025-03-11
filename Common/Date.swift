@@ -12,8 +12,8 @@ extension Date {
         return Date(timeIntervalSince1970: baseUnix + Double(seconds))
     }
     
-    static func toMedtrumSeconds() -> Data {
-        let data = UInt64(Date.now.timeIntervalSince1970 - baseUnix)
+    func toMedtrumSeconds() -> Data {
+        let data = UInt64(self.timeIntervalSince1970 - baseUnix)
         return data.toData(length: 4)
     }
 }
