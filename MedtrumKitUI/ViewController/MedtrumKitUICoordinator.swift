@@ -4,16 +4,22 @@ import LoopKitUI
 import SwiftUI
 import UIKit
 
+enum MedtrumUIScreen {
+    case debugScreen
+}
+
 class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, CompletionNotifying,
     UINavigationControllerDelegate
 {
     private let colorPalette: LoopUIColorPalette
-
     private var pumpManager: MedtrumPumpManager?
-
     private var allowedInsulinTypes: [InsulinType]
-
     private var allowDebugFeatures: Bool
+    
+    var screenStack = [MedtrumUIScreen]()
+    var currentScreen: MedtrumUIScreen {
+        return screenStack.last!
+    }
 
     init(
         pumpManager: MedtrumPumpManager? = nil,
@@ -28,16 +34,42 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
         }
 
         self.colorPalette = colorPalette
-
         self.allowDebugFeatures = allowDebugFeatures
-
         self.allowedInsulinTypes = allowedInsulinTypes
-
         super.init(navigationBarClass: UINavigationBar.self, toolbarClass: UIToolbar.self)
     }
 
     @available(*, unavailable) required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        if screenStack.isEmpty {
+            screenStack = [getInitialScreen()]
+            let viewController = viewControllerForScreen(currentScreen)
+            viewController.isModalInPresentation = false
+            setViewControllers([viewController], animated: false)
+        }
+    }
+    
+    func getInitialScreen() -> MedtrumUIScreen {
+        return .debugScreen
+    }
+    
+    private func viewControllerForScreen(_ screen: MedtrumUIScreen) -> UIViewController {
+        switch screen {
+        case .debugScreen:
+            let viewModel = DebugViewModel(self.pumpManager)
+            return hostingController(rootView: DebugView(viewModel: viewModel))
+        }
+    }
+    
+    private func hostingController<Content: View>(rootView: Content) -> DismissibleHostingController {
+        let rootView = rootView
+            .environment(\.appName, Bundle.main.bundleDisplayName)
+        return DismissibleHostingController(rootView: rootView, colorPalette: colorPalette)
     }
 
     var pumpManagerOnboardingDelegate: (any LoopKitUI.PumpManagerOnboardingDelegate)?

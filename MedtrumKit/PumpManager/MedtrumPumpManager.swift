@@ -1,4 +1,5 @@
 import HealthKit
+import CoreBluetooth
 import LoopKit
 import os.log
 
@@ -160,6 +161,14 @@ public extension MedtrumPumpManager {
 
     func estimatedDuration(toBolus _: Double) -> TimeInterval {
         TimeInterval(0)
+    }
+    
+    func startScan(_ callback: @escaping (MedtrumScanResult) -> Void) {
+        bluetooth.startScan(callback)
+    }
+    
+    func connect(peripheral: CBPeripheral, completion: @escaping (MedtrumConnectResult) -> Void) {
+        bluetooth.connect(peripheral: peripheral, completion)
     }
 
     func enactBolus(

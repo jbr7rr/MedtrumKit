@@ -19,6 +19,10 @@
 		3E1532482D6F98D20020F015 /* Crypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1532472D6F98CF0020F015 /* Crypto.swift */; };
 		3E15324A2D6FA0080020F015 /* Data.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1532492D6FA0060020F015 /* Data.swift */; };
 		3E15324C2D6FA4280020F015 /* Int64.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E15324B2D6FA4250020F015 /* Int64.swift */; };
+		3E45665E2D83714900FE1E0C /* DebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E45665D2D83714900FE1E0C /* DebugView.swift */; };
+		3E4566612D83719C00FE1E0C /* DebugViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4566602D83719900FE1E0C /* DebugViewModel.swift */; };
+		3E4566632D8371EC00FE1E0C /* ActivityViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4566622D8371EB00FE1E0C /* ActivityViewController.swift */; };
+		3E4566652D837A4900FE1E0C /* Bundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4566642D837A4800FE1E0C /* Bundle.swift */; };
 		3E5060142D70E5CB00376609 /* Crc8.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5060132D70E5C900376609 /* Crc8.swift */; };
 		3E5060182D70EAF800376609 /* MedtrumWriteResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5060172D70EAF400376609 /* MedtrumWriteResult.swift */; };
 		3E50601A2D70F2F500376609 /* GetDeviceTypePacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5060192D70F2F300376609 /* GetDeviceTypePacket.swift */; };
@@ -136,6 +140,10 @@
 		3E1532472D6F98CF0020F015 /* Crypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Crypto.swift; sourceTree = "<group>"; };
 		3E1532492D6FA0060020F015 /* Data.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Data.swift; sourceTree = "<group>"; };
 		3E15324B2D6FA4250020F015 /* Int64.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Int64.swift; sourceTree = "<group>"; };
+		3E45665D2D83714900FE1E0C /* DebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugView.swift; sourceTree = "<group>"; };
+		3E4566602D83719900FE1E0C /* DebugViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugViewModel.swift; sourceTree = "<group>"; };
+		3E4566622D8371EB00FE1E0C /* ActivityViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityViewController.swift; sourceTree = "<group>"; };
+		3E4566642D837A4800FE1E0C /* Bundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bundle.swift; sourceTree = "<group>"; };
 		3E5060132D70E5C900376609 /* Crc8.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Crc8.swift; sourceTree = "<group>"; };
 		3E5060172D70EAF400376609 /* MedtrumWriteResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedtrumWriteResult.swift; sourceTree = "<group>"; };
 		3E5060192D70F2F300376609 /* GetDeviceTypePacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetDeviceTypePacket.swift; sourceTree = "<group>"; };
@@ -303,6 +311,22 @@
 			path = Packets;
 			sourceTree = "<group>";
 		};
+		3E45665A2D83712D00FE1E0C /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				3E45665D2D83714900FE1E0C /* DebugView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		3E45665F2D83719200FE1E0C /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				3E4566602D83719900FE1E0C /* DebugViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
 		3E5060122D70E5B000376609 /* Encryption */ = {
 			isa = PBXGroup;
 			children = (
@@ -315,7 +339,9 @@
 		3E767CE12D67AD91004B1971 /* MedtrumKitUI */ = {
 			isa = PBXGroup;
 			children = (
+				3E45665F2D83719200FE1E0C /* ViewModels */,
 				3E767D542D67BCC3004B1971 /* ViewController */,
+				3E45665A2D83712D00FE1E0C /* Views */,
 				3E767CFE2D67B1A9004B1971 /* MedtrumHUDProvider.swift */,
 				3E767CE22D67ADFA004B1971 /* MedtrumKitPumpManager+UI.swift */,
 				3E767CFB2D67B13C004B1971 /* Localizable.strings */,
@@ -326,6 +352,7 @@
 		3E767CE32D67AF2B004B1971 /* Common */ = {
 			isa = PBXGroup;
 			children = (
+				3E4566642D837A4800FE1E0C /* Bundle.swift */,
 				3E50601D2D70F7A700376609 /* Date.swift */,
 				3E15324B2D6FA4250020F015 /* Int64.swift */,
 				3E1532492D6FA0060020F015 /* Data.swift */,
@@ -339,6 +366,7 @@
 		3E767D542D67BCC3004B1971 /* ViewController */ = {
 			isa = PBXGroup;
 			children = (
+				3E4566622D8371EB00FE1E0C /* ActivityViewController.swift */,
 				3E767D552D67BCC9004B1971 /* MedtrumKitUICoordinator.swift */,
 			);
 			path = ViewController;
@@ -671,12 +699,14 @@
 				3E5060142D70E5CB00376609 /* Crc8.swift in Sources */,
 				3E5060222D70FDA100376609 /* SetTimeZonePacket.swift in Sources */,
 				3E1532442D6F94E30020F015 /* AuthorizePacket.swift in Sources */,
+				3E45665E2D83714900FE1E0C /* DebugView.swift in Sources */,
 				3E767D022D67B315004B1971 /* LocalizedString.swift in Sources */,
 				3E77FEC22D74B39800A15134 /* AlarmSettings.swift in Sources */,
 				3E767D522D67BC2E004B1971 /* MedtrumKitPumpManager+UI.swift in Sources */,
 				3E1390192D6E5F3600A146C1 /* PeripheralManager.swift in Sources */,
 				3E1532422D6F93EF0020F015 /* BasePacket.swift in Sources */,
 				3E50601C2D70F69900376609 /* GetTimePacket.swift in Sources */,
+				3E4566652D837A4900FE1E0C /* Bundle.swift in Sources */,
 				3E1390102D6E534C00A146C1 /* BluetoothManager.swift in Sources */,
 				3EA87D6B2D7A402C007DD959 /* PrimePacket.swift in Sources */,
 				3E0489052D74B82000E0B75A /* BasalType.swift in Sources */,
@@ -684,10 +714,12 @@
 				3E1532462D6F95AC0020F015 /* CommandType.swift in Sources */,
 				3E767D032D67B319004B1971 /* OSLog.swift in Sources */,
 				3E1390122D6E59B500A146C1 /* MedtrumPumpState.swift in Sources */,
+				3E4566632D8371EC00FE1E0C /* ActivityViewController.swift in Sources */,
 				3E1532482D6F98D20020F015 /* Crypto.swift in Sources */,
 				B7D3A8F12C14F0EF002EE003 /* MedtrumKitPlugin.swift in Sources */,
 				B7189AE72C15A52800703DE2 /* MedtrumPumpManager.swift in Sources */,
 				3E767D532D67BC33004B1971 /* MedtrumHUDProvider.swift in Sources */,
+				3E4566612D83719C00FE1E0C /* DebugViewModel.swift in Sources */,
 				3E77FEBE2D7364AC00A15134 /* ActivatePacket.swift in Sources */,
 				3E15324A2D6FA0080020F015 /* Data.swift in Sources */,
 				3ED27E152D80C9010026488B /* StopPatchPacket.swift in Sources */,
