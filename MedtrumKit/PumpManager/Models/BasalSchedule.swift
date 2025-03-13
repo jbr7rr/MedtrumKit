@@ -61,6 +61,7 @@ public struct BasalSchedule: RawRepresentable {
                 UInt8((rate << 4) & 0xF0),
                 0
             ])
+            output.append(entries)
         }
         
         return output

@@ -5,11 +5,11 @@
 //  Created by Bastiaan Verhaar on 11/03/2025.
 //
 
-enum AlarmState {
-    case None
-    case PumpLowBattery       // Mapped from error flag 1
-    case PumpLowReservoir     // Mapped from error flag
-    case PumpExpiresSoon      // Mapped from error flag 3
+enum AlarmState : UInt16 {
+    case None = 0
+    case PumpLowBattery = 1     // Mapped from error flag 1
+    case PumpLowReservoir = 2   // Mapped from error flag
+    case PumpExpiresSoon = 4    // Mapped from error flag 3
     case LowBgSuspended       // Mapped from pump status 64
     case LowBgSuspended2      // Mapped from pump status 65
     case AutoSuspended         // Mapped from pump status 66

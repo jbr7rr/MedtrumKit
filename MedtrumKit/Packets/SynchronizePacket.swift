@@ -10,7 +10,7 @@ struct SynchronizePacketResponse {
     var suspendTime: Date?
     var bolus: BolusData?
     var basal: BasalData?
-    var primeProgress: Double?
+    var primeProgress: UInt8?
     var reservoir: Double?
     var startTime: Date?
     var battery: BatteryData?
@@ -28,7 +28,7 @@ struct BolusData {
 
 struct BasalData {
     let type: BasalType
-    let sequence: Data
+    let sequence: Double
     let patchId: Double
     let startTime: Date
     let rate: Double
@@ -92,9 +92,9 @@ class SynchronizePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
         )
         
         // Proces masks
-        for (mask, handler) in maskHandlers {
+        for (mask, handler) in maskHandlers.sorted(by: { $0.key < $1.key }) {
             if fieldMask & mask != 0 {
-                offset += handler(syncData, offset, &output)
+                offset = handler(syncData, offset, &output)
             }
         }
         
@@ -115,7 +115,90 @@ class SynchronizePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
             )
             return offset + 3
         },
-        // TODO: Add more masks
+        MASK_EXTENDED_BOLUS: { (data, offset, output) in
+            // Just ignore this flag
+                return offset + 3
+        },
+        MASK_BASAL: { (data, offset, output) in
+            let rateDelivery = UInt16(data.subdata(in: offset+9..<offset+12).toDouble())
+            let delivery = rateDelivery >> 12
+            let rate = rateDelivery & 0x0FFF
+            
+            output.basal = BasalData(
+                type: BasalType(rawValue: data[offset]) ?? .NONE,
+                sequence: data.subdata(in: offset+1..<offset+3).toDouble(),
+                patchId: data.subdata(in: offset+3..<offset+5).toDouble(),
+                startTime: Date.fromMedtrumSeconds(data.subdata(in: offset+5..<offset+9).toUInt64()),
+                rate: Double(rate) * 0.05,
+                delivery: Double(delivery) * 0.05
+            )
+            
+            return offset + 12
+        },
+        MASK_SETUP: { (data, offset, output) in
+            output.primeProgress = data[offset]
+            return offset + 1
+        },
+        MASK_RESERVOIR:{ (data, offset, output) in
+            output.reservoir = data.subdata(in: offset..<offset+2).toDouble() * 0.05
+            return offset + 2
+        },
+        MASK_START_TIME: { (data, offset, output) in
+            output.startTime = Date.fromMedtrumSeconds(data.subdata(in: offset..<offset+4).toUInt64())
+            return offset + 4
+        },
+        MASK_BATTERY: { (data, offset, output) in
+            let value = UInt32(data.subdata(in: offset..<offset+3).toUInt64())
+            
+            output.battery = BatteryData(
+                voltageA: Double(value & 0x0FFF) / 512,
+                voltageB: Double(value >> 12) / 512
+            )
+            return offset + 3
+        },
+        MASK_STORAGE: { (data, offset, output) in
+            output.storage = StorageData(
+                sequence: data.subdata(in: offset..<offset+2).toDouble(),
+                patchId: data.subdata(in: offset+2..<offset+4).toDouble()
+            )
+            return offset + 4
+        },
+        MASK_ALARM: { (data, offset, output) in
+            let flags = UInt16(data.subdata(in: offset..<offset+2).toUInt64())
+            if flags != AlarmState.None.rawValue {
+                // Alarms list available, only need to check the first 3
+                for i in 0..<3 {
+                    if flags & (1 << i) != 0, let alarmState = AlarmState(rawValue: 1 << i) {
+                        output.activeAlarms.append(alarmState)
+                    }
+                    
+                }
+            }
+            
+            // Unused parameter
+            let _parameter = data.subdata(in: offset+2..<offset+4)
+            return offset + 4
+        },
+        MASK_AGE: { (data, offset, output) in
+            output.patchAge = data.subdata(in: offset..<offset+4).toUInt64()
+            return offset + 4
+        },
+        MASK_MAGNETO_PLACE: { (data, offset, output) in
+            output.magnetoPlacement = data.subdata(in: offset..<offset+2).toDouble()
+            return offset + 2
+        },
+        MASK_UNUSED_CGM: { (data, offset, output) in
+            return offset + 5
+        },
+        MASK_UNUSED_COMMAND_CONFIRM: { (data, offset, output) in
+            return offset + 2
+        },
+        MASK_UNUSED_AUTO_STATUS: { (data, offset, output) in
+            return offset + 2
+        },
+        MASK_UNUSED_LEGACY: { (data, offset, output) in
+            return offset + 2
+        },
     ]
     
 }

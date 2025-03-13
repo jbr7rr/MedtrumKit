@@ -40,8 +40,8 @@ final class SynchronizePacketTests : XCTestCase {
         XCTAssertTrue(packet.failed)
     }
     
-    func ResponseContainingSyncDataThenDataSaved() throws {
-        let response = Data([47, 3, 3, 1, 0, 0, 32, 238, 13, 128, 5, 0, 128, 0, 0, 6, 25, 0, 14, 0, 84, 163, 173, 17, 17, 64, 0, 152, 14, 248, 137, 173, 17, 240, 11, 90, 26, 0, 14, 0, 187, 31, 0, 0, 140, 14, 200])
+    func testResponseContainingSyncDataThenDataSaved() throws {
+        let response = Data([47, 3, 3, 1, 0, 0, 32, 238, 13, 128, 5, 0, 128, 0, 0, 6, 25, 0, 14, 0, 84, 163, 173, 17, 17, 64, 0, 152, 14, 248, 137, 173, 17, 240, 11, 90, 26, 0, 14, 0, 187, 31, 0, 0, 140, 14, 200, 242])
         var packet = SynchronizePacket()
         
         packet.decode(response)
@@ -49,6 +49,15 @@ final class SynchronizePacketTests : XCTestCase {
         
         let actual = packet.parseResponse()
         XCTAssertEqual(actual.state, .active)
-        
+        XCTAssertEqual(actual.basal?.type, .ABSOLUTE_TEMP)
+        XCTAssertEqual(actual.basal!.rate, 0.85, accuracy: 0.01)
+        XCTAssertEqual(actual.basal?.sequence, 25)
+        XCTAssertEqual(actual.basal?.patchId, 14)
+        XCTAssertEqual(actual.basal?.startTime, Date(timeIntervalSince1970: 1685126612))
+        XCTAssertEqual(actual.patchAge, 8123)
+        XCTAssertEqual(actual.startTime, Date(timeIntervalSince1970: 1685120120))
+        XCTAssertTrue(actual.battery != nil)
+        XCTAssertEqual(actual.battery!.voltageA, 5.96875, accuracy: 0.01)
+        XCTAssertEqual(actual.battery!.voltageB, 2.8125, accuracy: 0.01)
     }
 }
