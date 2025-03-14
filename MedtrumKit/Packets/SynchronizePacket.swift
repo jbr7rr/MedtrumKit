@@ -120,7 +120,7 @@ class SynchronizePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
                 return offset + 3
         },
         MASK_BASAL: { (data, offset, output) in
-            let rateDelivery = UInt16(data.subdata(in: offset+9..<offset+12).toDouble())
+            let rateDelivery = UInt32(data.subdata(in: offset+9..<offset+12).toDouble())
             let delivery = rateDelivery >> 12
             let rate = rateDelivery & 0x0FFF
             

@@ -31,7 +31,7 @@ final class ActivatePacketTests : XCTestCase {
     }
     
     func testResponseGivenPacketWhenValuesSetThenReturnCorrectValues() throws {
-        let response = Data([26, 18, 19, 1, 0, 0, 41, 0, 0, 0, 152, 91, 28, 17, 1, 30, 0, 1, 0, 41, 0, 152, 91, 28, 17])
+        let response = Data([26, 18, 19, 1, 0, 0, 41, 0, 0, 0, 152, 91, 28, 17, 1, 30, 0, 1, 0, 41, 0, 224, 238, 88, 17, 184])
         var packet = ActivatePacket(
             expirationTimer: 1,
             alarmSetting: .BeepOnly,
@@ -51,11 +51,11 @@ final class ActivatePacketTests : XCTestCase {
         XCTAssertEqual(actual.basalValue, 1.5)
         XCTAssertEqual(actual.basalSequence, 1)
         XCTAssertEqual(actual.basalPatchId, 41)
-        XCTAssertEqual(actual.basalStartTime, Date(timeIntervalSince1970: 1675605528))
+        XCTAssertEqual(actual.basalStartTime, Date(timeIntervalSince1970: 1679575392))
     }
     
     func testResponseGivenResponseWhenMessageTooShortThenResultFalse() throws {
-        let response = Data([26, 18, 19, 1, 0, 0, 41, 0, 0, 0, 152, 91, 28, 17, 1, 30, 0, 1, 0, 41, 0, 152, 91, 28])
+        let response = Data([26, 18, 19, 1, 0, 0, 41, 0, 0, 0, 152, 91, 28, 17, 1, 30, 0, 1, 0, 41, 0, 152, 91, 28, 17])
         var packet = ActivatePacket(
             expirationTimer: 1,
             alarmSetting: .BeepOnly,

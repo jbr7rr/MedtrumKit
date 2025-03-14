@@ -33,7 +33,7 @@ class SetTimeZonePacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
             offsetInMinutes += 65536
         }
         
-        var base = Data([
+        let base = Data([
             UInt8(offsetInMinutes & 0xFF),
             UInt8(offsetInMinutes >> 8)
         ])
