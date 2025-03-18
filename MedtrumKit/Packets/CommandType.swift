@@ -20,6 +20,7 @@ struct CommandType {
     static let SET_BASAL_PROFILE: UInt8 = 21
     static let SET_TEMP_BASAL: UInt8 = 24
     static let CANCEL_TEMP_BASAL: UInt8 = 25
+    static let SUSPEND_PUMP: UInt8 = 28
     static let RESUME_PUMP: UInt8 = 29
     static let POLL_PATCH: UInt8 = 30
     static let STOP_PATCH: UInt8 = 31
