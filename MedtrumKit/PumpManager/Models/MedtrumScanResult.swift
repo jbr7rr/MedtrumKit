@@ -12,11 +12,11 @@ public enum MedtrumScanResult {
     case failure(error: MedtrumScanError)
 }
 
-public enum MedtrumScanError {
+public enum MedtrumScanError: LocalizedError {
     case invalidBluetoothState(state: CBManagerState)
     case alreadyScanning
     
-    func toString() -> String {
+    public var errorDescription: String? {
         switch self {
         case .invalidBluetoothState(state: let state):
             return "Invalid Bluetooth state: \(state)"

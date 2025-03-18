@@ -90,8 +90,8 @@ extension PeripheralManager {
         
         switch authData {
         case .failure(let error):
-            log.error("Failed to complete authorization flow: \(error.toString())")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            log.error("Failed to complete authorization flow: \(error.errorDescription ?? "")")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.errorDescription ?? "")))
             break
             
         case .success(let data):
@@ -114,8 +114,8 @@ extension PeripheralManager {
         
         switch timeData {
         case .failure(let error):
-            log.error("Failed to get time: \(error.toString())")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            log.error("Failed to get time: \(error.errorDescription ?? "")")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.errorDescription ?? "")))
             break
             
         case .success(let data):
@@ -143,8 +143,8 @@ extension PeripheralManager {
         
         switch timeData {
         case .failure(let error):
-            log.error("Failed to set time: \(error.toString())")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            log.error("Failed to set time: \(error.errorDescription ?? "")")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.errorDescription ?? "")))
             break
             
         case .success:
@@ -159,8 +159,8 @@ extension PeripheralManager {
         
         switch timeZoneData {
         case .failure(let error):
-            log.error("Failed to set time: \(error.toString())")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            log.error("Failed to set time: \(error.errorDescription ?? "")")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.errorDescription ?? "")))
             break
             
         case .success:
@@ -179,8 +179,8 @@ extension PeripheralManager {
         
         switch syncData {
         case .failure(let error):
-            log.error("Failed to synchronize: \(error.toString())")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            log.error("Failed to synchronize: \(error.errorDescription ?? "")")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.errorDescription ?? "")))
             break
             
         case .success(let data):
@@ -202,8 +202,8 @@ extension PeripheralManager {
         
         switch subscribeData {
         case .failure(let error):
-            log.error("Failed to subscribe: \(error.toString())")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.toString())))
+            log.error("Failed to subscribe: \(error.errorDescription ?? "")")
+            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.errorDescription ?? "")))
             break
             
         case .success:

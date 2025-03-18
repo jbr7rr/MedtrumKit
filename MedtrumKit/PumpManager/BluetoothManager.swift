@@ -15,6 +15,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     var manager: CBCentralManager!
     let managerQueue = DispatchQueue(label: "com.nightscout.MedtrumKit.bluetoothManagerQueue", qos: .unspecified)
     
+    private var peripheral: CBPeripheral?
     private var peripheralManager: PeripheralManager?
     
     var scanCompletion: ((MedtrumScanResult) -> Void)?
@@ -56,6 +57,62 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         connectCompletion = completion
         manager.connect(peripheral)
     }
+    
+    func ensureConnected(_ completionAsync: @escaping (MedtrumConnectResult) async -> Void) {
+        let completion = { (_ result: MedtrumConnectResult) -> Void in
+            Task {
+                await completionAsync(result)
+            }
+        }
+        
+        if let peripheral = peripheral, peripheral.state == .connected {
+            // We are connected and ready to continue
+            completion(.success)
+            return
+        }
+        
+        if let peripheral = peripheral {
+            // We've the peripheral reference to a previous connection
+            // Just try to reconnect
+            self.connect(peripheral: peripheral, completion)
+            return
+        }
+        
+        guard let pumpSNState = self.pumpManager?.state.pumpSN else {
+            self.log.error("No pump serial number found")
+            completion(.failure(error: .failedToFindDevice))
+            return
+        }
+        
+        // We are disconnected and have no reference to the previous connection
+        // Start to scan for patch and reconnect the long way
+        self.startScan { result in
+            switch result {
+            case .failure(let error):
+                self.log.error("Error during scanning: \(error.errorDescription ?? "")")
+                self.manager.stopScan()
+                completion(.failure(error: .failedToFindDevice))
+                break
+                
+            case .success(let peripheral, let pumpSN, let deviceType, let version):
+                guard pumpSN == pumpSNState else {
+                    // Other patch pump found. IGNORE
+                    return
+                }
+                
+                self.connect(peripheral: peripheral, completion)
+                break
+            }
+        }
+    }
+    
+    func write(_ packet: any MedtrumBasePacketProtocol) async -> MedtrumWriteResult<Any> {
+        guard let peripheralManager else {
+            return .failure(error: .noManager)
+        }
+        
+        return await peripheralManager.writePacket(packet)
+    }
 }
 
 extension BluetoothManager {
@@ -91,6 +148,7 @@ extension BluetoothManager {
             return
         }
         
+        self.peripheral = peripheral
         peripheralManager = PeripheralManager(peripheral, self, pumpManager, completion)
         peripheral.discoverServices([PeripheralManager.SERVICE_UUID])
     }

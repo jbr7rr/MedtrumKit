@@ -10,16 +10,19 @@ enum MedtrumWriteResult<T> {
     case failure(error: MedtrumWriteError)
 }
 
-enum MedtrumWriteError {
+enum MedtrumWriteError: LocalizedError {
     case timeout
     case invalidResponse
+    case noManager
     
-    func toString() -> String {
+    public var errorDescription: String? {
         switch self {
         case .timeout:
             return "Timeout hit"
         case .invalidResponse:
             return "Invalid response"
+        case .noManager:
+            return "No peripheral manager"
         }
     }
 }

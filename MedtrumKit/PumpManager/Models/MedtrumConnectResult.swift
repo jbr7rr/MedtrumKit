@@ -10,13 +10,14 @@ public enum MedtrumConnectResult {
     case failure(error: MedtrumConnectError)
 }
 
-public enum MedtrumConnectError {
+public enum MedtrumConnectError: LocalizedError {
     case failedToDiscoverServices(localizedError: String)
     case failedToDiscoverCharacteristics(localizedError: String)
     case failedToEnableNotify(localizedError: String)
     case failedToCompleteAuthorizationFlow(localizedError: String)
+    case failedToFindDevice
     
-    func toString() -> String {
+    public var errorDescription: String? {
         switch self {
         case .failedToDiscoverServices(let localizedErr):
             return localizedErr
@@ -26,6 +27,8 @@ public enum MedtrumConnectError {
             return localizedErr
         case .failedToCompleteAuthorizationFlow(let localizedErr):
             return localizedErr
+        case .failedToFindDevice:
+            return "Failed to find device"
         }
     }
 }
