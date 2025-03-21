@@ -32,6 +32,20 @@ final class SynchronizePacketTests : XCTestCase {
         XCTAssertEqual(actual.state, .idle)
     }
     
+    func testResponseGivenSplittedPacketsWhenValuesSetThenReturnCorrectValues() throws {
+        let response1 = Data([23, 3, 4, 1, 0, 0, 2, 160, 5, 59, 15, 132, 59, 90, 1, 0, 50, 0, 110, 48])
+        let response2 = Data([23, 3, 4, 2, 6, 0, 0, 182, 224])
+        var packet = SynchronizePacket()
+        
+        packet.decode(response1)
+        packet.decode(response2)
+        XCTAssertFalse(packet.failed)
+        XCTAssertTrue(packet.isComplete)
+        
+        let actual = packet.parseResponse()
+        XCTAssertEqual(actual.state, .filled)
+    }
+    
     func testResponseGivenResponseWhenMessageTooShortThenResultFalse() throws {
         let response = Data([0, 3, 0, 0, 0, 0, 1, 206, 15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42])
         var packet = SynchronizePacket()

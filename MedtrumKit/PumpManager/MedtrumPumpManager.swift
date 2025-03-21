@@ -21,7 +21,7 @@ public class MedtrumPumpManager: DeviceManager {
     private var doseReporter: MedtrumDoseProgressReporter?
     private var doseEntry: UnfinalizedDose?
     
-    private let bluetooth: BluetoothManager
+    let bluetooth: BluetoothManager
 
     init(state: MedtrumPumpState) {
         self.state = state

@@ -20,7 +20,6 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     
     var scanCompletion: ((MedtrumScanResult) -> Void)?
     var connectCompletion: ((MedtrumConnectResult) -> Void)?
-    var reconnectCount = 0
     
     override init() {
         super.init()
@@ -62,7 +61,6 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     }
     
     func ensureConnected(_ completionAsync: @escaping (MedtrumConnectResult) async -> Void) {
-        self.reconnectCount = 0
         let completion = { (_ result: MedtrumConnectResult) -> Void in
             Task {
                 await completionAsync(result)
@@ -166,11 +164,6 @@ extension BluetoothManager {
 
     func centralManager(_: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         log.info("Device disconnected, name: \(peripheral.name ?? "<NO_NAME>")")
-        
-        if self.reconnectCount < 5, let connectCompletion = self.connectCompletion {
-            self.reconnectCount += 1
-            self.connect(peripheral: peripheral, connectCompletion)
-        }
     }
 
     func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {

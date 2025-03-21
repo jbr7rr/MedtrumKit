@@ -164,7 +164,7 @@ extension PeripheralManager {
             break
             
         case .success:
-            log.info("Successfully set time")
+            log.info("Successfully set timezone")
             
             pumpManager.state.pumpTime = Date.now
             pumpManager.state.pumpTimeSyncedAt = Date.now
@@ -214,7 +214,7 @@ extension PeripheralManager {
     private func parseStateUpdate(_ syncResponse: SynchronizePacketResponse) {
         // TEMP
         do {
-            self.log.info("State update: \(try JSONEncoder().encode(syncResponse))")
+            self.log.info("State update: \(String(data: try JSONEncoder().encode(syncResponse), encoding: .utf8) ?? "")")
         } catch {
             self.log.warning("State update: Failed to encode JSON")
         }
@@ -227,6 +227,10 @@ extension PeripheralManager {
         
         if let basal = syncResponse.basal {
             pumpManager.state.isTempBasalInProgress = basal.type == .ABSOLUTE_TEMP || basal.type == .RELATIVE_TEMP
+        }
+        
+        if let battery = syncResponse.battery {
+            pumpManager.state.battery = battery.voltageB
         }
         
         pumpManager.notifyStateDidChange()
@@ -271,12 +275,14 @@ extension PeripheralManager : CBPeripheralDelegate {
             return
         }
         
+
         // Subscribe on all characteristics with notifying abilities
         service.characteristics?.forEach { characteristic in
-            guard characteristic.properties.contains(.notify) else {
+            guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
                 return
             }
             
+            self.log.info("Enable notify for: \(characteristic.uuid.uuidString)")
             peripheral.setNotifyValue(true, for: characteristic)
         }
         
@@ -284,14 +290,6 @@ extension PeripheralManager : CBPeripheralDelegate {
             self.log.info("Notify enabled and ready to start auth flow!")
             await doAuthorize()
         }
-    }
-    
-    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        if let error = error as? CBATTError {
-            self.log.error("CBATTError: \(error.localizedDescription), code:\(error.errorCode)")
-            return
-        }
-        self.log.info("didWriteValueFor -> error: \(error?.localizedDescription ?? "No error") \(error.debugDescription)")
     }
     
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
@@ -307,7 +305,12 @@ extension PeripheralManager : CBPeripheralDelegate {
             return
         }
         
-        if peripheral.identifier.uuidString == PeripheralManager.READ_UUID.uuidString {
+        if characteristic.uuid.uuidString.lowercased() == PeripheralManager.READ_UUID.uuidString.lowercased() {
+            guard data[1] != 0x00 else {
+                // Ignore all ping messages from patch pomp
+                return
+            }
+            
             if self.synchronizePacket == nil {
                 self.synchronizePacket = SynchronizePacket()
             }
@@ -315,6 +318,7 @@ extension PeripheralManager : CBPeripheralDelegate {
                 return
             }
             
+            self.log.info("READ -> Got data: \(data.hexEncodedString())")
             packet.decode(data)
             
             guard packet.isComplete else {
@@ -332,22 +336,19 @@ extension PeripheralManager : CBPeripheralDelegate {
             return
         }
         
-        guard peripheral.identifier.uuidString == PeripheralManager.WRITE_UUID.uuidString else {
-            // Ensure only write characteristic is processed futher on
-            self.log.error("Received data on wrong characteristic - \(peripheral.identifier.uuidString) -> \(data.hexEncodedString())")
-            return
-        }
-        
         // Processing data
         guard var packet = self.currentPacket else {
+            self.log.warning("No packet available...")
             // No packet available to validate against
             return
         }
         
+        self.log.info("Got data: \(data.hexEncodedString())")
         packet.decode(data)
         self.currentPacket = packet
 
         guard packet.isComplete else {
+            self.log.warning("Data no complete yet...")
             // Wait for more data
             return
         }

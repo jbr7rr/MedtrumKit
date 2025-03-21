@@ -75,7 +75,7 @@ extension MedtrumBasePacketProtocol {
             }
             
             totalData = data
-            dataSize = data[0]
+            dataSize = data[0] + 1
             sequenceNumber = data[3]
             
             let initialCrc = Crc8.calculate(data[0..<data.count - 1])
@@ -85,7 +85,7 @@ extension MedtrumBasePacketProtocol {
             return
         }
         
-        totalData.append(data[0..<data.count - 1])
+        totalData.append(data[4..<data.count - 1])
         sequenceNumber+=1
         
         let newCrc = Crc8.calculate(data[0..<data.count - 1])

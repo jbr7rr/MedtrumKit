@@ -29,6 +29,7 @@ class MedtrumPumpState: RawRepresentable {
         maxDailyInsulin = rawValue["maxDailyInsulin"] as? Double ?? 100
         isTempBasalInProgress = rawValue["isTempBasalInProgress"] as? Bool ?? false
         reservoir = rawValue["reservoir"] as? Double ?? 0
+        battery = rawValue["battery"] as? Double ?? 0
         
         if let rawInsulinType = rawValue["insulinType"] as? InsulinType.RawValue {
             insulinType = InsulinType(rawValue: rawInsulinType)
@@ -67,6 +68,7 @@ class MedtrumPumpState: RawRepresentable {
         maxHourlyInsulin = 20
         maxDailyInsulin = 100
         reservoir = 0
+        battery = 0
         bolusState = .noBolus
         isTempBasalInProgress = false
         
@@ -96,6 +98,7 @@ class MedtrumPumpState: RawRepresentable {
         value["basalSchedule"] = basalSchedule.rawValue
         value["bolusState"] = bolusState.rawValue
         value["reservoir"] = reservoir
+        value["battery"] = battery
         
         return value
     }
@@ -115,6 +118,7 @@ class MedtrumPumpState: RawRepresentable {
     
     public var pumpState: PatchState
     public var reservoir: Double
+    public var battery: Double
     
     // Patch limits
     public var maxHourlyInsulin: Double

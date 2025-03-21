@@ -31,10 +31,6 @@ class DebugViewModel: ObservableObject {
         self.hasPumpBaseSN = pumpManager.state.pumpSN.count == 4
         self.pumpBaseSN = pumpManager.state.pumpSN.hexEncodedString()
         
-        //sessionToken: 2466528379
-        print(pumpManager.state.sessionToken.hexEncodedString())
-        print(Crypto.genKey(Data(pumpManager.state.pumpSN.reversed())).toInt64())
-        
         pumpManager.addStatusObserver(self, queue: processQueue)
     }
     
@@ -52,8 +48,6 @@ class DebugViewModel: ObservableObject {
             self.log.error("Invalid pump base SN")
             return
         }
-        
-        // 4A12d828
         
         pumpManager.state.pumpSN = sn
         pumpManager.notifyStateDidChange()
@@ -91,12 +85,7 @@ class DebugViewModel: ObservableObject {
             return
         }
         
-        guard let peripheral = self.foundPeripheral else {
-            self.log.error("No peripheral found to connect to")
-            return
-        }
-        
-        pumpManager.connect(peripheral: peripheral) { result in
+        pumpManager.bluetooth.ensureConnected { result in
             switch result {
             case .failure(let error):
                 self.log.error(error.errorDescription ?? "")
