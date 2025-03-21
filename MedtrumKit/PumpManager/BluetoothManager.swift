@@ -20,6 +20,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     
     var scanCompletion: ((MedtrumScanResult) -> Void)?
     var connectCompletion: ((MedtrumConnectResult) -> Void)?
+    var reconnectCount = 0
     
     override init() {
         super.init()
@@ -48,17 +49,20 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     
     func connect(peripheral: CBPeripheral, _ completion: @escaping (MedtrumConnectResult) -> Void) {
         if manager.isScanning {
-            manager.stopScan()
-            scanCompletion = nil
+            self.manager.stopScan()
+            self.scanCompletion = nil
         }
         
-        log.info("Connecting to \(peripheral)")
+        self.log.info("Connecting to \(peripheral)")
         
-        connectCompletion = completion
-        manager.connect(peripheral)
+        self.connectCompletion = completion
+        self.peripheral = peripheral
+        
+        self.manager.connect(peripheral)
     }
     
     func ensureConnected(_ completionAsync: @escaping (MedtrumConnectResult) async -> Void) {
+        self.reconnectCount = 0
         let completion = { (_ result: MedtrumConnectResult) -> Void in
             Task {
                 await completionAsync(result)
@@ -78,11 +82,13 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
             return
         }
         
-        guard let pumpSNState = self.pumpManager?.state.pumpSN else {
+        guard var pumpSNState = self.pumpManager?.state.pumpSN else {
             self.log.error("No pump serial number found")
             completion(.failure(error: .failedToFindDevice))
             return
         }
+        
+        pumpSNState = Data(pumpSNState.reversed())
         
         // We are disconnected and have no reference to the previous connection
         // Start to scan for patch and reconnect the long way
@@ -94,7 +100,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
                 completion(.failure(error: .failedToFindDevice))
                 break
                 
-            case .success(let peripheral, let pumpSN, let deviceType, let version):
+            case .success(let peripheral, let pumpSN, _, _):
                 guard pumpSN == pumpSNState else {
                     // Other patch pump found. IGNORE
                     return
@@ -125,20 +131,25 @@ extension BluetoothManager {
             return
         }
         
-        // TODO: Need to validate if the device name is always MT
-        log.info("Found device: \(deviceName), \(advertisementData)!")
         guard deviceName == "MT" else {
             return
         }
         
         // TODO: Validate processing advertismentData for Serial Number
-        let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey]
-        guard let manufacturerData = manufacturerData as? Data, manufacturerData.count >= 5 else {
+        let manufacturerData = advertisementData["kCBAdvDataManufacturerData"]
+        guard let manufacturerData = manufacturerData as? Data, manufacturerData.count >= 7 else {
             log.warning("No ManufacturerData or too short - " + advertisementData.keys.joined(separator: ", "))
             return
         }
         
-        scanCompletion?(.success(peripheral: peripheral, pumpSN: manufacturerData[0...4], deviceType: manufacturerData[4], version: manufacturerData[5]))
+        scanCompletion?(
+            .success(
+                peripheral: peripheral,
+                pumpSN: manufacturerData[2..<6],
+                deviceType: manufacturerData[6],
+                version: manufacturerData[7]
+            )
+        )
     }
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -155,6 +166,11 @@ extension BluetoothManager {
 
     func centralManager(_: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         log.info("Device disconnected, name: \(peripheral.name ?? "<NO_NAME>")")
+        
+        if self.reconnectCount < 5, let connectCompletion = self.connectCompletion {
+            self.reconnectCount += 1
+            self.connect(peripheral: peripheral, connectCompletion)
+        }
     }
 
     func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {

@@ -14,11 +14,21 @@ struct DebugView: View {
     var body: some View {
         VStack {
             HStack {
-                Button("Scan", action: viewModel.scan)
+                Button("Set pump base SN", action: viewModel.setPumpBase)
                     .frame(width: 100, height: 100)
-
+                
+                Button("Prime", action: viewModel.prime)
+                    .disabled(!viewModel.hasPumpBaseSN)
+                    .frame(width: 100, height: 100)
+            }
+            
+            HStack {
+                Button("Activate", action: viewModel.activate)
+                    .disabled(!viewModel.hasPumpBaseSN)
+                    .frame(width: 100, height: 100)
+                
                 Button("Connect", action: viewModel.connect)
-                    .disabled(viewModel.foundPeripheral == nil)
+                    .disabled(!viewModel.hasPumpBaseSN)
                     .frame(width: 100, height: 100)
             }
             
@@ -31,14 +41,12 @@ struct DebugView: View {
                 })
             }
         }
-        .alert("Device found!",
-               isPresented: $viewModel.isPresentingScanAlert,
-               presenting: viewModel.messageScanAlert,
-               actions: { detail in
-                Button("No", action: {})
-                Button("Yes", action: viewModel.connect)
-               },
-               message: { detail in Text(detail) }
-        )
+        .alert("Set pump base SN", isPresented: $viewModel.isPresentingPumpBaseSN) {
+            TextField(text: $viewModel.pumpBaseSN) {}
+            Button("Submit") {
+                viewModel.setPumpBaseAction()
+            }
+            Button("Cancel", role: .cancel) { }
+        }
     }
 }

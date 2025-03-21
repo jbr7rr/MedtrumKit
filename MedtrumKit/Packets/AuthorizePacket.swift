@@ -20,7 +20,7 @@ class AuthorizePacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     private let sessionToken: Data
     
     init(pumpSN: Data, sessionToken: Data) {
-        self.pumpSN = pumpSN
+        self.pumpSN = Data(pumpSN.reversed())
         self.sessionToken = sessionToken
     }
     

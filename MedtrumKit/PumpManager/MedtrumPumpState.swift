@@ -28,6 +28,7 @@ class MedtrumPumpState: RawRepresentable {
         maxHourlyInsulin = rawValue["maxHourlyInsulin"] as? Double ?? 20
         maxDailyInsulin = rawValue["maxDailyInsulin"] as? Double ?? 100
         isTempBasalInProgress = rawValue["isTempBasalInProgress"] as? Bool ?? false
+        reservoir = rawValue["reservoir"] as? Double ?? 0
         
         if let rawInsulinType = rawValue["insulinType"] as? InsulinType.RawValue {
             insulinType = InsulinType(rawValue: rawInsulinType)
@@ -52,7 +53,7 @@ class MedtrumPumpState: RawRepresentable {
         }
     }
     
-    public init() {
+    public init(_ basal: BasalRateSchedule?) {
         isOnboarded = false
         pumpSN = Data()
         sessionToken = Data()
@@ -65,10 +66,15 @@ class MedtrumPumpState: RawRepresentable {
         
         maxHourlyInsulin = 20
         maxDailyInsulin = 100
-        
-        isTempBasalInProgress = false
-        basalSchedule = BasalSchedule(entries: [LoopKit.RepeatingScheduleValue(startTime: 0, value: 0)])
+        reservoir = 0
         bolusState = .noBolus
+        isTempBasalInProgress = false
+        
+        if let basal = basal {
+            basalSchedule = BasalSchedule(entries: basal.items)
+        } else {
+            basalSchedule = BasalSchedule(entries: [LoopKit.RepeatingScheduleValue(startTime: 0, value: 0)])
+        }
     }
     
     public var rawValue: RawValue {
@@ -89,6 +95,7 @@ class MedtrumPumpState: RawRepresentable {
         value["isTempBasalInProgress"] = isTempBasalInProgress
         value["basalSchedule"] = basalSchedule.rawValue
         value["bolusState"] = bolusState.rawValue
+        value["reservoir"] = reservoir
         
         return value
     }
@@ -107,6 +114,7 @@ class MedtrumPumpState: RawRepresentable {
     public var pumpTimeSyncedAt: Date
     
     public var pumpState: PatchState
+    public var reservoir: Double
     
     // Patch limits
     public var maxHourlyInsulin: Double

@@ -28,10 +28,12 @@ class Crypto {
     static func simpleDecrypt(_ input: Data) -> Data {
         var temp = input.toInt64()
         for _ in 0..<32 {
-            temp = rotateRight(changeByTable(temp, RIJNDEAL_INVERSE_S_BOX), 32, 1)
+            let x = changeByTable(temp, RIJNDEAL_INVERSE_S_BOX)
+            temp = rotateRight(x, 32, 1)
         }
         
-        return (temp ^ MEDTRUM_CIPHER).toData(length: 4)
+        let fixOverflow = temp.toData(length: 4).toInt64()
+        return (fixOverflow ^ MEDTRUM_CIPHER).toData(length: 4)
     }
     
     private static func randomGen(_ input: Int64) -> Int64 {

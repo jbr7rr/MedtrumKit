@@ -5,7 +5,7 @@
 //  Created by Bastiaan Verhaar on 02/03/2025.
 //
 
-enum BasalType : UInt8 {
+enum BasalType : UInt8, Codable {
     case NONE
     case STANDARD
     case EXERCISE

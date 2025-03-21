@@ -5,7 +5,7 @@
 //  Created by Bastiaan Verhaar on 11/03/2025.
 //
 
-enum AlarmState : UInt16 {
+enum AlarmState : UInt16, Codable {
     case None = 0
     case PumpLowBattery = 1     // Mapped from error flag 1
     case PumpLowReservoir = 2   // Mapped from error flag

@@ -24,15 +24,19 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
     init(
         pumpManager: MedtrumPumpManager? = nil,
         colorPalette: LoopUIColorPalette,
-        pumpManagerSettings _: PumpManagerSetupSettings? = nil,
+        pumpManagerSettings: PumpManagerSetupSettings? = nil,
         allowDebugFeatures: Bool,
         allowedInsulinTypes: [InsulinType] = []
     )
     {
-        if let pumpManager = pumpManager {
+        if pumpManager == nil && pumpManagerSettings == nil {
+            self.pumpManager = MedtrumPumpManager(state: MedtrumPumpState(rawValue: [:]))
+        } else if pumpManager == nil, let pumpManagerSettings = pumpManagerSettings {
+            self.pumpManager = MedtrumPumpManager(state: MedtrumPumpState(pumpManagerSettings.basalSchedule))
+        } else {
             self.pumpManager = pumpManager
         }
-
+        
         self.colorPalette = colorPalette
         self.allowDebugFeatures = allowDebugFeatures
         self.allowedInsulinTypes = allowedInsulinTypes
@@ -61,6 +65,12 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
     private func viewControllerForScreen(_ screen: MedtrumUIScreen) -> UIViewController {
         switch screen {
         case .debugScreen:
+            if let pumpManager = self.pumpManager {
+                pumpManager.state.isOnboarded = true
+                pumpManager.notifyStateDidChange()
+                self.pumpManagerOnboardingDelegate?.pumpManagerOnboarding(didCreatePumpManager: pumpManager)
+            }
+            
             let viewModel = DebugViewModel(self.pumpManager)
             return hostingController(rootView: DebugView(viewModel: viewModel))
         }

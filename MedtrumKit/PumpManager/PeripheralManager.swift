@@ -20,11 +20,10 @@ class PeripheralManager : NSObject {
     private var readCharacteristic: CBCharacteristic!
     private static let WRITE_UUID = CBUUID(string: "669a9101-0008-968f-e311-6050405558b3")
     private var writeCharacteristic: CBCharacteristic!
-    private static let CONFIG_UUID = CBUUID(string: "00002902-0000-1000-8000-00805f9b34fb")
-    private var configCharacteristic: CBCharacteristic!
     
     private var writeSequence: UInt8 = 0
     private var currentPacket: (any MedtrumBasePacketProtocol)?
+    private var synchronizePacket: SynchronizePacket?
     
     private var writeQueue: Dictionary<UInt8, CheckedContinuation<MedtrumWriteResult<Any>, Never>> = [:]
     private var writeTimeoutTask: Task<(), Never>?
@@ -53,6 +52,7 @@ class PeripheralManager : NSObject {
             self.writeSequence = UInt8(self.writeSequence + 1)
             
             for package in packages {
+                self.log.info("Writing data: \(package.hexEncodedString())")
                 self.connectedDevice.writeValue(package, for: self.writeCharacteristic, type: .withResponse)
             }
             
@@ -190,8 +190,7 @@ extension PeripheralManager {
                 return
             }
 
-            pumpManager.state.pumpState = syncResponse.state
-            // TODO: Map other data here
+            self.parseStateUpdate(syncResponse)
             await subscribe()
         }
     }
@@ -211,6 +210,27 @@ extension PeripheralManager {
             completion?(.success)
         }
     }
+    
+    private func parseStateUpdate(_ syncResponse: SynchronizePacketResponse) {
+        // TEMP
+        do {
+            self.log.info("State update: \(try JSONEncoder().encode(syncResponse))")
+        } catch {
+            self.log.warning("State update: Failed to encode JSON")
+        }
+        
+        pumpManager.state.pumpState = syncResponse.state
+        
+        if let reservoir = syncResponse.reservoir {
+            pumpManager.state.reservoir = reservoir
+        }
+        
+        if let basal = syncResponse.basal {
+            pumpManager.state.isTempBasalInProgress = basal.type == .ABSOLUTE_TEMP || basal.type == .RELATIVE_TEMP
+        }
+        
+        pumpManager.notifyStateDidChange()
+    }
 }
 
 extension PeripheralManager : CBPeripheralDelegate {
@@ -229,7 +249,7 @@ extension PeripheralManager : CBPeripheralDelegate {
             return
         }
         
-        peripheral.discoverCharacteristics([PeripheralManager.READ_UUID, PeripheralManager.WRITE_UUID, PeripheralManager.CONFIG_UUID], for: service)
+        peripheral.discoverCharacteristics([PeripheralManager.READ_UUID, PeripheralManager.WRITE_UUID], for: service)
     }
     
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
@@ -242,9 +262,8 @@ extension PeripheralManager : CBPeripheralDelegate {
         let service = peripheral.services!.first(where: { $0.uuid == PeripheralManager.SERVICE_UUID })!
         self.readCharacteristic = service.characteristics?.first(where: { $0.uuid == PeripheralManager.READ_UUID })
         self.writeCharacteristic = service.characteristics?.first(where: { $0.uuid == PeripheralManager.WRITE_UUID })
-        self.configCharacteristic = service.characteristics?.first(where: { $0.uuid == PeripheralManager.CONFIG_UUID })
         
-        guard (self.readCharacteristic != nil), (self.writeCharacteristic != nil), (self.configCharacteristic != nil) else {
+        guard (self.readCharacteristic != nil), (self.writeCharacteristic != nil) else {
             let localizedError = "Failed to discover read, write or config characteristic - " + (service.characteristics?.map { $0.uuid.uuidString }.joined(separator: ", ") ?? "No characteristics discovered")
             
             log.error(localizedError)
@@ -267,6 +286,14 @@ extension PeripheralManager : CBPeripheralDelegate {
         }
     }
     
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error as? CBATTError {
+            self.log.error("CBATTError: \(error.localizedDescription), code:\(error.errorCode)")
+            return
+        }
+        self.log.info("didWriteValueFor -> error: \(error?.localizedDescription ?? "No error") \(error.debugDescription)")
+    }
+    
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error = error {
             log.error("\(error.localizedDescription)")
@@ -281,12 +308,33 @@ extension PeripheralManager : CBPeripheralDelegate {
         }
         
         if peripheral.identifier.uuidString == PeripheralManager.READ_UUID.uuidString {
-            // TODO: Handle state notification
+            if self.synchronizePacket == nil {
+                self.synchronizePacket = SynchronizePacket()
+            }
+            guard var packet = self.synchronizePacket else {
+                return
+            }
+            
+            packet.decode(data)
+            
+            guard packet.isComplete else {
+                self.log.warning("Data no complete yet...")
+                return
+            }
+            
+            guard !packet.failed else {
+                self.log.error("Failed to process update...")
+                self.synchronizePacket = nil
+                return
+            }
+
+            self.parseStateUpdate(packet.parseResponse())
             return
         }
         
-        if peripheral.identifier.uuidString != PeripheralManager.WRITE_UUID.uuidString {
+        guard peripheral.identifier.uuidString == PeripheralManager.WRITE_UUID.uuidString else {
             // Ensure only write characteristic is processed futher on
+            self.log.error("Received data on wrong characteristic - \(peripheral.identifier.uuidString) -> \(data.hexEncodedString())")
             return
         }
         

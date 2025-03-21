@@ -5,7 +5,7 @@
 //  Created by Bastiaan Verhaar on 27/02/2025.
 //
 
-struct SynchronizePacketResponse {
+struct SynchronizePacketResponse: Codable {
     let state: PatchState
     var suspendTime: Date?
     var bolus: BolusData?
@@ -20,13 +20,13 @@ struct SynchronizePacketResponse {
     var magnetoPlacement: Double?
 }
 
-struct BolusData {
+struct BolusData: Codable {
     let type: UInt8
     let completed: Bool
     let delivered: Double
 }
 
-struct BasalData {
+struct BasalData: Codable {
     let type: BasalType
     let sequence: Double
     let patchId: Double
@@ -35,12 +35,12 @@ struct BasalData {
     let delivery: Double
 }
 
-struct BatteryData {
+struct BatteryData: Codable {
     let voltageA: Double
     let voltageB: Double
 }
 
-struct StorageData {
+struct StorageData: Codable {
     let sequence: Double
     let patchId: Double
 }

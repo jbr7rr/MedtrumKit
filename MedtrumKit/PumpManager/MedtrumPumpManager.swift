@@ -166,7 +166,7 @@ public extension MedtrumPumpManager {
             pumpBatteryChargeRemaining: 0,
             basalDeliveryState: .none,
             bolusState: LoopKit.PumpManagerStatus.BolusState.noBolus,
-            insulinType: nil
+            insulinType: state.insulinType
         )
     }
     
@@ -230,29 +230,26 @@ public extension MedtrumPumpManager {
             let bolusPacket = SetBolusPacket(bolusAmount: units)
             let writeResult = await self.bluetooth.write(bolusPacket)
             
-            switch writeResult {
-            case .failure(let error):
+            if case .failure(let error) = writeResult {
                 self.log.error("Failed to write: \(error.localizedDescription)")
                 self.resetBolusState()
                 
                 completion(.communication(error))
                 return
-                
-            case .success:
-                self.doseEntry = UnfinalizedDose(
-                    units: units,
-                    duration: duration,
-                    activationType: activationType,
-                    insulinType: insulinType
-                )
-                
-                self.doseReporter = MedtrumDoseProgressReporter(total: units)
-                self.state.bolusState = .inProgress
-                self.notifyStateDidChange()
-                
-                completion(nil)
-                return
             }
+            
+            self.doseEntry = UnfinalizedDose(
+                units: units,
+                duration: duration,
+                activationType: activationType,
+                insulinType: insulinType
+            )
+            
+            self.doseReporter = MedtrumDoseProgressReporter(total: units)
+            self.state.bolusState = .inProgress
+            self.notifyStateDidChange()
+            
+            completion(nil)
         }
     }
     
@@ -271,59 +268,56 @@ public extension MedtrumPumpManager {
         self.notifyStateDidChange()
         
         self.bluetooth.ensureConnected { connectionResult in
-            switch connectionResult {
-            case .failure(let error):
+            if case .failure(let error) = connectionResult {
                 self.log.error("Failed to connect: \(error.errorDescription ?? "")")
                 self.state.bolusState = oldBolusState
                 self.notifyStateDidChange()
                 
                 completion(.failure(.communication(error)))
                 return
-                
-            case .success:
-                let packet = CancelBolusPacket()
-                let result = await self.bluetooth.write(packet)
-                
-                switch result {
-                case .failure(let error):
-                    self.log.error("Failed to cancel bolus: \(error.errorDescription ?? "")")
-                    self.state.bolusState = oldBolusState
-                    self.notifyStateDidChange()
-                    
-                    completion(.failure(.communication(error)))
-                    return
-                    
-                case .success:
-                    self.state.bolusState = .noBolus
-                    self.notifyStateDidChange()
-                    
-                    guard let doseEntry = self.doseEntry else {
-                        completion(.success(nil))
-                        return
-                    }
-                    
-                    let dose = doseEntry.toDoseEntry()
-                    self.doseEntry = nil
-                    self.doseReporter = nil
-
-                    guard let dose = dose else {
-                        completion(.success(nil))
-                        return
-                    }
-                    
-                    self.pumpDelegate.notify { delegate in
-                        delegate?.pumpManager(
-                            self,
-                            hasNewPumpEvents: [NewPumpEvent.bolus(dose: dose, units: dose.deliveredUnits ?? 0, date: dose.startDate)],
-                            lastReconciliation: Date.now,
-                            completion: { _ in }
-                        )
-                    }
-
-                    self.notifyStateDidChange()
-                    completion(.success(nil))
-                }
             }
+            
+            let packet = CancelBolusPacket()
+            let result = await self.bluetooth.write(packet)
+            
+            if case .failure(let error) = result {
+                self.log.error("Failed to cancel bolus: \(error.errorDescription ?? "")")
+                self.state.bolusState = oldBolusState
+                self.notifyStateDidChange()
+                
+                completion(.failure(.communication(error)))
+                return
+            }
+            
+            self.log.info("Bolus cancelled!")
+            self.state.bolusState = .noBolus
+            self.notifyStateDidChange()
+            
+            guard let doseEntry = self.doseEntry else {
+                completion(.success(nil))
+                return
+            }
+            
+            let dose = doseEntry.toDoseEntry()
+            self.doseEntry = nil
+            self.doseReporter = nil
+
+            guard let dose = dose else {
+                completion(.success(nil))
+                return
+            }
+            
+            self.pumpDelegate.notify { delegate in
+                delegate?.pumpManager(
+                    self,
+                    hasNewPumpEvents: [NewPumpEvent.bolus(dose: dose, units: dose.deliveredUnits ?? 0, date: dose.startDate)],
+                    lastReconciliation: Date.now,
+                    completion: { _ in }
+                )
+            }
+
+            self.notifyStateDidChange()
+            completion(.success(nil))
         }
     }
     
@@ -331,78 +325,73 @@ public extension MedtrumPumpManager {
         self.log.info("Setting temp basal at \(unitsPerHour)U/hr for \(duration) seconds...")
         
         self.bluetooth.ensureConnected { connectionResult in
-            switch connectionResult {
-            case .failure(let error):
+            if case .failure(let error) = connectionResult {
                 self.log.error("Failed to connect: \(error.errorDescription ?? "")")
                 completion(.communication(error))
                 return
+            }
+            
+            if self.state.isTempBasalInProgress {
+                // Need to cancel temp basal first before setting temp basal
+                let cancelPacket = CancelTempBasalPacket()
+                let cancelResult = await self.bluetooth.write(cancelPacket)
                 
-            case .success:
-                if self.state.isTempBasalInProgress {
-                    // Need to cancel temp basal first before setting temp basal
-                    let cancelPacket = CancelTempBasalPacket()
-                    let cancelResult = await self.bluetooth.write(cancelPacket)
-                    
-                    if case .failure(let error) = cancelResult {
-                        self.log.error("Failed to cancel temp basal: \(error.errorDescription ?? "")")
-                        completion(.communication(error))
-                        return
-                    }
-                    
-                    self.log.info("Cancelled temp basal!")
-                }
-                
-                if duration < .ulpOfOne {
-                    // Need to cancel temp basal, but is already cancelled
-                    // Only need to report back to algorithm
-                    if let insulinType = self.state.insulinType {
-                        let dose = DoseEntry.basal(rate: self.currentBaseBasalRate, insulinType: insulinType)
-                        self.pumpDelegate.notify { delegate in
-                            delegate?.pumpManager(
-                                self,
-                                hasNewPumpEvents: [NewPumpEvent.basal(dose: dose)],
-                                lastReconciliation: Date.now,
-                                completion: { _ in }
-                            )
-                        }
-                    } else {
-                        self.log.warning("No insulinType available...")
-                    }
-                    
-                    completion(nil)
-                    return
-                }
-                
-                let packet = SetTempBasalPacket(rate: unitsPerHour, duration: duration)
-                let tempBasalResult = await self.bluetooth.write(packet)
-                
-                switch tempBasalResult {
-                case .failure(let error):
-                    self.log.error("Failed to set temp basal: \(error.errorDescription ?? "")")
+                if case .failure(let error) = cancelResult {
+                    self.log.error("Failed to cancel temp basal: \(error.errorDescription ?? "")")
                     completion(.communication(error))
                     return
-                    
-                case .success:
-                    self.log.info("Set temp basal!")
-                    
-                    if let insulinType = self.state.insulinType {
-                        let dose = DoseEntry.tempBasal(absoluteUnit: unitsPerHour, duration: duration, insulinType: insulinType)
-                        self.pumpDelegate.notify { delegate in
-                            delegate?.pumpManager(
-                                self,
-                                hasNewPumpEvents: [NewPumpEvent.tempBasal(dose: dose, units: unitsPerHour, duration: duration)],
-                                lastReconciliation: Date.now,
-                                completion: { _ in }
-                            )
-                        }
-                    } else {
-                        self.log.warning("No insulinType available...")
-                    }
-                    
-                    completion(nil)
-                    return
                 }
+                
+                self.log.info("Cancelled temp basal!")
             }
+            
+            if duration < .ulpOfOne {
+                // Need to cancel temp basal, but is already cancelled
+                // Only need to report back to algorithm
+                if let insulinType = self.state.insulinType {
+                    let dose = DoseEntry.basal(rate: self.currentBaseBasalRate, insulinType: insulinType)
+                    self.pumpDelegate.notify { delegate in
+                        delegate?.pumpManager(
+                            self,
+                            hasNewPumpEvents: [NewPumpEvent.basal(dose: dose)],
+                            lastReconciliation: Date.now,
+                            completion: { _ in }
+                        )
+                    }
+                } else {
+                    self.log.warning("No insulinType available...")
+                }
+                
+                completion(nil)
+                return
+            }
+            
+            let packet = SetTempBasalPacket(rate: unitsPerHour, duration: duration)
+            let tempBasalResult = await self.bluetooth.write(packet)
+            
+            if case .failure(let error) = tempBasalResult {
+                self.log.error("Failed to set temp basal: \(error.errorDescription ?? "")")
+                completion(.communication(error))
+                return
+            }
+            
+            self.log.info("Set temp basal!")
+            
+            if let insulinType = self.state.insulinType {
+                let dose = DoseEntry.tempBasal(absoluteUnit: unitsPerHour, duration: duration, insulinType: insulinType)
+                self.pumpDelegate.notify { delegate in
+                    delegate?.pumpManager(
+                        self,
+                        hasNewPumpEvents: [NewPumpEvent.tempBasal(dose: dose, units: unitsPerHour, duration: duration)],
+                        lastReconciliation: Date.now,
+                        completion: { _ in }
+                    )
+                }
+            } else {
+                self.log.warning("No insulinType available...")
+            }
+            
+            completion(nil)
             
         }
     }
@@ -411,43 +400,39 @@ public extension MedtrumPumpManager {
         self.log.info("Suspending delivery...")
         
         self.bluetooth.ensureConnected { connectionResult in
-            switch connectionResult {
-            case .failure(let error):
+            if case .failure(let error) = connectionResult {
                 self.log.error("Failed to connect: \(error.errorDescription ?? "")")
                 completion(error)
                 return
-                
-            case .success:
-                let packet = SuspendPumpPacket(duration: .minutes(120))
-                let result = await self.bluetooth.write(packet)
-                
-                switch result {
-                case .failure(let error):
-                    self.log.error("Failed to suspend delivery: \(error.errorDescription ?? "")")
-                    completion(error)
-                    return
-                    
-                case .success:
-                    self.log.info("Delivery suspended for 120min!")
-                    
-                    if let insulinType = self.state.insulinType {
-                        let dose = DoseEntry.suspend()
-                        self.pumpDelegate.notify { delegate in
-                            delegate?.pumpManager(
-                                self,
-                                hasNewPumpEvents: [NewPumpEvent.suspend(dose: dose)],
-                                lastReconciliation: Date.now,
-                                completion: { _ in }
-                            )
-                        }
-                    } else {
-                        self.log.warning("No insulinType available...")
-                    }
-                    
-                    completion(nil)
-                    return
-                }
             }
+            
+            // TODO: suspend needs to have configurable duration
+            let packet = SuspendPumpPacket(duration: .minutes(120))
+            let result = await self.bluetooth.write(packet)
+            
+            if case .failure(let error) = result {
+                self.log.error("Failed to suspend delivery: \(error.errorDescription ?? "")")
+                completion(error)
+                return
+            }
+            
+            self.log.info("Delivery suspended for 120min!")
+            
+            if let insulinType = self.state.insulinType {
+                let dose = DoseEntry.suspend()
+                self.pumpDelegate.notify { delegate in
+                    delegate?.pumpManager(
+                        self,
+                        hasNewPumpEvents: [NewPumpEvent.suspend(dose: dose)],
+                        lastReconciliation: Date.now,
+                        completion: { _ in }
+                    )
+                }
+            } else {
+                self.log.warning("No insulinType available...")
+            }
+            
+            completion(nil)
         }
     }
     
@@ -455,43 +440,38 @@ public extension MedtrumPumpManager {
         self.log.info("Suspending delivery...")
         
         self.bluetooth.ensureConnected { connectionResult in
-            switch connectionResult {
-            case .failure(let error):
+            if case .failure(let error) = connectionResult {
                 self.log.error("Failed to connect: \(error.errorDescription ?? "")")
                 completion(error)
                 return
-                
-            case .success:
-                let packet = ResumePumpPacket()
-                let response = await self.bluetooth.write(packet)
-                
-                switch response {
-                case .failure(let error):
-                    self.log.error("Failed to resume delivery: \(error.errorDescription ?? "")")
-                    completion(error)
-                    return
-                    
-                case .success:
-                    self.log.info("Resumed delivery!")
-                    
-                    if let insulinType = self.state.insulinType {
-                        let dose = DoseEntry.resume(insulinType: insulinType)
-                        self.pumpDelegate.notify { delegate in
-                            delegate?.pumpManager(
-                                self,
-                                hasNewPumpEvents: [NewPumpEvent.resume(dose: dose)],
-                                lastReconciliation: Date.now,
-                                completion: { _ in }
-                            )
-                        }
-                    } else {
-                        self.log.warning("No insulinType available...")
-                    }
-                    
-                    completion(nil)
-                    return
-                }
             }
+            
+            let packet = ResumePumpPacket()
+            let response = await self.bluetooth.write(packet)
+            
+            if case .failure(let error) = response {
+                self.log.error("Failed to resume delivery: \(error.errorDescription ?? "")")
+                completion(error)
+                return
+            }
+            
+            self.log.info("Resumed delivery!")
+            
+            if let insulinType = self.state.insulinType {
+                let dose = DoseEntry.resume(insulinType: insulinType)
+                self.pumpDelegate.notify { delegate in
+                    delegate?.pumpManager(
+                        self,
+                        hasNewPumpEvents: [NewPumpEvent.resume(dose: dose)],
+                        lastReconciliation: Date.now,
+                        completion: { _ in }
+                    )
+                }
+            } else {
+                self.log.warning("No insulinType available...")
+            }
+            
+            completion(nil)
         }
     }
     
@@ -506,46 +486,42 @@ public extension MedtrumPumpManager {
         }
         
         self.bluetooth.ensureConnected { connectionResult in
-            switch connectionResult {
-            case .failure(let error):
+            if case .failure(let error) = connectionResult {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 completion(.failure(error))
                 return
-                
-            case .success:
-                let schedule = BasalSchedule(entries: items)
-                let packet = SetBasalProfilePacket(basalProfile: schedule.toData())
-                let result = await self.bluetooth.write(packet)
-                
-                switch result {
-                case .failure(let error):
-                    self.log.error("Failed to sync basal schedule: \(error.errorDescription ?? "")")
-                    completion(.failure(error))
-                    return
-                    
-                case .success:
-                    self.log.info("Basal schedule sync complete!")
-                    
-                    self.state.basalSchedule = schedule
-                    self.notifyStateDidChange()
-                    
-                    if let insulinType = self.state.insulinType {
-                        let dose = DoseEntry.basal(rate: self.currentBaseBasalRate, insulinType: insulinType)
-                        self.pumpDelegate.notify { delegate in
-                            delegate?.pumpManager(
-                                self,
-                                hasNewPumpEvents: [NewPumpEvent.basal(dose: dose)],
-                                lastReconciliation: Date.now,
-                                completion: { _ in }
-                            )
-                        }
-                    } else {
-                        self.log.warning("No insulinType available...")
-                    }
-
-                    completion(.success(basalSchedule))
-                }
             }
+            
+            let schedule = BasalSchedule(entries: items)
+            let packet = SetBasalProfilePacket(basalProfile: schedule.toData())
+            let result = await self.bluetooth.write(packet)
+            
+            if case .failure(let error) = result {
+                self.log.error("Failed to sync basal schedule: \(error.errorDescription ?? "")")
+                completion(.failure(error))
+                return
+            }
+            
+            self.log.info("Basal schedule sync complete!")
+            
+            self.state.basalSchedule = schedule
+            self.notifyStateDidChange()
+            
+            if let insulinType = self.state.insulinType {
+                let dose = DoseEntry.basal(rate: self.currentBaseBasalRate, insulinType: insulinType)
+                self.pumpDelegate.notify { delegate in
+                    delegate?.pumpManager(
+                        self,
+                        hasNewPumpEvents: [NewPumpEvent.basal(dose: dose)],
+                        lastReconciliation: Date.now,
+                        completion: { _ in }
+                    )
+                }
+            } else {
+                self.log.warning("No insulinType available...")
+            }
+
+            completion(.success(basalSchedule))
         }
     }
     
@@ -566,6 +542,81 @@ public extension MedtrumPumpManager {
                 ))
             )
         )
+    }
+    
+    func primePatchPump(_ completion: @escaping (MedtrumPrimePatchResult) -> Void) {
+        self.log.info("Start priming patch pump")
+        guard self.state.patchId.isEmpty else {
+            self.log.error("Old patch pump needs to be deactivated first...")
+            completion(.failure(error: .needToDeactivateFirst))
+            return
+        }
+        
+        if self.state.pumpSN.isEmpty {
+            // Need to scan for pump base first
+            self.log.warning("No pump base known yet...")
+            completion(.failure(error: .noKnownPumpBase))
+            return
+        }
+        
+        //2466528379 -> 7b3c0493
+        self.state.sessionToken = Data([0x7b, 0x3c, 0x04, 0x93]) //Crypto.genSessionToken()
+        self.notifyStateDidChange()
+        
+        self.bluetooth.ensureConnected { connectionResult in
+            if case .failure(let error) = connectionResult {
+                self.log.error("Failed to connect to pump: \(error)")
+                completion(.failure(error: .connectionFailure))
+                return
+            }
+            
+            let packet = PrimePacket()
+            let primeResult = await self.bluetooth.write(packet)
+            if case .failure(let error) = primeResult {
+                self.log.error("Failed to start priming pump: \(error)")
+                completion(.failure(error: .unknownError(reason: error.errorDescription ?? "")))
+                return
+            }
+            
+            self.log.info("Priming has started!")
+            completion(.success)
+        }
+    }
+    
+    func activatePatchPump(_ completion: @escaping (MedtrumActivatePatchResult) -> Void) {
+        self.log.info("Activate patch pump...")
+        self.bluetooth.ensureConnected { connectionResult in
+            if case .failure(let error) = connectionResult {
+                self.log.error("Failed to connect to pump: \(error)")
+                completion(.failure(error: .connectionFailure))
+                return
+            }
+            
+            let packet = ActivatePacket(
+                expirationTimer: 1,
+                alarmSetting: .BeepOnly,
+                hourlyMaxInsulin: 40,
+                dailyMaxInsulin: 180,
+                currentTDD: 0,
+                basalProfile: self.state.basalSchedule.toData()
+            )
+            let result = await self.bluetooth.write(packet)
+            if case .failure(let error) = result {
+                self.log.error("Failed to activate pump: \(error)")
+                completion(.failure(error: .unknownError(reason: error.errorDescription ?? "")))
+                return
+            }
+            
+            if case .success(let data) = result, let data = data as? ActivatePacketResponse {
+                self.state.patchId = data.patchId
+                self.log.info("Patch activated!")
+                completion(.success)
+                return
+            }
+            
+            self.log.error("Failed to parse response...")
+            completion(.failure(error: .unknownError(reason: "Failed to parse response...")))
+        }
     }
     
     func addStatusObserver(_ observer: PumpManagerStatusObserver, queue: DispatchQueue) {

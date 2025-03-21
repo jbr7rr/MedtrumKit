@@ -5,7 +5,7 @@
 //  Created by Bastiaan Verhaar on 11/03/2025.
 //
 
-enum PatchState: UInt8 {
+enum PatchState: UInt8, Codable {
     case none = 0
     case idle = 1
     case filled = 2
