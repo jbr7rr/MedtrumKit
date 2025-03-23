@@ -204,10 +204,6 @@ public extension MedtrumPumpManager {
         bluetooth.startScan(callback)
     }
     
-    func connect(peripheral: CBPeripheral, completion: @escaping (MedtrumConnectResult) -> Void) {
-        bluetooth.connect(peripheral: peripheral, completion)
-    }
-    
     func enactBolus(units: Double, activationType: LoopKit.BolusActivationType, completion: @escaping (LoopKit.PumpManagerError?) -> Void) {
         let duration = self.estimatedDuration(toBolus: units)
         self.log.info("Enact bolus - \(units)U, \(duration)sec")

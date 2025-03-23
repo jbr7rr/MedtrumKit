@@ -25,7 +25,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         super.init()
         
         managerQueue.sync {
-            self.manager = CBCentralManager(delegate: self, queue: managerQueue)
+            self.manager = CBCentralManager(delegate: self, queue: managerQueue, options: [CBCentralManagerOptionRestoreIdentifierKey: "com.nightscout.MedtrumKit.bluetoothManager"])
         }
     }
     
@@ -133,13 +133,17 @@ extension BluetoothManager {
             return
         }
         
-        // TODO: Validate processing advertismentData for Serial Number
         let manufacturerData = advertisementData["kCBAdvDataManufacturerData"]
         guard let manufacturerData = manufacturerData as? Data, manufacturerData.count >= 7 else {
             log.warning("No ManufacturerData or too short - " + advertisementData.keys.joined(separator: ", "))
             return
         }
         
+        // Index:
+        // 0 & 1 -> Manufacturer ID
+        // 2-5 -> PumpSN
+        // 6 -> Device type
+        // 7 -> Version
         scanCompletion?(
             .success(
                 peripheral: peripheral,
@@ -159,6 +163,31 @@ extension BluetoothManager {
         
         self.peripheral = peripheral
         peripheralManager = PeripheralManager(peripheral, self, pumpManager, completion)
+        peripheral.discoverServices([PeripheralManager.SERVICE_UUID])
+    }
+    
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String : Any]) {
+        let peripherals = dict["CBCentralManagerRestoredCentrals"] as? [CBPeripheral] ?? []
+        guard peripherals.count > 0, let peripheral = peripherals.first else {
+            self.log.warning("No restored peripherals!")
+            return
+        }
+        
+        guard let pumpManager = pumpManager else {
+            self.log.warning("Couldnt restore state, since no pumpManager is available...")
+            return
+        }
+        
+        self.peripheral = peripheral
+        self.peripheralManager = PeripheralManager(peripheral, self, pumpManager) { reconnectResult in
+            if case .failure(let error) = reconnectResult {
+                self.log.warning("Couldnt reconnect to pump: \(error)")
+                return
+            }
+            
+            self.log.info("Reconnected to patch using restored state!")
+        }
+        
         peripheral.discoverServices([PeripheralManager.SERVICE_UUID])
     }
 
