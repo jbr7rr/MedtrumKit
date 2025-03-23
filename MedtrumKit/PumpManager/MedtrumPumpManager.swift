@@ -113,15 +113,15 @@ public class MedtrumPumpManager: DeviceManager {
         }
     }
 
-    private func device() -> HKDevice {
+    private func device(_ state: MedtrumPumpState) -> HKDevice {
         HKDevice(
-            name: "NONE",
+            name: state.pumpName,
             manufacturer: "Medtrum",
-            model: "NONE",
-            hardwareVersion: "NONE",
-            firmwareVersion: "NONE",
-            softwareVersion: "",
-            localIdentifier: "NONE",
+            model: state.model,
+            hardwareVersion: nil,
+            firmwareVersion: nil,
+            softwareVersion: state.swVersion,
+            localIdentifier: nil,
             udiDeviceIdentifier: nil
         )
     }
@@ -148,11 +148,11 @@ public extension MedtrumPumpManager {
     }
     
     var pumpReservoirCapacity: Double {
-        0
+        self.state.reservoir
     }
     
     var lastSync: Date? {
-        nil
+        self.state.lastSync
     }
     
     var status: PumpManagerStatus {
@@ -160,12 +160,29 @@ public extension MedtrumPumpManager {
     }
     
     private func status(_ state: MedtrumPumpState) -> PumpManagerStatus {
+        let bolusState: LoopKit.PumpManagerStatus.BolusState
+        switch state.bolusState {
+        case .noBolus:
+            bolusState = .noBolus
+            break
+        case .canceling:
+            bolusState = .canceling
+            break
+        case .inProgress:
+            if let dose = doseEntry?.toDoseEntry() {
+                bolusState = .inProgress(dose)
+            } else {
+                bolusState = .noBolus
+            }
+            break
+        }
+        
         return PumpManagerStatus(
             timeZone: TimeZone.current,
-            device: device(),
-            pumpBatteryChargeRemaining: 0,
-            basalDeliveryState: .none,
-            bolusState: LoopKit.PumpManagerStatus.BolusState.noBolus,
+            device: device(state),
+            pumpBatteryChargeRemaining: nil, // Patch pumps do not need to report back battery status
+            basalDeliveryState: state.basalDeliveryState,
+            bolusState: bolusState,
             insulinType: state.insulinType
         )
     }
@@ -186,7 +203,72 @@ public extension MedtrumPumpManager {
     }
     
     func ensureCurrentPumpData(completion: ((Date?) -> Void)?) {
-        completion?(nil)
+        guard Date.now.timeIntervalSince(state.lastSync) > .minutes(4) else {
+            self.log.warning("Skipping status update -> data is fresh: \(Date.now.timeIntervalSince(state.lastSync)) sec")
+            completion?(state.lastSync)
+            return
+        }
+        
+        self.log.info("Sync pump data")
+        
+        self.bluetooth.ensureConnected { connectionResult in
+            if case .failure(let error) = connectionResult {
+                self.log.error("Failed to connect: \(error.errorDescription ?? "")")
+                completion?(nil)
+                return
+            }
+            
+            let syncPacket = SynchronizePacket()
+            let syncResult = await self.bluetooth.write(syncPacket)
+            
+            switch syncResult {
+            case .failure(let error):
+                self.log.error("Failed to write: \(error.localizedDescription)")
+                completion?(nil)
+                return
+                
+            case .success(let data):
+                guard let syncResponse = data as? SynchronizePacketResponse else {
+                    self.log.error("Invalid response data...")
+                    completion?(nil)
+                    return
+                }
+                
+                self.state.pumpState = syncResponse.state
+                
+                if let reservoir = syncResponse.reservoir {
+                    self.state.reservoir = reservoir
+                    
+                    self.pumpDelegate.notify { delegate in
+                        delegate?.pumpManager(self, didReadReservoirValue: self.state.reservoir, at: Date.now) { _ in }
+                    }
+                }
+                
+                if let basal = syncResponse.basal {
+                    switch basal.type {
+                    case .ABSOLUTE_TEMP, .RELATIVE_TEMP:
+                        self.state.basalState = .tempBasal
+                        break
+                        
+                    case .SUSPEND_LOW_GLUCOSE, .SUSPEND_PREDICT_LOW_GLUCOSE, .SUSPEND_AUTO, .SUSPEND_MORE_THAN_MAX_PER_HOUR, .SUSPEND_MORE_THAN_MAX_PER_DAY, .SUSPEND_MANUAL, .SUSPEND_KEY_LOST, .STOP_OCCLUSION, .STOP_EXPIRED, .STOP_EMPTY, .STOP_PATCH_FAULT, .STOP_PATCH_FAULT2, .STOP_BASE_FAULT, .STOP_DISCARD, .STOP_BATTERY_EMPTY, .STOP:
+                        self.state.basalState = .suspended
+                        break
+                        
+                    default:
+                        self.state.basalState = .active
+                        break
+                    }
+                }
+                
+                if let battery = syncResponse.battery {
+                    self.state.battery = battery.voltageB
+                }
+                
+                self.state.lastSync = Date.now
+                self.notifyStateDidChange()
+                completion?(Date.now)
+            }
+        }
     }
     
     func setMustProvideBLEHeartbeat(_: Bool) {}
@@ -327,7 +409,7 @@ public extension MedtrumPumpManager {
                 return
             }
             
-            if self.state.isTempBasalInProgress {
+            if case .tempBasal = self.state.basalState {
                 // Need to cancel temp basal first before setting temp basal
                 let cancelPacket = CancelTempBasalPacket()
                 let cancelResult = await self.bluetooth.write(cancelPacket)
@@ -338,6 +420,8 @@ public extension MedtrumPumpManager {
                     return
                 }
                 
+                self.state.basalState = .active
+                self.state.basalStateSince = Date.now
                 self.log.info("Cancelled temp basal!")
             }
             
@@ -358,6 +442,7 @@ public extension MedtrumPumpManager {
                     self.log.warning("No insulinType available...")
                 }
                 
+                self.notifyStateDidChange()
                 completion(nil)
                 return
             }
@@ -372,6 +457,10 @@ public extension MedtrumPumpManager {
             }
             
             self.log.info("Set temp basal!")
+            self.state.basalState = .tempBasal
+            self.state.basalStateSince = Date.now
+            self.state.tempBasalUnits = unitsPerHour
+            self.state.tempBasalDuration = duration
             
             if let insulinType = self.state.insulinType {
                 let dose = DoseEntry.tempBasal(absoluteUnit: unitsPerHour, duration: duration, insulinType: insulinType)
@@ -387,6 +476,7 @@ public extension MedtrumPumpManager {
                 self.log.warning("No insulinType available...")
             }
             
+            self.notifyStateDidChange()
             completion(nil)
             
         }
@@ -414,19 +504,19 @@ public extension MedtrumPumpManager {
             
             self.log.info("Delivery suspended for 120min!")
             
-            if let insulinType = self.state.insulinType {
-                let dose = DoseEntry.suspend()
-                self.pumpDelegate.notify { delegate in
-                    delegate?.pumpManager(
-                        self,
-                        hasNewPumpEvents: [NewPumpEvent.suspend(dose: dose)],
-                        lastReconciliation: Date.now,
-                        completion: { _ in }
-                    )
-                }
-            } else {
-                self.log.warning("No insulinType available...")
+            let dose = DoseEntry.suspend()
+            self.pumpDelegate.notify { delegate in
+                delegate?.pumpManager(
+                    self,
+                    hasNewPumpEvents: [NewPumpEvent.suspend(dose: dose)],
+                    lastReconciliation: Date.now,
+                    completion: { _ in }
+                )
             }
+            
+            self.state.basalState = .suspended
+            self.state.basalStateSince = Date.now
+            self.notifyStateDidChange()
             
             completion(nil)
         }
@@ -466,6 +556,10 @@ public extension MedtrumPumpManager {
             } else {
                 self.log.warning("No insulinType available...")
             }
+            
+            self.state.basalState = .active
+            self.state.basalStateSince = Date.now
+            self.notifyStateDidChange()
             
             completion(nil)
         }

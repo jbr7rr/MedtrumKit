@@ -226,13 +226,26 @@ extension PeripheralManager {
         }
         
         if let basal = syncResponse.basal {
-            pumpManager.state.isTempBasalInProgress = basal.type == .ABSOLUTE_TEMP || basal.type == .RELATIVE_TEMP
+            switch basal.type {
+            case .ABSOLUTE_TEMP, .RELATIVE_TEMP:
+                pumpManager.state.basalState = .tempBasal
+                break
+                
+            case .SUSPEND_LOW_GLUCOSE, .SUSPEND_PREDICT_LOW_GLUCOSE, .SUSPEND_AUTO, .SUSPEND_MORE_THAN_MAX_PER_HOUR, .SUSPEND_MORE_THAN_MAX_PER_DAY, .SUSPEND_MANUAL, .SUSPEND_KEY_LOST, .STOP_OCCLUSION, .STOP_EXPIRED, .STOP_EMPTY, .STOP_PATCH_FAULT, .STOP_PATCH_FAULT2, .STOP_BASE_FAULT, .STOP_DISCARD, .STOP_BATTERY_EMPTY, .STOP:
+                pumpManager.state.basalState = .suspended
+                break
+                
+            default:
+                pumpManager.state.basalState = .active
+                break
+            }
         }
         
         if let battery = syncResponse.battery {
             pumpManager.state.battery = battery.voltageB
         }
         
+        pumpManager.state.lastSync = Date.now
         pumpManager.notifyStateDidChange()
     }
 }
