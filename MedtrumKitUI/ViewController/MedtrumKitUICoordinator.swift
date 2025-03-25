@@ -6,6 +6,7 @@ import UIKit
 
 enum MedtrumUIScreen {
     case debugScreen
+    case settingsScreen
 }
 
 class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, CompletionNotifying,
@@ -59,7 +60,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
     }
     
     func getInitialScreen() -> MedtrumUIScreen {
-        return .debugScreen
+        return .settingsScreen
     }
     
     private func viewControllerForScreen(_ screen: MedtrumUIScreen) -> UIViewController {
@@ -73,6 +74,10 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             
             let viewModel = DebugViewModel(self.pumpManager)
             return hostingController(rootView: DebugView(viewModel: viewModel))
+            
+        case .settingsScreen:
+            let viewModel = MedtrumKitSettingsViewModel(pumpManager: self.pumpManager)
+            return hostingController(rootView: MedtrumKitSettings(viewModel: viewModel))
         }
     }
     

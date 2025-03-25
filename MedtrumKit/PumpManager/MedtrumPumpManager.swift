@@ -127,7 +127,7 @@ public class MedtrumPumpManager: DeviceManager {
     }
     
     private let basalIntervals: [TimeInterval] = Array(0 ..< 24).map({ TimeInterval(60 * 60 * $0) })
-    private var currentBaseBasalRate: Double {
+    public var currentBaseBasalRate: Double {
         guard !state.basalSchedule.entries.isEmpty else {
             // Prevent crash if basalSchedule isnt set
             return 0
@@ -209,6 +209,10 @@ public extension MedtrumPumpManager {
             return
         }
         
+        syncPumpData(completion: completion)
+    }
+    
+    func syncPumpData(completion: ((Date?) -> Void)?) {
         self.log.info("Sync pump data")
         
         self.bluetooth.ensureConnected { connectionResult in

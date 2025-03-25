@@ -6,9 +6,26 @@
 //
 
 import SwiftUI
+import LoopKitUI
 
 struct MedtrumKitSettings: View {
+    @State private var isSharePresented: Bool = false
     @ObservedObject var viewModel: MedtrumKitSettingsViewModel
+    
+    @Environment(\.dismissAction) private var dismiss
+    @Environment(\.insulinTintColor) var insulinTintColor
+    @Environment(\.guidanceColors) private var guidanceColors
+    
+    var removePumpManagerActionSheet: ActionSheet {
+        ActionSheet(title: Text(LocalizedString("Remove Pump", comment: "Title for PumpManager deletion action sheet.")),
+                    message: Text(LocalizedString("Are you sure you want to stop using Medtrum TouchCare Nano 200u/300u?", comment: "Message for PumpManager deletion action sheet")),
+                    buttons: [
+                        .destructive(Text(LocalizedString("Delete pump", comment: "Button text to confirm PumpManager deletion"))) {
+                            viewModel.stopUsingMedtrum()
+                        },
+                        .cancel()
+                    ])
+    }
     
     var body: some View {
         List {
@@ -19,43 +36,147 @@ struct MedtrumKitSettings: View {
                         .resizable()
                         .scaledToFit()
                         .padding(.horizontal)
-                        .frame(height: 200)
+                        .frame(height: 150)
                     Spacer()
                 }
                 
                 HStack(alignment: .top) {
-//                    deliveryStatus
+                    deliveryStatus
                     Spacer()
                     reservoirStatus
                 }
                 .padding(.bottom, 5)
                 
-//                if viewModel.showPumpTimeSyncWarning {
-//                    VStack(alignment: .leading, spacing: 4) {
-//                        Text(LocalizedString("Time Change Detected", comment: "title for time change detected notice"))
-//                            .font(Font.subheadline.weight(.bold))
-//                        Text(LocalizedString("The time on your pump is different from the current time. Your pump’s time controls your scheduled therapy settings. Scroll down to Pump Time row to review the time difference and configure your pump.", comment: "description for time change detected notice"))
-//                            .font(Font.footnote.weight(.semibold))
-//                    }.padding(.vertical, 8)
-//                }
+                //                if viewModel.showPumpTimeSyncWarning {
+                //                    VStack(alignment: .leading, spacing: 4) {
+                //                        Text(LocalizedString("Time Change Detected", comment: "title for time change detected notice"))
+                //                            .font(Font.subheadline.weight(.bold))
+                //                        Text(LocalizedString("The time on your pump is different from the current time. Your pump’s time controls your scheduled therapy settings. Scroll down to Pump Time row to review the time difference and configure your pump.", comment: "description for time change detected notice"))
+                //                            .font(Font.footnote.weight(.semibold))
+                //                    }.padding(.vertical, 8)
+                //                }
+            }
+            
+            Section() {
+                Button(action: {
+                    viewModel.syncData()
+                }) {
+                    HStack {
+                        Text(LocalizedString("Sync pump data", comment: "sync pump"))
+                        Spacer()
+                        if viewModel.isUpdatingPumpState {
+                            ActivityIndicator(isAnimating: .constant(true), style: .medium)
+                        }
+                    }
+                }
+                .disabled(viewModel.isUpdatingPumpState)
+                
+                HStack {
+                    Text(LocalizedString("Last sync", comment: "Text for last sync")).foregroundColor(Color.primary)
+                    Spacer()
+                    Text(viewModel.dateFormatter.string(from: viewModel.lastSync))
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            Section() {
+                Button(LocalizedString("Share Medtrum patch logs", comment: "Share logs")) {
+                    self.isSharePresented = true
+                }
+                .sheet(isPresented: $isSharePresented, onDismiss: { }, content: {
+                    ActivityViewController(activityItems: viewModel.getLogs())
+                })
+                
+                Button(action: {
+                    viewModel.showingDeleteConfirmation = true
+                }) {
+                    Text(LocalizedString("Delete Pump", comment: "Label for PumpManager deletion button"))
+                        .foregroundColor(guidanceColors.critical)
+                }
+                .actionSheet(isPresented: $viewModel.showingDeleteConfirmation) {
+                    removePumpManagerActionSheet
+                }
             }
         }
+        .listStyle(InsetGroupedListStyle())
+        .navigationBarItems(trailing: doneButton)
+        .navigationBarTitle(viewModel.model)
     }
     
     var reservoirStatus: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(LocalizedString("Insulin Remaining", comment: "Header for insulin remaining on pod settings screen"))
                 .foregroundColor(Color(UIColor.secondaryLabel))
-            if let reservoirLevel = viewModel.reservoirLevel {
-                HStack {
-                    ReservoirView(reservoirLevel: reservoirLevel, fillColor: reservoirColor(reservoirLevel))
-                        .frame(width: 23, height: 32)
-                    Text(viewModel.reservoirText(for: reservoirLevel))
-                        .font(.system(size: 28))
-                        .fontWeight(.heavy)
+            HStack {
+                ReservoirView(reservoirLevel: viewModel.reservoirLevel, fillColor: reservoirColor, maxReservoirLevel: viewModel.maxReservoirLevel)
+                    .frame(width: 23, height: 32)
+                Text(viewModel.reservoirText(for: viewModel.reservoirLevel))
+                    .font(.system(size: 28))
+                    .fontWeight(.heavy)
+                    .fixedSize()
+            }
+        }
+    }
+    
+    var deliveryStatus: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(deliverySectionTitle)
+                .foregroundColor(Color(UIColor.secondaryLabel))
+            
+            switch viewModel.basalType {
+            case .active, .tempBasal:
+                HStack(alignment: .center) {
+                    HStack(alignment: .lastTextBaseline, spacing: 3) {
+                        Text(viewModel.basalRateFormatter.string(from: viewModel.basalRate as NSNumber) ?? "")
+                            .font(.system(size: 28))
+                            .fontWeight(.heavy)
+                            .fixedSize()
+                        Text(LocalizedString("U/hr", comment: "Units for showing temp basal rate"))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            case .suspended:
+                HStack(alignment: .center) {
+                    Image(systemName: "pause.circle.fill")
+                        .font(.system(size: 34))
+                        .fixedSize()
+                        .foregroundColor(guidanceColors.warning)
+                    Text(LocalizedString("Insulin\nSuspended", comment: "Text shown in insulin delivery space when insulin suspended"))
+                        .fontWeight(.bold)
                         .fixedSize()
                 }
             }
+        }
+    }
+    
+    private var doneButton: some View {
+        Button("Done", action: {
+            dismiss()
+        })
+    }
+    
+    
+    public var reservoirColor: Color {
+        // TODO: Configurable??
+        if viewModel.reservoirLevel > (viewModel.maxReservoirLevel * 0.1) {
+            return insulinTintColor
+        }
+        
+        if viewModel.reservoirLevel > 0 {
+            return guidanceColors.warning
+        }
+        
+        return guidanceColors.critical
+    }
+    
+    var deliverySectionTitle: String {
+        switch viewModel.basalType {
+        case .active:
+            return LocalizedString("Scheduled Basal", comment: "Title of insulin delivery section")
+        case .tempBasal:
+            return LocalizedString("Temp Basal", comment: "Pump Event title for UnfinalizedDose with doseType of .tempBasal")
+        case .suspended:
+            return LocalizedString("Insulin Delivery", comment: "Title of insulin delivery section")
         }
     }
 }

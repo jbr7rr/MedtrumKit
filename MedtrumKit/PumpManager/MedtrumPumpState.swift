@@ -201,4 +201,24 @@ class MedtrumPumpState: RawRepresentable {
             return "TouchCare Nano UNKNOWN"
         }
     }
+    
+    public var debugDescription: String {
+        [
+            "## MedtrumPumpState - \(Date.now)",
+            "* isOnboarded: \(isOnboarded)",
+            "* lastSync: \(lastSync)",
+            "* pumpSN: \(pumpSN)",
+            "* pumpName: \(pumpName)",
+            "* model: \(model)",
+            "* swVersion: \(swVersion)",
+            "* maxDailyInsulin: \(maxDailyInsulin)u",
+            "* maxHourlyInsulin: \(maxHourlyInsulin)u",
+            "* battery: \(battery)",
+            "* pumpTime: \(pumpTime)",
+            "* pumpTimeSyncedAt: \(pumpTimeSyncedAt)",
+            "* insulinType: \(insulinType ?? .afrezza)",
+            "* reservoirLevel: \(reservoir)",
+            "* bolusState: \(bolusState.rawValue)"
+        ].joined(separator: "\n")
+    }
 }
