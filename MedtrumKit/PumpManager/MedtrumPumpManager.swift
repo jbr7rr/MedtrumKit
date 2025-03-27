@@ -703,6 +703,9 @@ public extension MedtrumPumpManager {
             
             if case .success(let data) = result, let data = data as? ActivatePacketResponse {
                 self.state.patchId = data.patchId
+                self.state.patchActivatedAt = Date.now
+                self.notifyStateDidChange()
+                
                 self.log.info("Patch activated!")
                 completion(.success)
                 return

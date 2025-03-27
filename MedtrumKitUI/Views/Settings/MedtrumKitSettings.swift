@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import LoopKit
 import LoopKitUI
 
 struct MedtrumKitSettings: View {
@@ -15,6 +16,8 @@ struct MedtrumKitSettings: View {
     @Environment(\.dismissAction) private var dismiss
     @Environment(\.insulinTintColor) var insulinTintColor
     @Environment(\.guidanceColors) private var guidanceColors
+    
+    var supportedInsulinTypes: [InsulinType]
     
     var removePumpManagerActionSheet: ActionSheet {
         ActionSheet(title: Text(LocalizedString("Remove Pump", comment: "Title for PumpManager deletion action sheet.")),
@@ -30,14 +33,18 @@ struct MedtrumKitSettings: View {
     var body: some View {
         List {
             Section() {
-                HStack(){
-                    Spacer()
-                    Image(uiImage: UIImage(named: viewModel.imageName, in: Bundle(for: MedtrumKitHUDProvider.self), compatibleWith: nil)!)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(.horizontal)
-                        .frame(height: 150)
-                    Spacer()
+                VStack {
+                    HStack(){
+                        Spacer()
+                        Image(uiImage: UIImage(named: viewModel.imageName, in: Bundle(for: MedtrumKitHUDProvider.self), compatibleWith: nil)!)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(.horizontal)
+                            .frame(height: 150)
+                        Spacer()
+                    }
+                    
+                    patchLifecycle
                 }
                 
                 HStack(alignment: .top) {
@@ -62,7 +69,7 @@ struct MedtrumKitSettings: View {
                     viewModel.syncData()
                 }) {
                     HStack {
-                        Text(LocalizedString("Sync pump data", comment: "sync pump"))
+                        Text(LocalizedString("Sync patch data", comment: "sync pump"))
                         Spacer()
                         if viewModel.isUpdatingPumpState {
                             ActivityIndicator(isAnimating: .constant(true), style: .medium)
@@ -72,10 +79,58 @@ struct MedtrumKitSettings: View {
                 .disabled(viewModel.isUpdatingPumpState)
                 
                 HStack {
-                    Text(LocalizedString("Last sync", comment: "Text for last sync")).foregroundColor(Color.primary)
+                    Text(LocalizedString("Last sync", comment: "Text for last sync"))
+                        .foregroundColor(Color.primary)
                     Spacer()
-                    Text(viewModel.dateFormatter.string(from: viewModel.lastSync))
-                        .foregroundColor(.secondary)
+                    if (viewModel.patchState != .noPatch) {
+                        Text(viewModel.dateFormatter.string(from: viewModel.lastSync))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("-")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                HStack {
+                    Text(LocalizedString("Patch activated at", comment: "Text for activatedAt"))
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    if (viewModel.patchState != .noPatch) {
+                        Text(viewModel.dateTimeFormatter.string(from: viewModel.patchActivatedAt))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("-")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                HStack {
+                    Text(LocalizedString("Patch expires at", comment: "Text for expiresAt"))
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    if (viewModel.patchState != .noPatch) {
+                        Text(viewModel.dateTimeFormatter.string(from: viewModel.patchExpiresAt))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("-")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            
+            Section(header: SectionHeader(label: LocalizedString("Configuration", comment: "Configuration section"))) {
+                NavigationLink(destination: InsulinTypeSelector(initialValue: viewModel.insulinType, supportedInsulinTypes: supportedInsulinTypes, didConfirm: viewModel.didChangeInsulinType)) {
+                    HStack {
+                        Text(LocalizedString("Insulin Type", comment: "Text for selecting insulin type"))
+                            .foregroundColor(Color.primary)
+                        Spacer()
+                        Text(viewModel.insulinType.brandName)
+                            .foregroundColor(.secondary)
+                        }
+                }
+                NavigationLink(destination: PatchSettingsView()) {
+                    Text(LocalizedString("Patch settings", comment: "Text for patch settings view"))
+                        .foregroundColor(Color.primary)
                 }
             }
             
@@ -149,8 +204,58 @@ struct MedtrumKitSettings: View {
         }
     }
     
+    var patchLifecycle: some View {
+        VStack {
+            switch viewModel.patchState {
+            case .noPatch:
+                HStack {
+                    Text(LocalizedString("No active patch", comment: "Text shown when no patch active"))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+            case .active:
+                HStack {
+                    Text(LocalizedString("Age:", comment: "Text shown while patch is active"))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    viewModel.patchLifecycleDays.map { days in
+                        timeComponent(value: days, units: days == 1 ?
+                                      LocalizedString("day", comment: "Unit for singular day") :
+                                        LocalizedString("days", comment: "Unit for plural days"))
+                    }
+                    viewModel.patchLifecycleHours.map { hours in
+                        timeComponent(value: hours, units: hours == 1 ?
+                                      LocalizedString("hour", comment: "Unit for singular hour") :
+                                        LocalizedString("hours", comment: "Unit for plural hours"))
+                    }
+                    viewModel.patchLifecycleMinutes.map { minutes in
+                        timeComponent(value: minutes, units: minutes == 1 ?
+                                      LocalizedString("minute", comment: "Unit for singular minute") :
+                                        LocalizedString("minutes", comment: "Unit for plural minutes"))
+                    }
+                }
+            case .expired:
+                HStack {
+                    Text(LocalizedString("Patch expired", comment: "Text shown when patch expired"))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+            }
+            
+            ProgressView(progress: viewModel.patchLifecycleProgress)
+        }
+    }
+    
+    func timeComponent(value: Int, units: String) -> some View {
+        Group {
+            Text(String(value)).font(.system(size: 28)).fontWeight(.heavy)
+                .foregroundColor(.primary)
+            Text(units).foregroundColor(.secondary)
+        }
+    }
+    
     private var doneButton: some View {
-        Button("Done", action: {
+        Button(LocalizedString("Done", comment: "Button for closing settings"), action: {
             dismiss()
         })
     }

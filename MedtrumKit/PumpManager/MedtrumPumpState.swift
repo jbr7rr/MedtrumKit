@@ -28,6 +28,7 @@ class MedtrumPumpState: RawRepresentable {
         pumpSN = rawValue["pumpSN"] as? Data ?? Data()
         sessionToken = rawValue["sessionToken"] as? Data ?? Data()
         patchId = rawValue["patchId"] as? Data ?? Data()
+        patchActivatedAt = rawValue["patchActivatedAt"] as? Date ?? Date.distantPast
         deviceType = rawValue["deviceType"] as? UInt8 ?? 0
         swVersion = rawValue["swVersion"] as? String ?? "0.0.0"
         pumpTime = rawValue["pumpTime"] as? Date ?? Date()
@@ -73,6 +74,7 @@ class MedtrumPumpState: RawRepresentable {
         pumpSN = Data()
         sessionToken = Data()
         patchId = Data()
+        patchActivatedAt = Date.distantPast
         deviceType = 0
         swVersion = "0.0.0"
         pumpTime = Date()
@@ -103,6 +105,7 @@ class MedtrumPumpState: RawRepresentable {
         value["pumpSN"] = pumpSN
         value["sessionToken"] = sessionToken
         value["patchId"] = patchId
+        value["patchActivatedAt"] = patchActivatedAt
         value["deviceType"] = deviceType
         value["swVersion"] = swVersion
         value["pumpTime"] = pumpTime
@@ -123,10 +126,11 @@ class MedtrumPumpState: RawRepresentable {
     public var isOnboarded: Bool
     public var insulinType: InsulinType?
     public var lastSync: Date
-    
     public var pumpSN: Data
+    
     public var sessionToken: Data
     public var patchId: Data
+    public var patchActivatedAt: Date
     
     public var deviceType: UInt8
     public var swVersion: String
@@ -195,10 +199,10 @@ class MedtrumPumpState: RawRepresentable {
         let model = self.model
         if model == "MD8301" {
             return "TouchCare Nano 300U"
-        } else if model == "MD0201" || model == "MD8201" {
-            return "TouchCare Nano 200U"
-        } else {
+        } else if model == "INVALID" {
             return "TouchCare Nano UNKNOWN"
+        } else {
+            return "TouchCare Nano 200U"
         }
     }
     

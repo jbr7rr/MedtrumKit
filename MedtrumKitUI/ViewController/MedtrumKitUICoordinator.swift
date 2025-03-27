@@ -77,7 +77,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             
         case .settingsScreen:
             let viewModel = MedtrumKitSettingsViewModel(pumpManager: self.pumpManager)
-            return hostingController(rootView: MedtrumKitSettings(viewModel: viewModel))
+            return hostingController(rootView: MedtrumKitSettings(viewModel: viewModel, supportedInsulinTypes: allowedInsulinTypes))
         }
     }
     

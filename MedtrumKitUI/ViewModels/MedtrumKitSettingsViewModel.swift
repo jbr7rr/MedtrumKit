@@ -9,6 +9,12 @@ import LoopKit
 import HealthKit
 import SwiftUI
 
+enum PatchLifecycleState {
+    case noPatch
+    case active
+    case expired
+}
+
 class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     private let processQueue = DispatchQueue(label: "com.nightscout.medtrumkit.settingsViewModel")
     
@@ -17,7 +23,12 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var reservoirLevel: Double = 0
     @Published var maxReservoirLevel: Double = 1
     @Published var basalType: BasalState = .active
+    @Published var insulinType: InsulinType = .novolog
     @Published var lastSync: Date = Date.distantPast
+    @Published var patchLifecycleProgress: Double = 0
+    @Published var patchState: PatchLifecycleState = .noPatch
+    @Published var patchActivatedAt: Date = Date.distantPast
+    @Published var patchExpiresAt: Date = Date.distantFuture
     @Published var isUpdatingPumpState = false
     @Published var showingDeleteConfirmation = false
     
@@ -41,6 +52,13 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
         return formatter
     }()
     
+    let dateTimeFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+    
     private let log = MedtrumLogger(category: "settingsViewModel")
     private let pumpManager: MedtrumPumpManager?
     init(pumpManager: MedtrumPumpManager?) {
@@ -59,30 +77,36 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
         return reservoirVolumeFormatter.string(from: quantity, for: .internationalUnit()) ?? ""
     }
     
-    private func updateState(_ state: MedtrumPumpState) {
-        switch state.model {
-        case "MD8301":
-            self.imageName = "nano300"
-            self.maxReservoirLevel = 300
-            break
-        default:
-            self.imageName = "nano200"
-            self.maxReservoirLevel = 200
-            break
-        }
-        
-        self.model = state.model
-        self.reservoirLevel = state.reservoir
-        self.basalType = state.basalState
-        self.lastSync = state.lastSync
-    }
-    
     var basalRate: Double {
         if let tempBasal = pumpManager?.state.tempBasalUnits {
             return tempBasal
         }
         
         return pumpManager?.currentBaseBasalRate ?? 0
+    }
+    
+    var patchLifecycleDays: Int? {
+        guard self.patchState == .active else {
+            return nil
+        }
+        
+        return Int((Date.now.timeIntervalSince1970 - self.patchActivatedAt.timeIntervalSince1970).days)
+    }
+    
+    var patchLifecycleHours: Int? {
+        guard self.patchState == .active else {
+            return nil
+        }
+        
+        return Int((Date.now.timeIntervalSince1970 - self.patchActivatedAt.timeIntervalSince1970).hours.truncatingRemainder(dividingBy: 24))
+    }
+    
+    var patchLifecycleMinutes: Int? {
+        guard self.patchState == .active else {
+            return nil
+        }
+        
+        return Int((Date.now.timeIntervalSince1970 - self.patchActivatedAt.timeIntervalSince1970).minutes.truncatingRemainder(dividingBy: 60))
     }
     
     func syncData() {
@@ -96,6 +120,16 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
                 self.isUpdatingPumpState = false
             }
         }
+    }
+    
+    func didChangeInsulinType(_ newType: InsulinType?) {
+        guard let type = newType else {
+            return
+        }
+        
+        self.pumpManager?.state.insulinType = type
+        self.pumpManager?.notifyStateDidChange()
+        self.insulinType = type
     }
     
     func stopUsingMedtrum() {
@@ -121,6 +155,39 @@ extension MedtrumKitSettingsViewModel {
             return
         }
         
-        self.updateState(pumpManager.state)
+        DispatchQueue.main.async {
+            self.updateState(pumpManager.state)
+        }
+    }
+    
+    private func updateState(_ state: MedtrumPumpState) {
+        switch state.model {
+        case "MD8301":
+            self.imageName = "nano300"
+            self.maxReservoirLevel = 300
+            break
+        default:
+            self.imageName = "nano200"
+            self.maxReservoirLevel = 200
+            break
+        }
+        
+        self.model = state.pumpName
+        self.reservoirLevel = state.reservoir
+        self.basalType = state.basalState
+        self.lastSync = state.lastSync
+        self.patchActivatedAt = state.patchActivatedAt
+        
+        if !state.patchId.isEmpty {
+            self.patchLifecycleProgress = min((Date.now.timeIntervalSince1970 - state.patchActivatedAt.timeIntervalSince1970) / TimeInterval(days: 3), 1)
+            self.patchState = self.patchLifecycleProgress == 1 ? .expired : .active
+            self.patchExpiresAt = self.patchActivatedAt.addingTimeInterval(TimeInterval(days: 3))
+        } else {
+            self.patchState = .noPatch
+        }
+        
+        if let insulinType = state.insulinType {
+            self.insulinType = insulinType
+        }
     }
 }
