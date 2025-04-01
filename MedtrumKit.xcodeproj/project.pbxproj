@@ -91,6 +91,7 @@
 		3ED27E1B2D80CAC40026488B /* SynchronizePacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED27E1A2D80CABB0026488B /* SynchronizePacketTests.swift */; };
 		3ED27E1D2D80D15E0026488B /* AlarmState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED27E1C2D80D15A0026488B /* AlarmState.swift */; };
 		3ED27E1F2D80D2660026488B /* PatchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED27E1E2D80D25D0026488B /* PatchState.swift */; };
+		3EDA29762D9B862E00895031 /* PatchSettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EDA29752D9B862800895031 /* PatchSettingsViewModel.swift */; };
 		3EE2DAC52D8A076200EA2EAD /* SuspendPumpPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EE2DAC42D8A075B00EA2EAD /* SuspendPumpPacket.swift */; };
 		3EEA51F72D7DF061000C9E1E /* ReadBolusStatePacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EEA51F62D7DF061000C9E1E /* ReadBolusStatePacket.swift */; };
 		3EEA51F92D7E13E6000C9E1E /* ReadBolusStatePacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EEA51F82D7E13E6000C9E1E /* ReadBolusStatePacketTests.swift */; };
@@ -246,6 +247,7 @@
 		3ED27E1A2D80CABB0026488B /* SynchronizePacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynchronizePacketTests.swift; sourceTree = "<group>"; };
 		3ED27E1C2D80D15A0026488B /* AlarmState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlarmState.swift; sourceTree = "<group>"; };
 		3ED27E1E2D80D25D0026488B /* PatchState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchState.swift; sourceTree = "<group>"; };
+		3EDA29752D9B862800895031 /* PatchSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchSettingsViewModel.swift; sourceTree = "<group>"; };
 		3EE2DAC42D8A075B00EA2EAD /* SuspendPumpPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuspendPumpPacket.swift; sourceTree = "<group>"; };
 		3EEA51F62D7DF061000C9E1E /* ReadBolusStatePacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadBolusStatePacket.swift; sourceTree = "<group>"; };
 		3EEA51F82D7E13E6000C9E1E /* ReadBolusStatePacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadBolusStatePacketTests.swift; sourceTree = "<group>"; };
@@ -363,6 +365,7 @@
 		3E45665F2D83719200FE1E0C /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
+				3EDA29752D9B862800895031 /* PatchSettingsViewModel.swift */,
 				3E26BE0E2D906AE500E595B0 /* MedtrumKitSettingsViewModel.swift */,
 				3E4566602D83719900FE1E0C /* DebugViewModel.swift */,
 			);
@@ -737,6 +740,7 @@
 			files = (
 				3E767D562D67BCD6004B1971 /* MedtrumKitUICoordinator.swift in Sources */,
 				3ED27E1D2D80D15E0026488B /* AlarmState.swift in Sources */,
+				3EDA29762D9B862E00895031 /* PatchSettingsViewModel.swift in Sources */,
 				3EEA52072D7E2265000C9E1E /* SetBolusPacket.swift in Sources */,
 				3E5060262D71035900376609 /* SubscribePacket.swift in Sources */,
 				3E5060202D70F97500376609 /* SetTimePacket.swift in Sources */,

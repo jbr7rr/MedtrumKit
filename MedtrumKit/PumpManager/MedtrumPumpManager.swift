@@ -688,9 +688,9 @@ public extension MedtrumPumpManager {
             
             let packet = ActivatePacket(
                 expirationTimer: 1,
-                alarmSetting: .BeepOnly,
-                hourlyMaxInsulin: 40,
-                dailyMaxInsulin: 180,
+                alarmSetting: self.state.alarmSetting,
+                hourlyMaxInsulin: self.state.maxHourlyInsulin,
+                dailyMaxInsulin: self.state.maxDailyInsulin,
                 currentTDD: 0,
                 basalProfile: self.state.basalSchedule.toData()
             )

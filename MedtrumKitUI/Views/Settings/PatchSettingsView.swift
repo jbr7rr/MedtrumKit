@@ -6,13 +6,118 @@
 //
 
 import SwiftUI
+import LoopKitUI
 
 struct PatchSettingsView: View {
+    @ObservedObject var viewModel: PatchSettingsViewModel
+    @State var isEditingMaxHourly = false
+    @State var isEditingMaxDaily = false
+    @State var isEditingAlarmSetting = false
+    @State var isEditingExpirationTimer = false
+    
+    let unitText = LocalizedString("U", comment: "Insulin unit")
+    
     var body: some View {
-        Text(/*@START_MENU_TOKEN@*/"Hello, World!"/*@END_MENU_TOKEN@*/)
+        Section {
+            sectionItem(
+                title: LocalizedString("Max hourly insulin", comment: "Label for maximum hourly insulin delivery"),
+                isEditing: isEditingMaxHourly,
+                value: $viewModel.maxHourlyInsulin,
+                valueRange: Array(20...120).map({ Double($0) * 5 }),
+                formatter: { value in "\(String(format: "%.0f", value))\(self.unitText)"}
+            )
+            .onTapGesture {
+                withAnimation {
+                    self.isEditingMaxHourly.toggle()
+                }
+            }
+            
+            sectionItem(
+                title: LocalizedString("Max daily insulin", comment: "Label for maximum daily insulin delivery"),
+                isEditing: isEditingMaxDaily,
+                value: $viewModel.maxDailyInsulin,
+                valueRange: Array(100...200).map({ Double($0) * 5 }),
+                formatter: { value in "\(String(format: "%.0f", value))\(self.unitText)"}
+            )
+            .onTapGesture {
+                withAnimation {
+                    self.isEditingMaxDaily.toggle()
+                }
+            }
+            
+            sectionItem(
+                title: LocalizedString("Alarm setting", comment: "Label for alarm settings"),
+                isEditing: isEditingAlarmSetting,
+                value: $viewModel.alarmSettings,
+                valueRange: viewModel.alarmOptions,
+                formatter: { value in
+                    switch(value) {
+                    case 0:
+                        return LocalizedString("Light, vibrate and, beep", comment: "Label for alarm options: light, vibrate and beep")
+                    case 1:
+                        return LocalizedString("Light and vibrate", comment: "Label for alarm options: light and vibrate")
+                    case 2:
+                        return LocalizedString("Light and beep", comment: "Label for alarm options: light and beep")
+                    case 3:
+                        return LocalizedString("Light-only", comment: "Label for alarm options: light")
+                    case 4:
+                        return LocalizedString("Vibrate and beep", comment: "Label for alarm options: vibrate and beep")
+                    case 5:
+                        return LocalizedString("Vibrate-only", comment: "Label for alarm options: vibrate")
+                    case 6:
+                        return LocalizedString("Beep-only", comment: "Label for alarm options: beep")
+                    default:
+                        return LocalizedString("Silence", comment: "Label for alarm options: none")
+                    }
+                }
+            )
+            .onTapGesture {
+                withAnimation {
+                    self.isEditingAlarmSetting.toggle()
+                }
+            }
+            
+            sectionItem(
+                title: LocalizedString("Expiration alarm", comment: "Label for expiration alarm"),
+                isEditing: isEditingExpirationTimer,
+                value: $viewModel.expirationTimer,
+                valueRange: Array(0...1).map({ Double($0) }),
+                formatter: { value in
+                    switch(value) {
+                    case 0:
+                        return LocalizedString("No expiration alarm", comment: "Label for expiration alarm: none")
+                    default:
+                        return LocalizedString("Alarm at 12 hour remaining and 0 hour remaining", comment: "Label for alarm options: 12h and 0h")
+                    }
+                }
+            )
+            .onTapGesture {
+                withAnimation {
+                    self.isEditingAlarmSetting.toggle()
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
+    func sectionItem(title: String, isEditing: Bool, value: Binding<Double>, valueRange: [Double], formatter: @escaping (Double) -> String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(formatter(value.wrappedValue))
+        }
+        .foregroundColor(isEditing ? Color.blue : Color.primary)
+        
+        if isEditing {
+            ResizeablePicker(selection: value,
+                             data: valueRange,
+                             formatter: { value in formatter(value) }
+            )
+            .padding(.horizontal)
+        }
     }
 }
 
 #Preview {
-    PatchSettingsView()
+    PatchSettingsView(viewModel: PatchSettingsViewModel(nil))
 }

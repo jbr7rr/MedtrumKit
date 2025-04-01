@@ -38,6 +38,7 @@ class MedtrumPumpState: RawRepresentable {
         reservoir = rawValue["reservoir"] as? Double ?? 0
         battery = rawValue["battery"] as? Double ?? 0
         basalStateSince = rawValue["basalStateSince"] as? Date ?? Date.distantPast
+        expirationTimer = rawValue["expirationTimer"] as? UInt8 ?? 1
         
         if let rawInsulinType = rawValue["insulinType"] as? InsulinType.RawValue {
             insulinType = InsulinType(rawValue: rawInsulinType)
@@ -66,6 +67,12 @@ class MedtrumPumpState: RawRepresentable {
         } else {
             bolusState = .noBolus
         }
+        
+        if let alarmSettingRaw = rawValue["alarmSetting"] as? AlarmSettings.RawValue {
+            alarmSetting = AlarmSettings(rawValue: alarmSettingRaw) ?? .None
+        } else {
+            alarmSetting = .None
+        }
     }
     
     public init(_ basal: BasalRateSchedule?) {
@@ -88,6 +95,8 @@ class MedtrumPumpState: RawRepresentable {
         basalState = .active
         basalStateSince = Date.distantPast
         bolusState = .noBolus
+        alarmSetting = .None
+        expirationTimer = 1
 
         if let basal = basal {
             basalSchedule = BasalSchedule(entries: basal.items)
@@ -119,6 +128,8 @@ class MedtrumPumpState: RawRepresentable {
         value["battery"] = battery
         value["basalState"] = basalState.rawValue
         value["basalStateSince"] = basalStateSince
+        value["alarmSetting"] = alarmSetting.rawValue
+        value["expirationTimer"] = expirationTimer
         
         return value
     }
@@ -142,9 +153,11 @@ class MedtrumPumpState: RawRepresentable {
     public var reservoir: Double
     public var battery: Double
     
-    // Patch limits
+    // Patch settings
     public var maxHourlyInsulin: Double
     public var maxDailyInsulin: Double
+    public var alarmSetting: AlarmSettings
+    public var expirationTimer: UInt8
     
     public var bolusState: BolusState
     

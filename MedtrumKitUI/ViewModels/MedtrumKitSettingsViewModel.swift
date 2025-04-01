@@ -32,6 +32,8 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var isUpdatingPumpState = false
     @Published var showingDeleteConfirmation = false
     
+    public let patchSettingsViewModel: PatchSettingsViewModel
+    
     let reservoirVolumeFormatter: QuantityFormatter = {
         let formatter = QuantityFormatter(for: .internationalUnit())
         formatter.numberFormatter.maximumFractionDigits = 1
@@ -63,6 +65,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     private let pumpManager: MedtrumPumpManager?
     init(pumpManager: MedtrumPumpManager?) {
         self.pumpManager = pumpManager
+        self.patchSettingsViewModel = PatchSettingsViewModel(pumpManager)
         
         guard let pumpManager = pumpManager else {
             return
