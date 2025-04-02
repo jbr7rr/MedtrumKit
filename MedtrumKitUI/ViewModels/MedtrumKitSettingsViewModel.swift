@@ -18,9 +18,13 @@ enum PatchLifecycleState {
 class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     private let processQueue = DispatchQueue(label: "com.nightscout.medtrumkit.settingsViewModel")
     
+    @Published var pumpBaseSN: String = ""
+    @Published var pumpName: String = ""
     @Published var model: String = ""
+    @Published var patchId: UInt64 = 0
     @Published var imageName: String = ""
     @Published var reservoirLevel: Double = 0
+    @Published var battery: Double = 0
     @Published var maxReservoirLevel: Double = 1
     @Published var basalType: BasalState = .active
     @Published var insulinType: InsulinType = .novolog
@@ -29,6 +33,8 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var patchState: PatchLifecycleState = .noPatch
     @Published var patchActivatedAt: Date = Date.distantPast
     @Published var patchExpiresAt: Date = Date.distantFuture
+    @Published var isConnected: Bool = false
+    @Published var isReconnecting: Bool = false
     @Published var isUpdatingPumpState = false
     @Published var showingDeleteConfirmation = false
     
@@ -37,6 +43,13 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     let reservoirVolumeFormatter: QuantityFormatter = {
         let formatter = QuantityFormatter(for: .internationalUnit())
         formatter.numberFormatter.maximumFractionDigits = 1
+        return formatter
+    }()
+    
+    let batteryFormatter: QuantityFormatter = {
+        let formatter = QuantityFormatter(for: .internationalUnit())
+        formatter.numberFormatter.minimumFractionDigits = 2
+        formatter.numberFormatter.maximumFractionDigits = 2
         return formatter
     }()
     
@@ -71,6 +84,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
             return
         }
         
+        self.isConnected = pumpManager.bluetooth.isConnected
         updateState(pumpManager.state)
         pumpManager.addStatusObserver(self, queue: processQueue)
     }
@@ -78,6 +92,11 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     func reservoirText(for units: Double) -> String {
         let quantity = HKQuantity(unit: .internationalUnit(), doubleValue: units)
         return reservoirVolumeFormatter.string(from: quantity, for: .internationalUnit()) ?? ""
+    }
+    
+    func batteryText(for voltage: Double) -> String {
+        let quantity = HKQuantity(unit: .volt(), doubleValue: voltage)
+        return batteryFormatter.string(from: quantity, for: .volt()) ?? ""
     }
     
     var basalRate: Double {
@@ -159,12 +178,14 @@ extension MedtrumKitSettingsViewModel {
         }
         
         DispatchQueue.main.async {
+            self.isConnected = pumpManager.bluetooth.isConnected
             self.updateState(pumpManager.state)
         }
     }
     
     private func updateState(_ state: MedtrumPumpState) {
-        switch state.model {
+        self.model = state.model
+        switch self.model {
         case "MD8301":
             self.imageName = "nano300"
             self.maxReservoirLevel = 300
@@ -175,11 +196,14 @@ extension MedtrumKitSettingsViewModel {
             break
         }
         
-        self.model = state.pumpName
+        self.pumpBaseSN = state.pumpSN.hexEncodedString().uppercased()
+        self.pumpName = state.pumpName
+        self.patchId = state.patchId.toUInt64()
         self.reservoirLevel = state.reservoir
         self.basalType = state.basalState
         self.lastSync = state.lastSync
         self.patchActivatedAt = state.patchActivatedAt
+        self.battery = state.battery
         
         if !state.patchId.isEmpty {
             self.patchLifecycleProgress = min((Date.now.timeIntervalSince1970 - state.patchActivatedAt.timeIntervalSince1970) / TimeInterval(days: 3), 1)

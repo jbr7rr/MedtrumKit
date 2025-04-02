@@ -19,7 +19,7 @@ public enum BolusState: Int {
     case canceling = 2
 }
 
-class MedtrumPumpState: RawRepresentable {
+public class MedtrumPumpState: RawRepresentable {
     public typealias RawValue = PumpManager.RawStateValue
     
     required public init(rawValue: RawValue) {
@@ -29,6 +29,7 @@ class MedtrumPumpState: RawRepresentable {
         sessionToken = rawValue["sessionToken"] as? Data ?? Data()
         patchId = rawValue["patchId"] as? Data ?? Data()
         patchActivatedAt = rawValue["patchActivatedAt"] as? Date ?? Date.distantPast
+        patchExpiresAt = rawValue["patchExpiresAt"] as? Date
         deviceType = rawValue["deviceType"] as? UInt8 ?? 0
         swVersion = rawValue["swVersion"] as? String ?? "0.0.0"
         pumpTime = rawValue["pumpTime"] as? Date ?? Date()
@@ -82,6 +83,7 @@ class MedtrumPumpState: RawRepresentable {
         sessionToken = Data()
         patchId = Data()
         patchActivatedAt = Date.distantPast
+        patchExpiresAt = nil
         deviceType = 0
         swVersion = "0.0.0"
         pumpTime = Date()
@@ -115,6 +117,7 @@ class MedtrumPumpState: RawRepresentable {
         value["sessionToken"] = sessionToken
         value["patchId"] = patchId
         value["patchActivatedAt"] = patchActivatedAt
+        value["patchExpiresAt"] = patchExpiresAt
         value["deviceType"] = deviceType
         value["swVersion"] = swVersion
         value["pumpTime"] = pumpTime
@@ -142,6 +145,7 @@ class MedtrumPumpState: RawRepresentable {
     public var sessionToken: Data
     public var patchId: Data
     public var patchActivatedAt: Date
+    public var patchExpiresAt: Date?
     
     public var deviceType: UInt8
     public var swVersion: String

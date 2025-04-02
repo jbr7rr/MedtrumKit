@@ -49,15 +49,11 @@ struct InsulinTypeSelector: View {
         }
         .edgesIgnoringSafeArea(.bottom)
         .navigationBarHidden(false)
+        .navigationTitle(LocalizedString("Select insulin type", comment: "Title for insulin type"))
     }
     
     @ViewBuilder
     private var title: some View {
-        Text(LocalizedString("Select insulin type", comment: "Title for insulin type"))
-            .font(.title)
-            .bold()
-            .padding(.horizontal)
-        
         Text(LocalizedString("Select the type of insulin that you will be using in this pump", comment: "Title text for insulin type confirmation page"))
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal)

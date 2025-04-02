@@ -4,7 +4,9 @@ import LoopKit
 
 public class MedtrumPumpManager: DeviceManager {
     public static let pluginIdentifier = "Medtrum"
-    public let localizedTitle = LocalizedString("Medtrum", comment: "Generic title of the Medtrum pump manager")
+    public var localizedTitle: String {
+        LocalizedString("Medtrum", comment: "Generic title of the Medtrum pump manager") + " " + state.pumpName
+    }
     public let managerIdentifier: String = "MedtrumKit"
 
     private let log = MedtrumLogger(category: "MedtrumPumpManager")
@@ -12,7 +14,7 @@ public class MedtrumPumpManager: DeviceManager {
     public let pumpDelegate = WeakSynchronizedDelegate<PumpManagerDelegate>()
     private let statusObservers = WeakSynchronizedSet<PumpManagerStatusObserver>()
     
-    var state: MedtrumPumpState
+    public var state: MedtrumPumpState
     var oldState: MedtrumPumpState
     public var rawState: PumpManager.RawStateValue {
         state.rawValue
@@ -128,17 +130,11 @@ public class MedtrumPumpManager: DeviceManager {
     
     private let basalIntervals: [TimeInterval] = Array(0 ..< 24).map({ TimeInterval(60 * 60 * $0) })
     public var currentBaseBasalRate: Double {
-        guard !state.basalSchedule.entries.isEmpty else {
-            // Prevent crash if basalSchedule isnt set
-            return 0
-        }
-
         let now = Date()
         let startOfDay = Calendar.current.startOfDay(for: now)
         let nowTimeInterval = now.timeIntervalSince(startOfDay)
-
-        let index = (basalIntervals.firstIndex(where: { $0 > nowTimeInterval }) ?? 24) - 1
-        return state.basalSchedule.entries.indices.contains(index) ? state.basalSchedule.entries[index].rate : 0
+        
+        return state.basalSchedule.entries.last(where: { $0.startTime < nowTimeInterval })?.rate ?? 0
     }
 }
 
@@ -203,6 +199,9 @@ public extension MedtrumPumpManager {
     }
     
     func ensureCurrentPumpData(completion: ((Date?) -> Void)?) {
+        self.state.patchActivatedAt = Date.now
+        self.state.patchExpiresAt = Date.now.addingTimeInterval(.days(3))
+        self.notifyStateDidChange()
         guard Date.now.timeIntervalSince(state.lastSync) > .minutes(4) else {
             self.log.warning("Skipping status update -> data is fresh: \(Date.now.timeIntervalSince(state.lastSync)) sec")
             completion?(state.lastSync)
@@ -704,6 +703,7 @@ public extension MedtrumPumpManager {
             if case .success(let data) = result, let data = data as? ActivatePacketResponse {
                 self.state.patchId = data.patchId
                 self.state.patchActivatedAt = Date.now
+                self.state.patchActivatedAt = Date.now.addingTimeInterval(.days(3))
                 self.notifyStateDidChange()
                 
                 self.log.info("Patch activated!")

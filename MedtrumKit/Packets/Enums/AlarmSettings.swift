@@ -5,7 +5,7 @@
 //  Created by Bastiaan Verhaar on 02/03/2025.
 //
 
-enum AlarmSettings: UInt8 {
+public enum AlarmSettings: UInt8 {
     case LightVibrateAndBeep = 0
     case LightAndVibrate = 1
     case LightAndBeep = 2

@@ -21,6 +21,14 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     var scanCompletion: ((MedtrumScanResult) -> Void)?
     var connectCompletion: ((MedtrumConnectResult) -> Void)?
     
+    public var isConnected: Bool {
+        if let peripheral = peripheral, peripheral.state == .connected {
+            return true
+        }
+        
+        return false
+    }
+    
     override init() {
         super.init()
         

@@ -53,15 +53,6 @@ struct MedtrumKitSettings: View {
                     reservoirStatus
                 }
                 .padding(.bottom, 5)
-                
-                //                if viewModel.showPumpTimeSyncWarning {
-                //                    VStack(alignment: .leading, spacing: 4) {
-                //                        Text(LocalizedString("Time Change Detected", comment: "title for time change detected notice"))
-                //                            .font(Font.subheadline.weight(.bold))
-                //                        Text(LocalizedString("The time on your pump is different from the current time. Your pump’s time controls your scheduled therapy settings. Scroll down to Pump Time row to review the time difference and configure your pump.", comment: "description for time change detected notice"))
-                //                            .font(Font.footnote.weight(.semibold))
-                //                    }.padding(.vertical, 8)
-                //                }
             }
             
             Section() {
@@ -79,24 +70,20 @@ struct MedtrumKitSettings: View {
                 .disabled(viewModel.isUpdatingPumpState)
                 
                 HStack {
+                    Text(LocalizedString("Status", comment: "Text for status")).foregroundColor(Color.primary)
+                    Spacer()
+                    HStack(spacing: 10) {
+                        connectionStatusText
+                        connectionStatusIcon
+                    }
+                }
+                
+                HStack {
                     Text(LocalizedString("Last sync", comment: "Text for last sync"))
                         .foregroundColor(Color.primary)
                     Spacer()
                     if (viewModel.patchState != .noPatch) {
                         Text(viewModel.dateFormatter.string(from: viewModel.lastSync))
-                            .foregroundColor(.secondary)
-                    } else {
-                        Text("-")
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                HStack {
-                    Text(LocalizedString("Patch activated at", comment: "Text for activatedAt"))
-                        .foregroundColor(Color.primary)
-                    Spacer()
-                    if (viewModel.patchState != .noPatch) {
-                        Text(viewModel.dateTimeFormatter.string(from: viewModel.patchActivatedAt))
                             .foregroundColor(.secondary)
                     } else {
                         Text("-")
@@ -126,11 +113,66 @@ struct MedtrumKitSettings: View {
                         Spacer()
                         Text(viewModel.insulinType.brandName)
                             .foregroundColor(.secondary)
-                        }
+                    }
                 }
                 NavigationLink(destination: PatchSettingsView(viewModel: viewModel.patchSettingsViewModel)) {
                     Text(LocalizedString("Patch settings", comment: "Text for patch settings view"))
                         .foregroundColor(Color.primary)
+                }
+            }
+            
+            Section(header: SectionHeader(label: LocalizedString("Information", comment: "The title for patch/pump information"))) {
+                HStack {
+                    Text(LocalizedString("Pump base SN", comment: "Text for pumpSN"))
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    Text(viewModel.pumpBaseSN)
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text(LocalizedString("Pump base model", comment: "Text for model"))
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    Text(viewModel.model)
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text(LocalizedString("Patch ID", comment: "Text for activatedAt"))
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    Text("\(viewModel.patchId)")
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text(LocalizedString("Patch activated at", comment: "Text for activatedAt"))
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    if (viewModel.patchState != .noPatch) {
+                        Text(viewModel.dateTimeFormatter.string(from: viewModel.patchActivatedAt))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("-")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                HStack {
+                    Text(LocalizedString("Patch expires at", comment: "Text for expiresAt"))
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    if (viewModel.patchState != .noPatch) {
+                        Text(viewModel.dateTimeFormatter.string(from: viewModel.patchExpiresAt))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("-")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                HStack {
+                    Text(LocalizedString("Battery", comment: "Text for battery voltageB"))
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    Text(viewModel.batteryText(for: viewModel.battery))
+                        .foregroundColor(.secondary)
                 }
             }
             
@@ -155,7 +197,7 @@ struct MedtrumKitSettings: View {
         }
         .listStyle(InsetGroupedListStyle())
         .navigationBarItems(trailing: doneButton)
-        .navigationBarTitle(viewModel.model)
+        .navigationBarTitle(viewModel.pumpName)
     }
     
     var reservoirStatus: some View {
@@ -272,6 +314,26 @@ struct MedtrumKitSettings: View {
         }
         
         return guidanceColors.critical
+    }
+    
+    var connectionStatusText: some View {
+        if viewModel.isConnected {
+            return Text(LocalizedString("Connected", comment: "label for connected"))
+        }
+        
+        if viewModel.isReconnecting {
+            return Text(LocalizedString("Reconnecting...", comment: "label for reconnecting"))
+        }
+        
+        return Text(LocalizedString("Disconnected", comment: "label for disconnected"))
+    }
+    
+    var connectionStatusIcon: some View {
+        let color = viewModel.isReconnecting ? Color.orange : viewModel.isConnected ? Color.green : Color.red
+        
+        return Circle()
+            .fill(color)
+            .frame(width: 10, height: 10)
     }
     
     var deliverySectionTitle: String {
