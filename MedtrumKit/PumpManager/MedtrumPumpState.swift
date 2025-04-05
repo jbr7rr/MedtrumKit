@@ -193,7 +193,7 @@ public class MedtrumPumpState: RawRepresentable {
     }
 
     public var model: String {
-        let type = Crypto.simpleDecrypt(self.pumpSN).toUInt64()
+        let type = Crypto.simpleDecrypt(Data(self.pumpSN.reversed())).toUInt64()
         
         if (126000000..<126999999).contains(type) {
             return "MD0201"

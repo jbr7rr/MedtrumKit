@@ -6,11 +6,15 @@ import UIKit
 
 enum MedtrumUIScreen {
     case debugScreen
+    case deactivatePatchScreen
+    case pumpBaseSettingsScreen
+    case patchPrimingScreen
+    case patchActivationScreen
     case settingsScreen
 }
 
 class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, CompletionNotifying,
-    UINavigationControllerDelegate
+                               UINavigationControllerDelegate
 {
     private let colorPalette: LoopUIColorPalette
     private var pumpManager: MedtrumPumpManager?
@@ -21,7 +25,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
     var currentScreen: MedtrumUIScreen {
         return screenStack.last!
     }
-
+    
     init(
         pumpManager: MedtrumPumpManager? = nil,
         colorPalette: LoopUIColorPalette,
@@ -43,14 +47,14 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
         self.allowedInsulinTypes = allowedInsulinTypes
         super.init(navigationBarClass: UINavigationBar.self, toolbarClass: UIToolbar.self)
     }
-
+    
     @available(*, unavailable) required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-
+        
         if screenStack.isEmpty {
             screenStack = [getInitialScreen()]
             let viewController = viewControllerForScreen(currentScreen)
@@ -60,23 +64,73 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
     }
     
     func getInitialScreen() -> MedtrumUIScreen {
+        guard let pumpManager = self.pumpManager else {
+            return .settingsScreen
+        }
+        
+        if !pumpManager.isOnboarded {
+            // TODO: Add extra screens for setting up insulinType & base patch settings
+            return .pumpBaseSettingsScreen
+        }
+        
+        if pumpManager.state.patchId.isEmpty || pumpManager.state.pumpSN.isEmpty {
+            return .pumpBaseSettingsScreen
+        }
+        
+        if pumpManager.state.sessionToken.isEmpty {
+            return .patchActivationScreen
+        }
+        
         return .settingsScreen
     }
     
-    private func viewControllerForScreen(_ screen: MedtrumUIScreen) -> UIViewController {
+    private func viewControllerForScreen(_ screen: MedtrumUIScreen, _ file: String = #file) -> UIViewController {
         switch screen {
         case .debugScreen:
-            if let pumpManager = self.pumpManager {
+            if let pumpManager = self.pumpManager, let pumpManagerOnboardingDelegate = self.pumpManagerOnboardingDelegate {
                 pumpManager.state.isOnboarded = true
                 pumpManager.notifyStateDidChange()
-                self.pumpManagerOnboardingDelegate?.pumpManagerOnboarding(didCreatePumpManager: pumpManager)
+                pumpManagerOnboardingDelegate.pumpManagerOnboarding(didCreatePumpManager: pumpManager)
             }
             
             let viewModel = DebugViewModel(self.pumpManager)
             return hostingController(rootView: DebugView(viewModel: viewModel))
             
+        case .deactivatePatchScreen:
+            let nextStep = { self.resetNavigationTo(.pumpBaseSettingsScreen) }
+            let viewModel = DeactivatePatchViewModel(pumpManager, nextStep)
+            return hostingController(rootView: PatchDeactivationView(viewModel: viewModel))
+            
+        case .pumpBaseSettingsScreen:
+            let viewModel = PumpBaseSettingsViewModel(pumpManager, {  self.navigateTo(.patchPrimingScreen) })
+            return hostingController(rootView: PumpBaseSettingsView(viewModel: viewModel))
+            
+        case .patchPrimingScreen:
+            let viewModel = PatchPrimingViewModel(pumpManager, { self.resetNavigationTo(.patchActivationScreen) })
+            return hostingController(rootView: PatchPrimingView(viewModel: viewModel))
+            
+        case .patchActivationScreen:
+            let nextStep = {
+                if let pumpManager = self.pumpManager, let pumpManagerOnboardingDelegate = self.pumpManagerOnboardingDelegate {
+                    pumpManagerOnboardingDelegate.pumpManagerOnboarding(didCreatePumpManager: pumpManager)
+                }
+                
+                self.resetNavigationTo(.settingsScreen)
+            }
+            let viewModel = PatchActivationViewModel(pumpManager, nextStep)
+            return hostingController(rootView: PatchActivationView(viewModel: viewModel))
+            
         case .settingsScreen:
-            let viewModel = MedtrumKitSettingsViewModel(pumpManager: self.pumpManager)
+            let toDeactivation = { self.navigateTo(.deactivatePatchScreen) }
+            let pumpRemoval = {
+                guard let completionDelegate = self.completionDelegate else {
+                    return
+                }
+                
+                completionDelegate.completionNotifyingDidComplete(self)
+            }
+            
+            let viewModel = MedtrumKitSettingsViewModel(self.pumpManager, toDeactivation, pumpRemoval)
             return hostingController(rootView: MedtrumKitSettings(viewModel: viewModel, supportedInsulinTypes: allowedInsulinTypes))
         }
     }
@@ -86,8 +140,26 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             .environment(\.appName, Bundle.main.bundleDisplayName)
         return DismissibleHostingController(rootView: rootView, colorPalette: colorPalette)
     }
-
+    
     var pumpManagerOnboardingDelegate: (any LoopKitUI.PumpManagerOnboardingDelegate)?
-
+    
     var completionDelegate: (any LoopKitUI.CompletionDelegate)?
+}
+
+extension MedtrumKitUICoordinator {
+    func navigateTo(_ screen: MedtrumUIScreen) {
+        screenStack.append(screen)
+        let viewController = viewControllerForScreen(screen)
+        viewController.isModalInPresentation = false
+        self.pushViewController(viewController, animated: true)
+        viewController.view.layoutSubviews()
+    }
+    
+    func resetNavigationTo(_ screen: MedtrumUIScreen) {
+        screenStack = [screen]
+        let viewController = viewControllerForScreen(screen)
+        viewController.isModalInPresentation = false
+        self.setViewControllers([viewController], animated: false)
+        viewController.view.layoutSubviews()
+    }
 }

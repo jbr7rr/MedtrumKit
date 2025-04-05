@@ -34,16 +34,7 @@ struct MedtrumKitSettings: View {
         List {
             Section() {
                 VStack {
-                    HStack(){
-                        Spacer()
-                        Image(uiImage: UIImage(named: viewModel.imageName, in: Bundle(for: MedtrumKitHUDProvider.self), compatibleWith: nil)!)
-                            .resizable()
-                            .scaledToFit()
-                            .padding(.horizontal)
-                            .frame(height: 150)
-                        Spacer()
-                    }
-                    
+                    PumpImage(is300u: viewModel.is300u)
                     patchLifecycle
                 }
                 
@@ -56,19 +47,6 @@ struct MedtrumKitSettings: View {
             }
             
             Section() {
-                Button(action: {
-                    viewModel.syncData()
-                }) {
-                    HStack {
-                        Text(LocalizedString("Sync patch data", comment: "sync pump"))
-                        Spacer()
-                        if viewModel.isUpdatingPumpState {
-                            ActivityIndicator(isAnimating: .constant(true), style: .medium)
-                        }
-                    }
-                }
-                .disabled(viewModel.isUpdatingPumpState)
-                
                 HStack {
                     Text(LocalizedString("Status", comment: "Text for status")).foregroundColor(Color.primary)
                     Spacer()
@@ -91,16 +69,25 @@ struct MedtrumKitSettings: View {
                     }
                 }
                 
-                HStack {
-                    Text(LocalizedString("Patch expires at", comment: "Text for expiresAt"))
-                        .foregroundColor(Color.primary)
-                    Spacer()
-                    if (viewModel.patchState != .noPatch) {
-                        Text(viewModel.dateTimeFormatter.string(from: viewModel.patchExpiresAt))
-                            .foregroundColor(.secondary)
-                    } else {
-                        Text("-")
-                            .foregroundColor(.secondary)
+                Button(action: {
+                    viewModel.syncData()
+                }) {
+                    HStack {
+                        Text(LocalizedString("Sync patch data", comment: "sync pump"))
+                        Spacer()
+                        if viewModel.isUpdatingPumpState {
+                            ActivityIndicator(isAnimating: .constant(true), style: .medium)
+                        }
+                    }
+                }
+                .disabled(viewModel.isUpdatingPumpState)
+                
+                Button(action: {
+                    viewModel.deactivatePatchAction()
+                }) {
+                    HStack {
+                        Text(LocalizedString("Deactivate Patch", comment: "deactivate patch"))
+                            .foregroundStyle(.red)
                     }
                 }
             }
@@ -285,14 +272,18 @@ struct MedtrumKitSettings: View {
             }
             
             ProgressView(progress: viewModel.patchLifecycleProgress)
+                .padding(.top, -5)
         }
     }
     
     func timeComponent(value: Int, units: String) -> some View {
         Group {
-            Text(String(value)).font(.system(size: 28)).fontWeight(.heavy)
+            Text(String(value))
+                .font(.system(size: 24))
+                .fontWeight(.heavy)
                 .foregroundColor(.primary)
-            Text(units).foregroundColor(.secondary)
+            Text(units)
+                .foregroundColor(.secondary)
         }
     }
     

@@ -101,7 +101,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         self.startScan { result in
             switch result {
             case .failure(let error):
-                self.log.error("Error during scanning: \(error.errorDescription ?? "")")
+                self.log.error("Error during scanning: \(error.localizedDescription)")
                 self.manager.stopScan()
                 completion(.failure(error: .failedToFindDevice))
                 break

@@ -22,7 +22,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var pumpName: String = ""
     @Published var model: String = ""
     @Published var patchId: UInt64 = 0
-    @Published var imageName: String = ""
+    @Published var is300u: Bool = false
     @Published var reservoirLevel: Double = 0
     @Published var battery: Double = 0
     @Published var maxReservoirLevel: Double = 1
@@ -74,11 +74,15 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
         return formatter
     }()
     
+    let deactivatePatchAction: () -> Void
+    let pumpRemovalAction: () -> Void
     private let log = MedtrumLogger(category: "settingsViewModel")
     private let pumpManager: MedtrumPumpManager?
-    init(pumpManager: MedtrumPumpManager?) {
+    init(_ pumpManager: MedtrumPumpManager?, _ deactivatePatchAction: @escaping () -> Void, _ pumpRemovalAction: @escaping () -> Void) {
         self.pumpManager = pumpManager
         self.patchSettingsViewModel = PatchSettingsViewModel(pumpManager)
+        self.deactivatePatchAction = deactivatePatchAction
+        self.pumpRemovalAction = pumpRemovalAction
         
         guard let pumpManager = pumpManager else {
             return
@@ -112,7 +116,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
             return nil
         }
         
-        return Int((Date.now.timeIntervalSince1970 - self.patchActivatedAt.timeIntervalSince1970).days)
+        return Int((Date.now.timeIntervalSince1970 - self.patchActivatedAt.timeIntervalSince1970).days.rounded(.toNearestOrEven))
     }
     
     var patchLifecycleHours: Int? {
@@ -120,7 +124,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
             return nil
         }
         
-        return Int((Date.now.timeIntervalSince1970 - self.patchActivatedAt.timeIntervalSince1970).hours.truncatingRemainder(dividingBy: 24))
+        return Int((Date.now.timeIntervalSince1970 - self.patchActivatedAt.timeIntervalSince1970).hours.truncatingRemainder(dividingBy: 24).rounded(.toNearestOrEven))
     }
     
     var patchLifecycleMinutes: Int? {
@@ -128,7 +132,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
             return nil
         }
         
-        return Int((Date.now.timeIntervalSince1970 - self.patchActivatedAt.timeIntervalSince1970).minutes.truncatingRemainder(dividingBy: 60))
+        return Int((Date.now.timeIntervalSince1970 - self.patchActivatedAt.timeIntervalSince1970).minutes.truncatingRemainder(dividingBy: 60).rounded(.toNearestOrEven))
     }
     
     func syncData() {
@@ -155,10 +159,15 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
     
     func stopUsingMedtrum() {
-        self.pumpManager?.notifyDelegateOfDeactivation {
-//            DispatchQueue.main.async {
-//                self.didFinish?()
-//            }
+        guard let pumpManager = self.pumpManager else {
+            self.pumpRemovalAction()
+            return
+        }
+        
+        pumpManager.notifyDelegateOfDeactivation {
+            DispatchQueue.main.async {
+                self.pumpRemovalAction()
+            }
         }
     }
     
@@ -187,11 +196,11 @@ extension MedtrumKitSettingsViewModel {
         self.model = state.model
         switch self.model {
         case "MD8301":
-            self.imageName = "nano300"
+            self.is300u = true
             self.maxReservoirLevel = 300
             break
         default:
-            self.imageName = "nano200"
+            self.is300u = false
             self.maxReservoirLevel = 200
             break
         }

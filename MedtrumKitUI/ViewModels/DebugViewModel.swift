@@ -59,7 +59,7 @@ class DebugViewModel: ObservableObject {
             return
         }
         
-        pumpManager.primePatchPump { result in
+        pumpManager.primePatch { result in
             if case .failure = result {
                 return
             }
@@ -74,7 +74,7 @@ class DebugViewModel: ObservableObject {
             return
         }
         
-        pumpManager.activatePatchPump { result in
+        pumpManager.activatePatch { result in
             
         }
     }
@@ -88,7 +88,7 @@ class DebugViewModel: ObservableObject {
         pumpManager.bluetooth.ensureConnected { result in
             switch result {
             case .failure(let error):
-                self.log.error(error.errorDescription ?? "")
+                self.log.error(error.localizedDescription)
                 return
             case .success:
                 self.log.info("Connected")

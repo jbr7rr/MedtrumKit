@@ -78,11 +78,11 @@ extension MedtrumPumpManager: PumpManagerUI {
     }
 
     public static var onboardingImage: UIImage? {
-        nil
+        UIImage(named: "nano200", in: Bundle(for: MedtrumKitHUDProvider.self), compatibleWith: nil)
     }
 
     public var smallImage: UIImage? {
-        nil
+        UIImage(named: self.state.pumpName.contains("300u") ? "nano300" : "nano200", in: Bundle(for: MedtrumKitHUDProvider.self), compatibleWith: nil)
     }
 
     public var pumpStatusHighlight: DeviceStatusHighlight? {
