@@ -86,7 +86,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
         return .settingsScreen
     }
     
-    private func viewControllerForScreen(_ screen: MedtrumUIScreen, _ file: String = #file) -> UIViewController {
+    private func viewControllerForScreen(_ screen: MedtrumUIScreen) -> UIViewController {
         switch screen {
         case .debugScreen:
             if let pumpManager = self.pumpManager, let pumpManagerOnboardingDelegate = self.pumpManagerOnboardingDelegate {
