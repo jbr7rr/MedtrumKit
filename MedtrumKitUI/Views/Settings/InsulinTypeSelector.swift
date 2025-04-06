@@ -23,21 +23,26 @@ struct InsulinTypeSelector: View {
     }
     
     func continueWithType(_ insulinType: InsulinType?) {
-        if let insulinType = insulinType {
-            didConfirm(insulinType)
-        } else {
-            assertionFailure()
+        guard let insulinType = insulinType else {
+            return
         }
+        
+        didConfirm(insulinType)
     }
     
     var body: some View {
         VStack(alignment: .leading) {
-            title
-            
-            ScrollView {
-                InsulinTypeChooser(insulinType: $insulinType, supportedInsulinTypes: supportedInsulinTypes)
-                    .padding(.horizontal)
+            List {
+                Section {
+                    Text(LocalizedString("Select the type of insulin that you will be using", comment: "Title text for insulin type confirmation page"))
+                    
+                    ScrollView {
+                        InsulinTypeChooser(insulinType: $insulinType, supportedInsulinTypes: supportedInsulinTypes)
+                            .padding(.horizontal)
+                    }
+                }
             }
+            
             
             Spacer()
             
@@ -50,15 +55,5 @@ struct InsulinTypeSelector: View {
         .edgesIgnoringSafeArea(.bottom)
         .navigationBarHidden(false)
         .navigationTitle(LocalizedString("Select insulin type", comment: "Title for insulin type"))
-    }
-    
-    @ViewBuilder
-    private var title: some View {
-        Text(LocalizedString("Select the type of insulin that you will be using in this pump", comment: "Title text for insulin type confirmation page"))
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal)
-        
-        Divider()
-            .padding(.vertical)
     }
 }

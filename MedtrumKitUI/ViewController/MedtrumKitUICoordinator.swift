@@ -6,6 +6,9 @@ import UIKit
 
 enum MedtrumUIScreen {
     case debugScreen
+    case welcomeScreen
+    case insulinTypeScreen
+    case patchSettingsScreen
     case deactivatePatchScreen
     case pumpBaseSettingsScreen
     case patchPrimingScreen
@@ -69,8 +72,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
         }
         
         if !pumpManager.isOnboarded {
-            // TODO: Add extra screens for setting up insulinType & base patch settings
-            return .pumpBaseSettingsScreen
+            return .welcomeScreen
         }
         
         if pumpManager.state.patchId.isEmpty || pumpManager.state.pumpSN.isEmpty {
@@ -95,6 +97,30 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             
             let viewModel = DebugViewModel(self.pumpManager)
             return hostingController(rootView: DebugView(viewModel: viewModel))
+            
+        case .welcomeScreen:
+            return hostingController(rootView: OnboardingWelcomeView(nextStep: { self.navigateTo(.insulinTypeScreen) }))
+            
+        case .insulinTypeScreen:
+            let nextStep: (InsulinType) -> Void = { insulinType in
+                self.pumpManager?.state.insulinType = insulinType
+                self.pumpManager?.notifyStateDidChange()
+                
+                self.navigateTo(.patchSettingsScreen)
+            }
+            return hostingController(rootView: InsulinTypeSelector(initialValue: allowedInsulinTypes[0], supportedInsulinTypes: allowedInsulinTypes, didConfirm: nextStep))
+            
+        case .patchSettingsScreen:
+            let nextStep = {
+                if let pumpManager = self.pumpManager {
+                    pumpManager.state.isOnboarded = true
+                    pumpManager.notifyStateDidChange()
+                }
+                
+                self.navigateTo(.pumpBaseSettingsScreen)
+            }
+            let viewModel = PatchSettingsViewModel(pumpManager)
+            return hostingController(rootView: PatchSettingsView(viewModel: viewModel, doDirtyCheck: false, nextStep: nextStep))
             
         case .deactivatePatchScreen:
             let nextStep = { self.resetNavigationTo(.pumpBaseSettingsScreen) }

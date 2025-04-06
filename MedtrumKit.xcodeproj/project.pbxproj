@@ -70,6 +70,7 @@
 		3E9D8B122D88A8F600008AF2 /* NewPumpEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E9D8B112D88A8F100008AF2 /* NewPumpEvent.swift */; };
 		3EA69F052D95E605002EEF9F /* InsulinTypeSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA69F042D95E605002EEF9F /* InsulinTypeSelector.swift */; };
 		3EA69F072D95ECDE002EEF9F /* PatchSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA69F062D95ECDE002EEF9F /* PatchSettingsView.swift */; };
+		3EA6C4512DA2947000963AAB /* OnboardingWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA6C4502DA2947000963AAB /* OnboardingWelcomeView.swift */; };
 		3EA87D4B2D7A2165007DD959 /* ActivatePacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87D4A2D7A214B007DD959 /* ActivatePacketTests.swift */; };
 		3EA87D4D2D7A25ED007DD959 /* AuthorizePacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87D4C2D7A25E5007DD959 /* AuthorizePacketTests.swift */; };
 		3EA87D4F2D7A2930007DD959 /* CancelBolusPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87D4E2D7A292A007DD959 /* CancelBolusPacket.swift */; };
@@ -236,6 +237,7 @@
 		3E9D8B112D88A8F100008AF2 /* NewPumpEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewPumpEvent.swift; sourceTree = "<group>"; };
 		3EA69F042D95E605002EEF9F /* InsulinTypeSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsulinTypeSelector.swift; sourceTree = "<group>"; };
 		3EA69F062D95ECDE002EEF9F /* PatchSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchSettingsView.swift; sourceTree = "<group>"; };
+		3EA6C4502DA2947000963AAB /* OnboardingWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWelcomeView.swift; sourceTree = "<group>"; };
 		3EA87D4A2D7A214B007DD959 /* ActivatePacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivatePacketTests.swift; sourceTree = "<group>"; };
 		3EA87D4C2D7A25E5007DD959 /* AuthorizePacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthorizePacketTests.swift; sourceTree = "<group>"; };
 		3EA87D4E2D7A292A007DD959 /* CancelBolusPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CancelBolusPacket.swift; sourceTree = "<group>"; };
@@ -431,6 +433,7 @@
 				3E9A5C952DA1460700A4102D /* PumpBaseSettingsView.swift */,
 				3E24AEC12DA1727800C7733C /* PatchPrimingView.swift */,
 				3E24AEC92DA17B7F00C7733C /* PatchActivationView.swift */,
+				3EA6C4502DA2947000963AAB /* OnboardingWelcomeView.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -835,6 +838,7 @@
 				3E24AEC02DA1639F00C7733C /* PumpImage.swift in Sources */,
 				3E4566612D83719C00FE1E0C /* DebugViewModel.swift in Sources */,
 				3E77FEBE2D7364AC00A15134 /* ActivatePacket.swift in Sources */,
+				3EA6C4512DA2947000963AAB /* OnboardingWelcomeView.swift in Sources */,
 				3E24AEC42DA1729A00C7733C /* PatchPrimingViewModel.swift in Sources */,
 				3E26BE0B2D9069A600E595B0 /* MedtrumKitSettings.swift in Sources */,
 				3EA69F052D95E605002EEF9F /* InsulinTypeSelector.swift in Sources */,

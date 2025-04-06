@@ -16,7 +16,7 @@ struct PatchActivationView: View {
             List {
                 Section {
                     supportImage("needle_insert")
-                    VStack {
+                    VStack(alignment: .leading) {
                         Text(LocalizedString("Now, remove the sticker covers from the patch, place the patch on your body, and press the needle button to insert the needle", comment: "Label for inserting needle to body"))
                             .foregroundStyle(.primary)
                         

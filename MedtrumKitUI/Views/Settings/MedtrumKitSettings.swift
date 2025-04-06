@@ -102,7 +102,7 @@ struct MedtrumKitSettings: View {
                             .foregroundColor(.secondary)
                     }
                 }
-                NavigationLink(destination: PatchSettingsView(viewModel: viewModel.patchSettingsViewModel)) {
+                NavigationLink(destination: PatchSettingsView(viewModel: viewModel.patchSettingsViewModel, nextStep: nil)) {
                     Text(LocalizedString("Patch settings", comment: "Text for patch settings view"))
                         .foregroundColor(Color.primary)
                 }

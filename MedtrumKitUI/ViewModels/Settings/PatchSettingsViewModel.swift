@@ -8,10 +8,19 @@
 import LoopKit
 
 class PatchSettingsViewModel: ObservableObject {
-    @Published var maxHourlyInsulin: Double = 0
-    @Published var maxDailyInsulin: Double = 0
-    @Published var alarmSettings: Double = Double(AlarmSettings.None.rawValue)
-    @Published var expirationTimer: Double = 1
+    @Published var maxHourlyInsulin: Double = 0 {
+        didSet { checkDirtyState() }
+    }
+    @Published var maxDailyInsulin: Double = 0 {
+        didSet { checkDirtyState() }
+    }
+    @Published var alarmSettings: Double = Double(AlarmSettings.None.rawValue) {
+        didSet { checkDirtyState() }
+    }
+    @Published var expirationTimer: Double = 1 {
+        didSet { checkDirtyState() }
+    }
+    @Published var isDirty: Bool = false
     
     private let processQueue = DispatchQueue(label: "com.nightscout.medtrumkit.patchSettingsViewModel")
     private let pumpManager: MedtrumPumpManager?
@@ -43,6 +52,20 @@ class PatchSettingsViewModel: ObservableObject {
         pumpManager.state.expirationTimer = UInt8(expirationTimer)
         pumpManager.notifyStateDidChange()
     }
+    
+    func checkDirtyState() {
+        guard let pumpManager = pumpManager else {
+            return
+        }
+        
+        DispatchQueue.main.async {
+            self.isDirty = (
+                pumpManager.state.maxDailyInsulin != self.maxDailyInsulin ||
+                pumpManager.state.maxHourlyInsulin != self.maxHourlyInsulin ||
+                pumpManager.state.alarmSetting.rawValue != UInt8(self.alarmSettings) ||
+                pumpManager.state.expirationTimer != UInt8(self.expirationTimer))
+        }
+    }
 }
 
 extension PatchSettingsViewModel: PumpManagerStatusObserver {
@@ -55,9 +78,11 @@ extension PatchSettingsViewModel: PumpManagerStatusObserver {
     }
     
     func updateState(_ state: MedtrumPumpState) {
-        self.maxHourlyInsulin = state.maxHourlyInsulin
-        self.maxDailyInsulin = state.maxDailyInsulin
-        self.alarmSettings = Double(state.alarmSetting.rawValue)
-        self.expirationTimer = Double(state.expirationTimer)
+        DispatchQueue.main.async {
+            self.maxHourlyInsulin = state.maxHourlyInsulin
+            self.maxDailyInsulin = state.maxDailyInsulin
+            self.alarmSettings = Double(state.alarmSetting.rawValue)
+            self.expirationTimer = Double(state.expirationTimer)
+        }
     }
 }
