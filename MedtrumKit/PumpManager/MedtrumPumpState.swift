@@ -112,7 +112,7 @@ public class MedtrumPumpState: RawRepresentable {
         
         value["isOnboarded"] = isOnboarded
         value["lastSync"] = lastSync
-        value["insulinType"] = insulinType
+        value["insulinType"] = insulinType?.rawValue
         value["pumpSN"] = pumpSN
         value["sessionToken"] = sessionToken
         value["patchId"] = patchId
