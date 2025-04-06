@@ -19,6 +19,10 @@
 		3E1532482D6F98D20020F015 /* Crypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1532472D6F98CF0020F015 /* Crypto.swift */; };
 		3E15324A2D6FA0080020F015 /* Data.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1532492D6FA0060020F015 /* Data.swift */; };
 		3E15324C2D6FA4280020F015 /* Int64.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E15324B2D6FA4250020F015 /* Int64.swift */; };
+		3E15A4782DA2B6E6007F7D3C /* MedtrumReservoirView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E15A4772DA2B6E6007F7D3C /* MedtrumReservoirView.swift */; };
+		3E15A47C2DA2B718007F7D3C /* IdentifiableClass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E15A47B2DA2B718007F7D3C /* IdentifiableClass.swift */; };
+		3E15A47E2DA2B723007F7D3C /* NibLoadable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E15A47D2DA2B723007F7D3C /* NibLoadable.swift */; };
+		3E15A4802DA2B857007F7D3C /* MedtrumReservoirView.xib in Resources */ = {isa = PBXBuildFile; fileRef = 3E15A47F2DA2B857007F7D3C /* MedtrumReservoirView.xib */; };
 		3E24AEC02DA1639F00C7733C /* PumpImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E24AEBF2DA1639F00C7733C /* PumpImage.swift */; };
 		3E24AEC22DA1727800C7733C /* PatchPrimingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E24AEC12DA1727800C7733C /* PatchPrimingView.swift */; };
 		3E24AEC42DA1729A00C7733C /* PatchPrimingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E24AEC32DA1729A00C7733C /* PatchPrimingViewModel.swift */; };
@@ -165,6 +169,10 @@
 		3E1532472D6F98CF0020F015 /* Crypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Crypto.swift; sourceTree = "<group>"; };
 		3E1532492D6FA0060020F015 /* Data.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Data.swift; sourceTree = "<group>"; };
 		3E15324B2D6FA4250020F015 /* Int64.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Int64.swift; sourceTree = "<group>"; };
+		3E15A4772DA2B6E6007F7D3C /* MedtrumReservoirView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedtrumReservoirView.swift; sourceTree = "<group>"; };
+		3E15A47B2DA2B718007F7D3C /* IdentifiableClass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentifiableClass.swift; sourceTree = "<group>"; };
+		3E15A47D2DA2B723007F7D3C /* NibLoadable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NibLoadable.swift; sourceTree = "<group>"; };
+		3E15A47F2DA2B857007F7D3C /* MedtrumReservoirView.xib */ = {isa = PBXFileReference; lastKnownFileType = file.xib; path = MedtrumReservoirView.xib; sourceTree = "<group>"; };
 		3E24AEBF2DA1639F00C7733C /* PumpImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PumpImage.swift; sourceTree = "<group>"; };
 		3E24AEC12DA1727800C7733C /* PatchPrimingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchPrimingView.swift; sourceTree = "<group>"; };
 		3E24AEC32DA1729A00C7733C /* PatchPrimingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchPrimingViewModel.swift; sourceTree = "<group>"; };
@@ -401,6 +409,8 @@
 				3E6A00EB2DA03FCA0085E6A4 /* Onboarding */,
 				3E26BE092D90698A00E595B0 /* Settings */,
 				3E45665D2D83714900FE1E0C /* DebugView.swift */,
+				3E15A4772DA2B6E6007F7D3C /* MedtrumReservoirView.swift */,
+				3E15A47F2DA2B857007F7D3C /* MedtrumReservoirView.xib */,
 				3E26BE102D906E5700E595B0 /* ReservoirView.swift */,
 				3E24AEBF2DA1639F00C7733C /* PumpImage.swift */,
 			);
@@ -455,6 +465,8 @@
 		3E767CE32D67AF2B004B1971 /* Common */ = {
 			isa = PBXGroup;
 			children = (
+				3E15A47D2DA2B723007F7D3C /* NibLoadable.swift */,
+				3E15A47B2DA2B718007F7D3C /* IdentifiableClass.swift */,
 				3E9D8B112D88A8F100008AF2 /* NewPumpEvent.swift */,
 				3E4566642D837A4800FE1E0C /* Bundle.swift */,
 				3E1532492D6FA0060020F015 /* Data.swift */,
@@ -769,6 +781,7 @@
 			files = (
 				3E26BE0D2D906A0D00E595B0 /* MedtrumUI.xcassets in Resources */,
 				3E767D042D67B3FC004B1971 /* Localizable.strings in Resources */,
+				3E15A4802DA2B857007F7D3C /* MedtrumReservoirView.xib in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -852,10 +865,13 @@
 				3EA87D672D7A3F8C007DD959 /* PollPatchPacket.swift in Sources */,
 				3E9D8B0E2D88A59200008AF2 /* DoseEntry.swift in Sources */,
 				3E24AECA2DA17B7F00C7733C /* PatchActivationView.swift in Sources */,
+				3E15A47E2DA2B723007F7D3C /* NibLoadable.swift in Sources */,
 				3E50601A2D70F2F500376609 /* GetDeviceTypePacket.swift in Sources */,
+				3E15A4782DA2B6E6007F7D3C /* MedtrumReservoirView.swift in Sources */,
 				3E9A5C962DA1460700A4102D /* PumpBaseSettingsView.swift in Sources */,
 				B7D3A8D52C148CC4002EE003 /* MedtrumKit.docc in Sources */,
 				3E9D8B0C2D88A3FA00008AF2 /* MedtrumDoseProgressReporter.swift in Sources */,
+				3E15A47C2DA2B718007F7D3C /* IdentifiableClass.swift in Sources */,
 				3E24AEC82DA17B4900C7733C /* PatchActivationViewModel.swift in Sources */,
 				3E5060242D70FED500376609 /* SynchronizePacket.swift in Sources */,
 				3EEA51FF2D7E1D12000C9E1E /* SetBasalProfilePacket.swift in Sources */,

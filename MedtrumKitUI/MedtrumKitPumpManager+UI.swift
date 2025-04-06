@@ -73,8 +73,8 @@ extension MedtrumPumpManager: PumpManagerUI {
         )
     }
 
-    public static func createHUDView(rawValue _: [String: Any]) -> BaseHUDView? {
-        nil
+    public static func createHUDView(rawValue: [String: Any]) -> BaseHUDView? {
+        MedtrumKitHUDProvider.createHUDView(rawValue: rawValue)
     }
 
     public static var onboardingImage: UIImage? {
@@ -86,7 +86,24 @@ extension MedtrumPumpManager: PumpManagerUI {
     }
 
     public var pumpStatusHighlight: DeviceStatusHighlight? {
-        nil
+        if state.reservoir < 1 {
+            return PumpStatusHighlight(
+                localizedMessage: LocalizedString("No Insulin", comment: "Status highlight that a pump is out of insulin."),
+                imageName: "exclamationmark.circle.fill",
+                state: .critical)
+        } else if self.state.basalState == .suspended {
+            return PumpStatusHighlight(
+                localizedMessage: LocalizedString("Insulin Suspended", comment: "Status highlight that insulin delivery was suspended."),
+                imageName: "pause.circle.fill",
+                state: .warning)
+        } else if Date.now.timeIntervalSince(state.lastSync) > .minutes(12) {
+            return PumpStatusHighlight(
+                localizedMessage: LocalizedString("Signal Loss", comment: "Status highlight when communications with the patch haven't happened recently."),
+                imageName: "exclamationmark.circle.fill",
+                state: .critical)
+        }
+        
+        return nil
     }
 
     // Not needed
@@ -94,6 +111,8 @@ extension MedtrumPumpManager: PumpManagerUI {
         nil
     }
 
+    // LoopKit only requires here to show "time sync required"
+    // But this is handled during connection and can be left empty
     public var pumpStatusBadge: DeviceStatusBadge? {
         nil
     }
