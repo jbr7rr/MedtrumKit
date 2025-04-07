@@ -20,7 +20,11 @@ class PatchSettingsViewModel: ObservableObject {
     @Published var expirationTimer: Double = 1 {
         didSet { checkDirtyState() }
     }
+    @Published var notificationAfterActivation: Double = 70 {
+        didSet { checkDirtyState() }
+    }
     @Published var isDirty: Bool = false
+    @Published var is300u: Bool = false
     
     private let processQueue = DispatchQueue(label: "com.nightscout.medtrumkit.patchSettingsViewModel")
     private let pumpManager: MedtrumPumpManager?
@@ -36,9 +40,9 @@ class PatchSettingsViewModel: ObservableObject {
     }
     
     var alarmOptions: [Double] {
-        // Hide all options with light
+        // Hide all options with light & vibrations
         // This feature is discontinued
-        return Array(4...7).map({ Double($0 ) })
+        return Array(6...7).map({ Double($0 ) })
     }
     
     func save() {
@@ -50,6 +54,7 @@ class PatchSettingsViewModel: ObservableObject {
         pumpManager.state.maxDailyInsulin = maxDailyInsulin
         pumpManager.state.alarmSetting = AlarmSettings(rawValue: UInt8(alarmSettings)) ?? .None
         pumpManager.state.expirationTimer = UInt8(expirationTimer)
+        pumpManager.state.notificationAfterActivation = .hours(notificationAfterActivation)
         pumpManager.notifyStateDidChange()
     }
     
@@ -63,7 +68,8 @@ class PatchSettingsViewModel: ObservableObject {
                 pumpManager.state.maxDailyInsulin != self.maxDailyInsulin ||
                 pumpManager.state.maxHourlyInsulin != self.maxHourlyInsulin ||
                 pumpManager.state.alarmSetting.rawValue != UInt8(self.alarmSettings) ||
-                pumpManager.state.expirationTimer != UInt8(self.expirationTimer))
+                pumpManager.state.expirationTimer != UInt8(self.expirationTimer) ||
+                pumpManager.state.notificationAfterActivation.hours != self.notificationAfterActivation)
         }
     }
 }
@@ -83,6 +89,14 @@ extension PatchSettingsViewModel: PumpManagerStatusObserver {
             self.maxDailyInsulin = state.maxDailyInsulin
             self.alarmSettings = Double(state.alarmSetting.rawValue)
             self.expirationTimer = Double(state.expirationTimer)
+            self.notificationAfterActivation = state.notificationAfterActivation.hours
+            
+            if state.pumpSN.isEmpty {
+                // If no serial number is available, we should show the options that are supported by both 200u & 300u
+                self.is300u = false
+            } else {
+                self.is300u = state.pumpName.contains("300U")
+            }
         }
     }
 }

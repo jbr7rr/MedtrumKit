@@ -40,6 +40,7 @@ public class MedtrumPumpState: RawRepresentable {
         battery = rawValue["battery"] as? Double ?? 0
         basalStateSince = rawValue["basalStateSince"] as? Date ?? Date.distantPast
         expirationTimer = rawValue["expirationTimer"] as? UInt8 ?? 1
+        notificationAfterActivation =  rawValue["notificationAfterActivation"] as? TimeInterval ?? .hours(70)
         
         if let rawInsulinType = rawValue["insulinType"] as? InsulinType.RawValue {
             insulinType = InsulinType(rawValue: rawInsulinType)
@@ -99,6 +100,7 @@ public class MedtrumPumpState: RawRepresentable {
         bolusState = .noBolus
         alarmSetting = .None
         expirationTimer = 1
+        notificationAfterActivation = .hours(70)
 
         if let basal = basal {
             basalSchedule = BasalSchedule(entries: basal.items)
@@ -133,6 +135,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["basalStateSince"] = basalStateSince
         value["alarmSetting"] = alarmSetting.rawValue
         value["expirationTimer"] = expirationTimer
+        value["notificationAfterActivation"] = notificationAfterActivation
         
         return value
     }
@@ -162,6 +165,11 @@ public class MedtrumPumpState: RawRepresentable {
     public var maxDailyInsulin: Double
     public var alarmSetting: AlarmSettings
     public var expirationTimer: UInt8
+    public var notificationAfterActivation: TimeInterval
+    
+    // **** THESE VALUES SHOULD NOT BE PERSISTED ****
+    public var primeProgress: UInt8 = 0
+    // **** END ****
     
     public var bolusState: BolusState
     

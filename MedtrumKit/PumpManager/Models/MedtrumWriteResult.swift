@@ -14,6 +14,7 @@ enum MedtrumWriteError: LocalizedError {
     case timeout
     case invalidResponse
     case noManager
+    case noWriteCharacteristic
     
     public var errorDescription: String? {
         switch self {
@@ -23,6 +24,8 @@ enum MedtrumWriteError: LocalizedError {
             return "Invalid response"
         case .noManager:
             return "No peripheral manager"
+        case .noWriteCharacteristic:
+            return "No write characteristic. Device might be disconnected"
         }
     }
 }

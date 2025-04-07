@@ -46,9 +46,9 @@ public class MedtrumPumpManager: DeviceManager {
     }
     
     public static var onboardingSupportedBasalRates: [Double] {
-        // 0.05 units for rates between 0.00-25U/hr
+        // During onboard, we assume 300u -> 0.00-30U/hr
         // 0 U/hr is a supported scheduled basal rate
-        (1 ... 500).map { Double($0) / 20 }
+        (0 ... 600).map { Double($0) / 20 }
     }
     
     public static var onboardingSupportedBolusVolumes: [Double] {
@@ -71,7 +71,14 @@ public class MedtrumPumpManager: DeviceManager {
     }
     
     public var supportedBasalRates: [Double] {
-        MedtrumPumpManager.onboardingSupportedBasalRates
+        guard !state.pumpSN.isEmpty else {
+            return MedtrumPumpManager.onboardingSupportedBasalRates
+        }
+        
+        // 300U -> 0.05-30U
+        // 200U -> 0.05-25U
+        return state.pumpName.contains("300U") ? MedtrumPumpManager.onboardingSupportedBasalRates : (0 ... 500).map { Double($0) / 20 }
+        
     }
     
     public var supportedBolusVolumes: [Double] {
@@ -691,7 +698,7 @@ public extension MedtrumPumpManager {
             }
             
             let packet = ActivatePacket(
-                expirationTimer: 1,
+                expirationTimer: self.state.expirationTimer,
                 alarmSetting: self.state.alarmSetting,
                 hourlyMaxInsulin: self.state.maxHourlyInsulin,
                 dailyMaxInsulin: self.state.maxDailyInsulin,
@@ -710,6 +717,10 @@ public extension MedtrumPumpManager {
                     self.log.error("Failed to parse response...")
                     completion(.failure(error: .unknownError(reason: "Failed to parse response...")))
                     return
+                }
+                
+                if self.state.expirationTimer == 1 {
+                    NotificationManager.activatePatchExpiredNotification(after: self.state.notificationAfterActivation)
                 }
                 
                 self.state.patchId = data.patchId

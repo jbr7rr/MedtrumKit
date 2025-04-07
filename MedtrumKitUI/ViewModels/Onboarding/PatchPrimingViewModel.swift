@@ -5,9 +5,13 @@
 //  Created by Bastiaan Verhaar on 05/04/2025.
 //
 
+import LoopKit
+
 class PatchPrimingViewModel: ObservableObject {
+    private let processQueue = DispatchQueue(label: "com.nightscout.medtrumkit.primingView")
     
     @Published var isPriming = false
+    @Published var primeProgress: Double = 0
     @Published var primingError = ""
     @Published var is300u = false
     
@@ -21,6 +25,7 @@ class PatchPrimingViewModel: ObservableObject {
             return
         }
         
+        pumpManager.addStatusObserver(self, queue: processQueue)
         is300u = pumpManager.state.pumpName.contains("300U")
     }
     
@@ -38,17 +43,33 @@ class PatchPrimingViewModel: ObservableObject {
         isPriming = true
         primingError = ""
         pumpManager.primePatch { result in
-            DispatchQueue.main.async {
-                self.isPriming = false
-                
-                if case .failure(let error) = result {
+            if case .failure(let error) = result {
+                DispatchQueue.main.async {
                     self.primingError = error.localizedDescription
-                    return
+                    self.isPriming = false
                 }
-                
+                return
+            }
+            
+            // Command send succesfully, now we have to wait till primeProgress has reached value 150
+        }
+#endif
+    }
+}
+
+extension PatchPrimingViewModel : PumpManagerStatusObserver {
+    func pumpManager(_ pumpManager: any LoopKit.PumpManager, didUpdate status: LoopKit.PumpManagerStatus, oldStatus: LoopKit.PumpManagerStatus) {
+        
+        guard let pumpManager = pumpManager as? MedtrumPumpManager else {
+            return
+        }
+        
+        DispatchQueue.main.async {
+            self.primeProgress = Double(pumpManager.state.primeProgress) / 150
+        
+            if pumpManager.state.primeProgress == 150 {
                 self.nextStep()
             }
         }
-#endif
     }
 }

@@ -14,11 +14,13 @@ struct PatchSettingsView: View {
     @State var isEditingMaxDaily = false
     @State var isEditingAlarmSetting = false
     @State var isEditingExpirationTimer = false
+    @State var isEditingNotificationAfterActivation = false
     
     var doDirtyCheck = true
     let nextStep: (() -> Void)?
     
     let unitText = LocalizedString("U", comment: "Insulin unit")
+    let hourText = LocalizedString("h", comment: "Hour unit")
     
     var body: some View {
         VStack {
@@ -28,8 +30,8 @@ struct PatchSettingsView: View {
                         title: LocalizedString("Max hourly insulin", comment: "Label for maximum hourly insulin delivery"),
                         isEditing: isEditingMaxHourly,
                         value: $viewModel.maxHourlyInsulin,
-                        valueRange: Array(4...24).map({ Double($0) * 5 }),
-                        formatter: { value in "\(String(format: "%.0f", value))\(self.unitText)"}
+                        valueRange: (viewModel.is300u ? Array(0...12) : Array(0...8)).map({ Double($0) * 5 }),
+                        formatter: { value in "\(String(format: "%.0f", value)) \(self.unitText)"}
                     )
                     .onTapGesture {
                         withAnimation {
@@ -37,6 +39,7 @@ struct PatchSettingsView: View {
                             self.isEditingMaxDaily = false
                             self.isEditingAlarmSetting = false
                             self.isEditingExpirationTimer = false
+                            self.isEditingNotificationAfterActivation = false
                         }
                     }
                     
@@ -44,8 +47,8 @@ struct PatchSettingsView: View {
                         title: LocalizedString("Max daily insulin", comment: "Label for maximum daily insulin delivery"),
                         isEditing: isEditingMaxDaily,
                         value: $viewModel.maxDailyInsulin,
-                        valueRange: Array(20...40).map({ Double($0) * 5 }),
-                        formatter: { value in "\(String(format: "%.0f", value))\(self.unitText)"}
+                        valueRange: (viewModel.is300u ? Array(0...54) : Array(0...36)).map({ Double($0) * 5 }),
+                        formatter: { value in "\(String(format: "%.0f", value)) \(self.unitText)"}
                     )
                     .onTapGesture {
                         withAnimation {
@@ -53,6 +56,7 @@ struct PatchSettingsView: View {
                             self.isEditingMaxDaily.toggle()
                             self.isEditingAlarmSetting = false
                             self.isEditingExpirationTimer = false
+                            self.isEditingNotificationAfterActivation = false
                         }
                     }
                     
@@ -88,21 +92,21 @@ struct PatchSettingsView: View {
                             self.isEditingMaxDaily = false
                             self.isEditingAlarmSetting.toggle()
                             self.isEditingExpirationTimer = false
-                            
+                            self.isEditingNotificationAfterActivation = false
                         }
                     }
                     
                     sectionItem(
-                        title: LocalizedString("Expiration alarm", comment: "Label for expiration alarm"),
+                        title: LocalizedString("Patch lifetime", comment: "Label for expiration alarm"),
                         isEditing: isEditingExpirationTimer,
                         value: $viewModel.expirationTimer,
                         valueRange: Array(0...1).map({ Double($0) }),
                         formatter: { value in
                             switch(value) {
                             case 0:
-                                return LocalizedString("No expiration alarm", comment: "Label for expiration alarm: none")
+                                return LocalizedString("Use extended lifetime (continue till battery empty)", comment: "Label for extended lifetime")
                             default:
-                                return LocalizedString("12 hour & 0 hour remaining", comment: "Label for alarm options: 12h and 0h")
+                                return LocalizedString("Use normal lifetime (3d 8h)", comment: "Label for normal patch lifetime")
                             }
                         }
                     )
@@ -112,6 +116,26 @@ struct PatchSettingsView: View {
                             self.isEditingMaxDaily = false
                             self.isEditingAlarmSetting = false
                             self.isEditingExpirationTimer.toggle()
+                            self.isEditingNotificationAfterActivation = false
+                        }
+                    }
+                    
+                    if viewModel.expirationTimer == 1 {
+                        sectionItem(
+                            title: LocalizedString("Notification for expirate patch", comment: "Label for expired patch notification "),
+                            isEditing: isEditingNotificationAfterActivation,
+                            value: $viewModel.notificationAfterActivation,
+                            valueRange: Array(60...78).map({ Double($0) }),
+                            formatter: { value in "\(String(format: "%.0f", value)) \(self.hourText)"}
+                        )
+                        .onTapGesture {
+                            withAnimation {
+                                self.isEditingMaxHourly = false
+                                self.isEditingMaxDaily = false
+                                self.isEditingAlarmSetting = false
+                                self.isEditingExpirationTimer = false
+                                self.isEditingNotificationAfterActivation.toggle()
+                            }
                         }
                     }
                 }

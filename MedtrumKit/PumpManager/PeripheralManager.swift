@@ -17,9 +17,9 @@ class PeripheralManager : NSObject {
     
     public static let SERVICE_UUID = CBUUID(string: "669A9001-0008-968F-E311-6050405558B3")
     private static let READ_UUID = CBUUID(string: "669a9120-0008-968f-e311-6050405558b3")
-    private var readCharacteristic: CBCharacteristic!
+    private var readCharacteristic: CBCharacteristic?
     private static let WRITE_UUID = CBUUID(string: "669a9101-0008-968f-e311-6050405558b3")
-    private var writeCharacteristic: CBCharacteristic!
+    private var writeCharacteristic: CBCharacteristic?
     
     private var writeSequence: UInt8 = 0
     private var currentPacket: (any MedtrumBasePacketProtocol)?
@@ -45,6 +45,12 @@ class PeripheralManager : NSObject {
             // Wait for the other write to complete...
             self.writeSemaphore.wait()
             
+            guard let writeCharacteristic = self.writeCharacteristic else {
+                log.error("No write characteristic found... Device might be disconnected...")
+                continuation.resume(returning: .failure(error: .noWriteCharacteristic))
+                return
+            }
+            
             writeQueue[packet.commandType] = continuation
             currentPacket = packet
             
@@ -53,7 +59,7 @@ class PeripheralManager : NSObject {
             
             for package in packages {
                 self.log.info("Writing data: \(package.hexEncodedString())")
-                self.connectedDevice.writeValue(package, for: self.writeCharacteristic, type: .withResponse)
+                self.connectedDevice.writeValue(package, for: writeCharacteristic, type: .withResponse)
             }
             
             self.writeTimeoutTask = Task {
@@ -243,6 +249,10 @@ extension PeripheralManager {
         
         if let battery = syncResponse.battery {
             pumpManager.state.battery = battery.voltageB
+        }
+        
+        if let primeProgress = syncResponse.primeProgress {
+            pumpManager.state.primeProgress = primeProgress
         }
         
         pumpManager.state.lastSync = Date.now

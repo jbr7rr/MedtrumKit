@@ -35,9 +35,12 @@ struct PatchPrimingView: View {
             if !viewModel.primingError.isEmpty {
                 Text(viewModel.primingError)
                     .foregroundStyle(.red)
-            } else {
+            } else if !viewModel.isPriming {
                 Text(LocalizedString("Do not attach the patch to the body yet", comment: "Label for warning priming"))
                     .foregroundStyle(.red)
+            } else {
+                ProgressView(progress: viewModel.primeProgress)
+                    .padding(.horizontal)
             }
             Button(action: { viewModel.startPrime() }) {
                 if viewModel.isPriming {
