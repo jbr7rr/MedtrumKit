@@ -115,6 +115,10 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                 if let pumpManager = self.pumpManager {
                     pumpManager.state.isOnboarded = true
                     pumpManager.notifyStateDidChange()
+                    
+                    if let pumpManager = self.pumpManager, let pumpManagerOnboardingDelegate = self.pumpManagerOnboardingDelegate {
+                        pumpManagerOnboardingDelegate.pumpManagerOnboarding(didCreatePumpManager: pumpManager)
+                    }
                 }
                 
                 self.navigateTo(.pumpBaseSettingsScreen)
@@ -132,18 +136,11 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return hostingController(rootView: PumpBaseSettingsView(viewModel: viewModel))
             
         case .patchPrimingScreen:
-            let viewModel = PatchPrimingViewModel(pumpManager, { self.resetNavigationTo(.patchActivationScreen) })
+            let viewModel = PatchPrimingViewModel(pumpManager, { self.resetNavigationTo(.patchActivationScreen) }, { self.resetNavigationTo(.settingsScreen) })
             return hostingController(rootView: PatchPrimingView(viewModel: viewModel))
             
         case .patchActivationScreen:
-            let nextStep = {
-                if let pumpManager = self.pumpManager, let pumpManagerOnboardingDelegate = self.pumpManagerOnboardingDelegate {
-                    pumpManagerOnboardingDelegate.pumpManagerOnboarding(didCreatePumpManager: pumpManager)
-                }
-                
-                self.resetNavigationTo(.settingsScreen)
-            }
-            let viewModel = PatchActivationViewModel(pumpManager, nextStep)
+            let viewModel = PatchActivationViewModel(pumpManager, { self.resetNavigationTo(.settingsScreen) })
             return hostingController(rootView: PatchActivationView(viewModel: viewModel))
             
         case .settingsScreen:

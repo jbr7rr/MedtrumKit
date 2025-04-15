@@ -23,7 +23,6 @@ class PeripheralManager : NSObject {
     
     private var writeSequence: UInt8 = 0
     private var currentPacket: (any MedtrumBasePacketProtocol)?
-    private var synchronizePacket: SynchronizePacket?
     
     private var writeQueue: Dictionary<UInt8, CheckedContinuation<MedtrumWriteResult<Any>, Never>> = [:]
     private var writeTimeoutTask: Task<(), Never>?
@@ -255,6 +254,10 @@ extension PeripheralManager {
             pumpManager.state.primeProgress = primeProgress
         }
         
+        if let bolus = syncResponse.bolus {
+            pumpManager.updateBolusProgress(delivered: bolus.delivered)
+        }
+        
         pumpManager.state.lastSync = Date.now
         pumpManager.notifyStateDidChange()
     }
@@ -333,27 +336,11 @@ extension PeripheralManager : CBPeripheralDelegate {
                 // Ignore all ping messages from patch pomp
                 return
             }
-            
-            if self.synchronizePacket == nil {
-                self.synchronizePacket = SynchronizePacket()
-            }
-            guard var packet = self.synchronizePacket else {
-                return
-            }
-            
+
             self.log.info("READ -> Got data: \(data.hexEncodedString())")
+            
+            var packet = NotificationPacket()
             packet.decode(data)
-            
-            guard packet.isComplete else {
-                self.log.warning("Data no complete yet...")
-                return
-            }
-            
-            guard !packet.failed else {
-                self.log.error("Failed to process update...")
-                self.synchronizePacket = nil
-                return
-            }
 
             self.parseStateUpdate(packet.parseResponse())
             return
@@ -373,6 +360,11 @@ extension PeripheralManager : CBPeripheralDelegate {
         guard packet.isComplete else {
             self.log.warning("Data no complete yet...")
             // Wait for more data
+            return
+        }
+        
+        guard packet.responseCode == 0 else {
+            self.log.error("Got unexpected response code: \(packet.responseCode)")
             return
         }
         

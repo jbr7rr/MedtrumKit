@@ -77,6 +77,8 @@
 		3EA69F052D95E605002EEF9F /* InsulinTypeSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA69F042D95E605002EEF9F /* InsulinTypeSelector.swift */; };
 		3EA69F072D95ECDE002EEF9F /* PatchSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA69F062D95ECDE002EEF9F /* PatchSettingsView.swift */; };
 		3EA6C4512DA2947000963AAB /* OnboardingWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA6C4502DA2947000963AAB /* OnboardingWelcomeView.swift */; };
+		3EA87C3B2DAC2DBE00E897ED /* SynchronizeNotificationPacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87C3A2DAC2DB300E897ED /* SynchronizeNotificationPacketTests.swift */; };
+		3EA87C3D2DAC2F9C00E897ED /* NotificationPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87C3C2DAC2F9700E897ED /* NotificationPacket.swift */; };
 		3EA87D4B2D7A2165007DD959 /* ActivatePacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87D4A2D7A214B007DD959 /* ActivatePacketTests.swift */; };
 		3EA87D4D2D7A25ED007DD959 /* AuthorizePacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87D4C2D7A25E5007DD959 /* AuthorizePacketTests.swift */; };
 		3EA87D4F2D7A2930007DD959 /* CancelBolusPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87D4E2D7A292A007DD959 /* CancelBolusPacket.swift */; };
@@ -250,6 +252,8 @@
 		3EA69F042D95E605002EEF9F /* InsulinTypeSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsulinTypeSelector.swift; sourceTree = "<group>"; };
 		3EA69F062D95ECDE002EEF9F /* PatchSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchSettingsView.swift; sourceTree = "<group>"; };
 		3EA6C4502DA2947000963AAB /* OnboardingWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWelcomeView.swift; sourceTree = "<group>"; };
+		3EA87C3A2DAC2DB300E897ED /* SynchronizeNotificationPacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynchronizeNotificationPacketTests.swift; sourceTree = "<group>"; };
+		3EA87C3C2DAC2F9700E897ED /* NotificationPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPacket.swift; sourceTree = "<group>"; };
 		3EA87D4A2D7A214B007DD959 /* ActivatePacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivatePacketTests.swift; sourceTree = "<group>"; };
 		3EA87D4C2D7A25E5007DD959 /* AuthorizePacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthorizePacketTests.swift; sourceTree = "<group>"; };
 		3EA87D4E2D7A292A007DD959 /* CancelBolusPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CancelBolusPacket.swift; sourceTree = "<group>"; };
@@ -357,6 +361,7 @@
 				3E50601B2D70F69800376609 /* GetTimePacket.swift */,
 				3EA87D662D7A3F88007DD959 /* PollPatchPacket.swift */,
 				3EA87D6A2D7A4027007DD959 /* PrimePacket.swift */,
+				3EA87C3C2DAC2F9700E897ED /* NotificationPacket.swift */,
 				3EEA51F62D7DF061000C9E1E /* ReadBolusStatePacket.swift */,
 				3EEA51FA2D7E1BF2000C9E1E /* ResumePumpPacket.swift */,
 				3EEA51FE2D7E1D0D000C9E1E /* SetBasalProfilePacket.swift */,
@@ -528,6 +533,7 @@
 				3ED27E162D80C9EC0026488B /* StopPatchPacketTests.swift */,
 				3ED27E182D80CA350026488B /* SubscribePacketTests.swift */,
 				3ED27E1A2D80CABB0026488B /* SynchronizePacketTests.swift */,
+				3EA87C3A2DAC2DB300E897ED /* SynchronizeNotificationPacketTests.swift */,
 				3E77FEBB2D72F8FC00A15134 /* MedtrumBasePacketTests.swift */,
 			);
 			path = Packets;
@@ -860,6 +866,7 @@
 				3E77FEBE2D7364AC00A15134 /* ActivatePacket.swift in Sources */,
 				3EA6C4512DA2947000963AAB /* OnboardingWelcomeView.swift in Sources */,
 				3E24AEC42DA1729A00C7733C /* PatchPrimingViewModel.swift in Sources */,
+				3EA87C3D2DAC2F9C00E897ED /* NotificationPacket.swift in Sources */,
 				3E26BE0B2D9069A600E595B0 /* MedtrumKitSettings.swift in Sources */,
 				3EA69F052D95E605002EEF9F /* InsulinTypeSelector.swift in Sources */,
 				3E15324A2D6FA0080020F015 /* Data.swift in Sources */,
@@ -913,6 +920,7 @@
 				3ED27E192D80CA3B0026488B /* SubscribePacketTests.swift in Sources */,
 				3ED27E112D80C4320026488B /* SetTimePacketTests.swift in Sources */,
 				3EA87D692D7A3FC2007DD959 /* PollPatchPacketTests.swift in Sources */,
+				3EA87C3B2DAC2DBE00E897ED /* SynchronizeNotificationPacketTests.swift in Sources */,
 				3ED27E0F2D80BFF90026488B /* SetTempBasalPacketTests.swift in Sources */,
 				3ED27E072D80BA130026488B /* SetBolusPacketTests.swift in Sources */,
 				3EEA51F92D7E13E6000C9E1E /* ReadBolusStatePacketTests.swift in Sources */,

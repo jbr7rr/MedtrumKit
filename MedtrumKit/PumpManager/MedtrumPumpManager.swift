@@ -790,4 +790,12 @@ public extension MedtrumPumpManager {
             self.oldState = MedtrumPumpState(rawValue: self.state.rawValue)
         }
     }
+    
+    func updateBolusProgress(delivered: Double) {
+        guard let doseReporter = doseReporter else {
+            return
+        }
+        
+        doseReporter.notify(deliveredUnits: delivered)
+    }
 }

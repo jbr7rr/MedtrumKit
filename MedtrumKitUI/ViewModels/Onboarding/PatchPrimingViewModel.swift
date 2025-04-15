@@ -16,10 +16,12 @@ class PatchPrimingViewModel: ObservableObject {
     @Published var is300u = false
     
     private let nextStep: () -> Void
+    private let done: () -> Void
     private let pumpManager: MedtrumPumpManager?
-    init(_ pumpManager: MedtrumPumpManager?, _ nextStep: @escaping () -> Void) {
+    init(_ pumpManager: MedtrumPumpManager?, _ nextStep: @escaping () -> Void, _ done: @escaping () -> Void) {
         self.pumpManager = pumpManager
         self.nextStep = nextStep
+        self.done = done
         
         guard let pumpManager = self.pumpManager else {
             return
@@ -65,10 +67,14 @@ extension PatchPrimingViewModel : PumpManagerStatusObserver {
         }
         
         DispatchQueue.main.async {
-            self.primeProgress = Double(pumpManager.state.primeProgress) / 150
+            self.primeProgress = Double(pumpManager.state.primeProgress) / 240
         
-            if pumpManager.state.primeProgress == 150 {
+            // 39B36926
+            if pumpManager.state.primeProgress == 240 || pumpManager.state.pumpState == .primed {
                 self.nextStep()
+            } else if pumpManager.state.pumpState.rawValue >= PatchState.active.rawValue {
+                // Patch already activated, ready to jump to settings
+                self.done()
             }
         }
     }

@@ -14,6 +14,7 @@ protocol MedtrumBasePacketProtocol {
     var dataSize: UInt8 { get set }
     var totalData: Data { get set }
     var sequenceNumber: UInt8 { get set }
+    var responseCode: UInt16 { get set }
     var failed: Bool { get set }
     
     func getRequestBytes() -> Data
@@ -22,6 +23,7 @@ protocol MedtrumBasePacketProtocol {
 
 class MedtrumBasePacket {
     var dataSize: UInt8 = 0
+    var responseCode: UInt16 = 0
     var totalData: Data = Data()
     var sequenceNumber: UInt8 = 0
     var failed: Bool = false
@@ -77,6 +79,8 @@ extension MedtrumBasePacketProtocol {
             totalData = data
             dataSize = data[0] + 1
             sequenceNumber = data[3]
+            
+            responseCode = UInt16(data.subdata(in: 4..<6).toUInt64())
             
             let initialCrc = Crc8.calculate(data[0..<data.count - 1])
             if initialCrc[0] != data[data.count - 1] {

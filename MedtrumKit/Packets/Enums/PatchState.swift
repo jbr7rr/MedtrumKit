@@ -10,6 +10,7 @@ public enum PatchState: UInt8, Codable {
     case idle = 1
     case filled = 2
     case priming = 3
+    case primed = 4
     case ejecting = 5
     case ejected = 6
     case active = 32
