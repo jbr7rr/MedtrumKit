@@ -255,7 +255,7 @@ extension PeripheralManager {
         }
         
         if let bolus = syncResponse.bolus {
-            pumpManager.updateBolusProgress(delivered: bolus.delivered)
+            pumpManager.updateBolusProgress(delivered: bolus.delivered, completed: bolus.completed)
         }
         
         pumpManager.state.lastSync = Date.now
@@ -363,11 +363,6 @@ extension PeripheralManager : CBPeripheralDelegate {
             return
         }
         
-        guard packet.responseCode == 0 else {
-            self.log.error("Got unexpected response code: \(packet.responseCode)")
-            return
-        }
-        
         guard let writeCallback = writeQueue[packet.commandType] else {
             // Timeout is hit...
             self.currentPacket = nil
@@ -375,8 +370,15 @@ extension PeripheralManager : CBPeripheralDelegate {
             return
         }
         
-        if packet.failed {
-            writeCallback.resume(returning: .failure(error: .invalidResponse))
+        if packet.responseCode == 16384 {
+            // Need to skip to packet
+            return
+        }
+        
+        if packet.responseCode != 0 {
+            writeCallback.resume(returning: .failure(error: .invalidResponse(code: packet.responseCode)))
+        } else if packet.failed {
+            writeCallback.resume(returning: .failure(error: .invalidData))
         } else {
             writeCallback.resume(returning: .success(data: packet.parseResponse()))
         }

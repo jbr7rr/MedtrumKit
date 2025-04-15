@@ -29,17 +29,12 @@ class SetTempBasalPacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
     func getRequestBytes() -> Data {
         var base = Data([type])
         
-        let calcRate = UInt16(round(rate / 0.05))
-        base.append(Data([
-            UInt8(calcRate & 0xFF),
-            UInt8(calcRate >> 8)
-        ]))
+        let tempBasalRate = UInt64(round(rate / 0.05)).toData(length: 2)
+        base.append(tempBasalRate)
         
-        let calcDuration = UInt16(duration.minutes)
-        base.append(Data([
-            UInt8(calcDuration & 0xFF),
-            UInt8(calcDuration >> 8)
-        ]))
+        let x = duration.minutes
+        let tempBasalDuration = UInt64(duration.minutes).toData(length: 2)
+        base.append(tempBasalDuration)
         
         return base
     }

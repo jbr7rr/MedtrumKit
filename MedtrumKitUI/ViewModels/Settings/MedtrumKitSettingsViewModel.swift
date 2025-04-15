@@ -26,11 +26,12 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var reservoirLevel: Double = 0
     @Published var battery: Double = 0
     @Published var maxReservoirLevel: Double = 1
+    @Published var patchState: String = PatchState.none.description
     @Published var basalType: BasalState = .active
     @Published var insulinType: InsulinType = .novolog
     @Published var lastSync: Date = Date.distantPast
     @Published var patchLifecycleProgress: Double = 0
-    @Published var patchState: PatchLifecycleState = .noPatch
+    @Published var patchLifecycleState: PatchLifecycleState = .noPatch
     @Published var patchActivatedAt: Date = Date.distantPast
     @Published var patchExpiresAt: Date = Date.distantFuture
     @Published var isConnected: Bool = false
@@ -42,7 +43,8 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     
     let reservoirVolumeFormatter: QuantityFormatter = {
         let formatter = QuantityFormatter(for: .internationalUnit())
-        formatter.numberFormatter.maximumFractionDigits = 1
+        formatter.numberFormatter.minimumFractionDigits = 0
+        formatter.numberFormatter.maximumFractionDigits = 0
         return formatter
     }()
     
@@ -112,7 +114,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
     
     var patchLifecycleDays: Int? {
-        guard self.patchState == .active else {
+        guard self.patchLifecycleState == .active else {
             return nil
         }
         
@@ -120,7 +122,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
     
     var patchLifecycleHours: Int? {
-        guard self.patchState == .active else {
+        guard self.patchLifecycleState == .active else {
             return nil
         }
         
@@ -128,7 +130,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
     
     var patchLifecycleMinutes: Int? {
-        guard self.patchState == .active else {
+        guard self.patchLifecycleState == .active else {
             return nil
         }
         
@@ -208,6 +210,7 @@ extension MedtrumKitSettingsViewModel {
         self.pumpBaseSN = state.pumpSN.hexEncodedString().uppercased()
         self.pumpName = state.pumpName
         self.patchId = state.patchId.toUInt64()
+        self.patchState = state.pumpState.description
         self.reservoirLevel = state.reservoir
         self.basalType = state.basalState
         self.lastSync = state.lastSync
@@ -216,10 +219,10 @@ extension MedtrumKitSettingsViewModel {
         
         if !state.patchId.isEmpty {
             self.patchLifecycleProgress = min((Date.now.timeIntervalSince1970 - state.patchActivatedAt.timeIntervalSince1970) / TimeInterval(days: 3), 1)
-            self.patchState = self.patchLifecycleProgress == 1 ? .expired : .active
+            self.patchLifecycleState = self.patchLifecycleProgress == 1 ? .expired : .active
             self.patchExpiresAt = self.patchActivatedAt.addingTimeInterval(TimeInterval(days: 3))
         } else {
-            self.patchState = .noPatch
+            self.patchLifecycleState = .noPatch
         }
         
         if let insulinType = state.insulinType {

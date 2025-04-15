@@ -70,7 +70,7 @@ extension PatchPrimingViewModel : PumpManagerStatusObserver {
             self.primeProgress = Double(pumpManager.state.primeProgress) / 240
         
             // 39B36926
-            if pumpManager.state.primeProgress == 240 || pumpManager.state.pumpState == .primed {
+            if pumpManager.state.pumpState.rawValue > PatchState.priming.rawValue, pumpManager.state.pumpState.rawValue < PatchState.active.rawValue {
                 self.nextStep()
             } else if pumpManager.state.pumpState.rawValue >= PatchState.active.rawValue {
                 // Patch already activated, ready to jump to settings

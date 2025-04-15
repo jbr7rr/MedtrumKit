@@ -24,7 +24,7 @@ class PumpBaseSettingsViewModel: ObservableObject {
         self.is300u = pumpManager.state.pumpName.contains("300U")
     }
     
-    func save() {
+    func saveAndConnect() {
         guard serialNumber.count == 8 else {
             errorMessage = "Serial Number is too short"
             return
@@ -34,15 +34,22 @@ class PumpBaseSettingsViewModel: ObservableObject {
             errorMessage = "Serial Number is invalid hex format"
             return
         }
+
+#if targetEnvironment(simulator)
+        nextStep()
+#else
+        
+        guard let pumpManager = pumpManager else {
+            errorMessage = "Failed to connect to pump"
+            return
+        }
         
         errorMessage = ""
         
-        if let pumpManager = pumpManager {
-            pumpManager.state.isOnboarded = true
-            pumpManager.state.pumpSN = snData
-            pumpManager.notifyStateDidChange()
-        }
+        pumpManager.state.isOnboarded = true
+        pumpManager.state.pumpSN = snData
+        pumpManager.notifyStateDidChange()
         
-        nextStep()
+#endif
     }
 }

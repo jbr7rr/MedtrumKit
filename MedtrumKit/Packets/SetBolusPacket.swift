@@ -23,12 +23,12 @@ class SetBolusPacket : MedtrumBasePacket, MedtrumBasePacketProtocol {
     }
     
     func getRequestBytes() -> Data {
-        let amount = UInt16(round(bolusAmount / 0.05))
-        return Data([
-            bolusType,
-            UInt8(amount & 0xFF),
-            UInt8(amount >> 8)
-        ])
+        let amount = UInt64(round(bolusAmount / 0.05)).toData(length: 2)
+        var output = Data([ bolusType ])
+        output.append(amount)
+        output.append(Data([0]))
+        
+        return output
     }
     
     func parseResponse() -> SetBolusResponse {

@@ -250,6 +250,12 @@ public extension MedtrumPumpManager {
                     return
                 }
                 
+                do {
+                    self.log.info("Manual sync: \(String(data: try JSONEncoder().encode(syncResponse), encoding: .utf8) ?? "")")
+                } catch {
+                    self.log.warning("State update: Failed to encode JSON")
+                }
+                
                 self.state.pumpState = syncResponse.state
                 
                 if let reservoir = syncResponse.reservoir {
@@ -651,13 +657,6 @@ public extension MedtrumPumpManager {
     }
     
     func primePatch(_ completion: @escaping (MedtrumPrimePatchResult) -> Void) {
-        self.log.info("Start priming patch pump")
-        guard self.state.patchId.isEmpty else {
-            self.log.error("Old patch pump needs to be deactivated first...")
-            completion(.failure(error: .needToDeactivateFirst))
-            return
-        }
-        
         if self.state.pumpSN.isEmpty {
             // Need to scan for pump base first
             self.log.warning("No pump base known yet...")
@@ -665,8 +664,13 @@ public extension MedtrumPumpManager {
             return
         }
         
-        self.state.sessionToken = Crypto.genSessionToken()
-        self.notifyStateDidChange()
+        self.log.info("Start priming patch pump")
+        
+        if self.state.patchId.isEmpty {
+            self.log.info("NOTE: Update session token...")
+            self.state.sessionToken = Crypto.genSessionToken()
+            self.notifyStateDidChange()
+        }
         
         self.bluetooth.ensureConnected { connectionResult in
             if case .failure(let error) = connectionResult {
@@ -791,11 +795,33 @@ public extension MedtrumPumpManager {
         }
     }
     
-    func updateBolusProgress(delivered: Double) {
+    func updateBolusProgress(delivered: Double, completed: Bool) {
         guard let doseReporter = doseReporter else {
             return
         }
         
         doseReporter.notify(deliveredUnits: delivered)
+        
+        if completed {
+            self.state.bolusState = .noBolus
+            self.notifyStateDidChange()
+            
+            let dose = self.doseEntry?.toDoseEntry()
+            self.doseEntry = nil
+            self.doseReporter = nil
+            
+            guard let dose = dose else {
+                return
+            }
+            
+            self.pumpDelegate.notify { delegate in
+                delegate?.pumpManager(
+                    self,
+                    hasNewPumpEvents: [NewPumpEvent.bolus(dose: dose, units: dose.deliveredUnits ?? 0, date: dose.startDate)],
+                    lastReconciliation: Date.now,
+                    completion: { _ in }
+                )
+            }
+        }
     }
 }

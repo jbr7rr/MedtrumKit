@@ -52,6 +52,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         manager.scanForPeripherals(withServices: [])
         
         log.info("Started scanning")
+        // TODO: Add scan timeout - 15s?
     }
     
     func connect(peripheral: CBPeripheral, _ completion: @escaping (MedtrumConnectResult) -> Void) {
@@ -124,6 +125,16 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         }
         
         return await peripheralManager.writePacket(packet)
+    }
+    
+    func clearPeripheral() {
+        if self.peripheral != nil {
+            self.peripheral = nil
+        }
+        
+        if self.peripheralManager != nil {
+            self.peripheralManager = nil
+        }
     }
 }
 

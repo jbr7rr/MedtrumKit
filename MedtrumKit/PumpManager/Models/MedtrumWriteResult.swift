@@ -12,7 +12,8 @@ enum MedtrumWriteResult<T> {
 
 enum MedtrumWriteError: LocalizedError {
     case timeout
-    case invalidResponse
+    case invalidData
+    case invalidResponse(code: UInt16)
     case noManager
     case noWriteCharacteristic
     
@@ -20,8 +21,10 @@ enum MedtrumWriteError: LocalizedError {
         switch self {
         case .timeout:
             return "Timeout hit"
-        case .invalidResponse:
-            return "Invalid response"
+        case .invalidData:
+            return "Invalid data received"
+        case .invalidResponse(let code):
+            return "Invalid response code: \(code)"
         case .noManager:
             return "No peripheral manager"
         case .noWriteCharacteristic:

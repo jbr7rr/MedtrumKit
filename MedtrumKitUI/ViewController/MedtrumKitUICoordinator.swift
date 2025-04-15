@@ -23,6 +23,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
     private var pumpManager: MedtrumPumpManager?
     private var allowedInsulinTypes: [InsulinType]
     private var allowDebugFeatures: Bool
+    private let logger = MedtrumLogger(category: "MedtrumKitUICoordinator")
     
     var screenStack = [MedtrumUIScreen]()
     var currentScreen: MedtrumUIScreen {
@@ -75,11 +76,11 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return .welcomeScreen
         }
         
-        if pumpManager.state.patchId.isEmpty || pumpManager.state.pumpSN.isEmpty {
+        if pumpManager.state.sessionToken.isEmpty || pumpManager.state.pumpSN.isEmpty {
             return .pumpBaseSettingsScreen
         }
         
-        if pumpManager.state.sessionToken.isEmpty {
+        if pumpManager.state.patchId.isEmpty {
             return .patchActivationScreen
         }
         
@@ -116,8 +117,10 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                     pumpManager.state.isOnboarded = true
                     pumpManager.notifyStateDidChange()
                     
-                    if let pumpManager = self.pumpManager, let pumpManagerOnboardingDelegate = self.pumpManagerOnboardingDelegate {
+                    if let pumpManagerOnboardingDelegate = self.pumpManagerOnboardingDelegate {
                         pumpManagerOnboardingDelegate.pumpManagerOnboarding(didCreatePumpManager: pumpManager)
+                    } else {
+                        self.logger.warning("Not onboarded -> no onboardDelegate...")
                     }
                 }
                 
@@ -144,7 +147,8 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return hostingController(rootView: PatchActivationView(viewModel: viewModel))
             
         case .settingsScreen:
-            let toDeactivation = { self.navigateTo(.deactivatePatchScreen) }
+//            let toDeactivation = { self.navigateTo(.deactivatePatchScreen) }
+            let toDeactivation = { self.navigateTo(.patchPrimingScreen) }
             let pumpRemoval = {
                 guard let completionDelegate = self.completionDelegate else {
                     return

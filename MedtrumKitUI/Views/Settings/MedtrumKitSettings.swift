@@ -57,10 +57,18 @@ struct MedtrumKitSettings: View {
                 }
                 
                 HStack {
+                    Text(LocalizedString("Patch state", comment: "Text for patch state"))
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    Text(viewModel.patchState)
+                        .foregroundColor(.secondary)
+                }
+                
+                HStack {
                     Text(LocalizedString("Last sync", comment: "Text for last sync"))
                         .foregroundColor(Color.primary)
                     Spacer()
-                    if (viewModel.patchState != .noPatch) {
+                    if (viewModel.patchLifecycleState != .noPatch) {
                         Text(viewModel.dateFormatter.string(from: viewModel.lastSync))
                             .foregroundColor(.secondary)
                     } else {
@@ -134,7 +142,7 @@ struct MedtrumKitSettings: View {
                     Text(LocalizedString("Patch activated at", comment: "Text for activatedAt"))
                         .foregroundColor(Color.primary)
                     Spacer()
-                    if (viewModel.patchState != .noPatch) {
+                    if (viewModel.patchLifecycleState != .noPatch) {
                         Text(viewModel.dateTimeFormatter.string(from: viewModel.patchActivatedAt))
                             .foregroundColor(.secondary)
                     } else {
@@ -146,7 +154,7 @@ struct MedtrumKitSettings: View {
                     Text(LocalizedString("Patch expires at", comment: "Text for expiresAt"))
                         .foregroundColor(Color.primary)
                     Spacer()
-                    if (viewModel.patchState != .noPatch) {
+                    if (viewModel.patchLifecycleState != .noPatch) {
                         Text(viewModel.dateTimeFormatter.string(from: viewModel.patchExpiresAt))
                             .foregroundColor(.secondary)
                     } else {
@@ -235,7 +243,7 @@ struct MedtrumKitSettings: View {
     
     var patchLifecycle: some View {
         VStack {
-            switch viewModel.patchState {
+            switch viewModel.patchLifecycleState {
             case .noPatch:
                 HStack {
                     Text(LocalizedString("No active patch", comment: "Text shown when no patch active"))
