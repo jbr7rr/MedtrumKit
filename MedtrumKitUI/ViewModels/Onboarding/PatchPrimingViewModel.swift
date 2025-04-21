@@ -27,8 +27,12 @@ class PatchPrimingViewModel: ObservableObject {
             return
         }
         
-        pumpManager.addStatusObserver(self, queue: processQueue)
         is300u = pumpManager.state.pumpName.contains("300U")
+        pumpManager.addStatusObserver(self, queue: processQueue)
+    }
+    
+    deinit {
+        pumpManager?.removeStatusObserver(self)
     }
     
     func startPrime() {

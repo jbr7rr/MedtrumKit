@@ -769,6 +769,33 @@ public extension MedtrumPumpManager {
         }
     }
     
+    func updatePatchSettings(completion: @escaping (MedtrumUpdatePatchResult) -> Void) {
+        self.log.info("Update patch settings...")
+        self.bluetooth.ensureConnected { connectionResult in
+            if case .failure(let error) = connectionResult {
+                self.log.error("Failed to connect to pump: \(error)")
+                completion(.failure(error: .connectionFailure))
+                return
+            }
+            
+            let package = SetPatchPacket(
+                alarmSettings: self.state.alarmSetting,
+                hourlyMaxInsulin: self.state.maxHourlyInsulin,
+                dailyMaxInsulin: self.state.maxDailyInsulin,
+                expirationTimer: self.state.expirationTimer
+            )
+            let result = await self.bluetooth.write(package)
+            if case .failure(let error) = result {
+                self.log.error("Failed to update settings: \(error)")
+                completion(.failure(error: .unknownError(reason: error.localizedDescription)))
+                return
+            }
+            
+            self.log.info("Patch settings updated!")
+            completion(.success)
+        }
+    }
+    
     func addStatusObserver(_ observer: PumpManagerStatusObserver, queue: DispatchQueue) {
         statusObservers.insert(observer, queue: queue)
     }

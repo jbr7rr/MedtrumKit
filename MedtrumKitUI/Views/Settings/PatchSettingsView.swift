@@ -17,7 +17,6 @@ struct PatchSettingsView: View {
     @State var isEditingNotificationAfterActivation = false
     
     var doDirtyCheck = true
-    let nextStep: (() -> Void)?
     
     let unitText = LocalizedString("U", comment: "Insulin unit")
     let hourText = LocalizedString("h", comment: "Hour unit")
@@ -141,11 +140,18 @@ struct PatchSettingsView: View {
                 }
             }
             Spacer()
+            if !viewModel.errorMessage.isEmpty {
+                Text(viewModel.errorMessage)
+                    .foregroundStyle(.red)
+            }
             Button(action: {
                 viewModel.save()
-                nextStep?()
             }) {
-                Text(LocalizedString("Continue", comment: "Continue"))
+                if !viewModel.isUpdating {
+                    Text(LocalizedString("Continue", comment: "Continue"))
+                } else {
+                    ActivityIndicator(isAnimating: .constant(true), style: .medium)
+                }
             }
             .disabled(doDirtyCheck && !viewModel.isDirty)
             .buttonStyle(ActionButtonStyle())

@@ -25,11 +25,18 @@ class PatchSettingsViewModel: ObservableObject {
     }
     @Published var isDirty: Bool = false
     @Published var is300u: Bool = false
+    @Published var isUpdating = false
+    @Published var errorMessage: String = ""
+    
+    let updatePatch: Bool
+    let nextStep: (() -> Void)?
     
     private let processQueue = DispatchQueue(label: "com.nightscout.medtrumkit.patchSettingsViewModel")
     private let pumpManager: MedtrumPumpManager?
-    init(_ pumpManager: MedtrumPumpManager?) {
+    init(_ pumpManager: MedtrumPumpManager?, updatePatch: Bool, nextStep: (() -> Void)?) {
         self.pumpManager = pumpManager
+        self.updatePatch = updatePatch
+        self.nextStep = nextStep
         
         guard let pumpManager = pumpManager else {
             return
@@ -37,6 +44,10 @@ class PatchSettingsViewModel: ObservableObject {
         
         updateState(pumpManager.state)
         pumpManager.addStatusObserver(self, queue: processQueue)
+    }
+    
+    deinit {
+        pumpManager?.removeStatusObserver(self)
     }
     
     var alarmOptions: [Double] {
@@ -56,6 +67,26 @@ class PatchSettingsViewModel: ObservableObject {
         pumpManager.state.expirationTimer = UInt8(expirationTimer)
         pumpManager.state.notificationAfterActivation = .hours(notificationAfterActivation)
         pumpManager.notifyStateDidChange()
+        
+        guard updatePatch else {
+            self.nextStep?()
+            return
+        }
+        
+        self.isUpdating = true
+        pumpManager.updatePatchSettings { result in
+            DispatchQueue.main.async {
+                self.isUpdating = false
+                switch result {
+                case .failure(let error):
+                    self.errorMessage = error.localizedDescription
+                    return
+                case .success:
+                    self.nextStep?()
+                    return
+                }
+            }
+        }
     }
     
     func checkDirtyState() {

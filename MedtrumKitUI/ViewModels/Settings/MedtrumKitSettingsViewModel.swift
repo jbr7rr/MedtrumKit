@@ -85,7 +85,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     private let pumpManager: MedtrumPumpManager?
     init(_ pumpManager: MedtrumPumpManager?, _ deactivatePatchAction: @escaping () -> Void, _ pumpActivationAction: @escaping (Bool) -> Void, _ pumpRemovalAction: @escaping () -> Void) {
         self.pumpManager = pumpManager
-        self.patchSettingsViewModel = PatchSettingsViewModel(pumpManager)
+        self.patchSettingsViewModel = PatchSettingsViewModel(pumpManager, updatePatch: true, nextStep: nil)
         self.deactivatePatchAction = deactivatePatchAction
         self.pumpActivationAction = pumpActivationAction
         self.pumpRemovalAction = pumpRemovalAction
@@ -97,6 +97,10 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
         self.isConnected = pumpManager.bluetooth.isConnected
         updateState(pumpManager.state)
         pumpManager.addStatusObserver(self, queue: processQueue)
+    }
+    
+    deinit {
+        pumpManager?.removeStatusObserver(self)
     }
     
     func reservoirText(for units: Double) -> String {

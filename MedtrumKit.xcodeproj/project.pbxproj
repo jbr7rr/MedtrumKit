@@ -96,6 +96,7 @@
 		3EA87D6B2D7A402C007DD959 /* PrimePacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87D6A2D7A4027007DD959 /* PrimePacket.swift */; };
 		3EA87D6D2D7A404C007DD959 /* PrimePacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EA87D6C2D7A4046007DD959 /* PrimePacketTests.swift */; };
 		3EB1A3B12D7784410031C044 /* BasalSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EB1A3B02D77843E0031C044 /* BasalSchedule.swift */; };
+		3ED27C072DB67ED5001B7C95 /* MedtrumUpdatePatchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED27C062DB67ED5001B7C95 /* MedtrumUpdatePatchResult.swift */; };
 		3ED27E072D80BA130026488B /* SetBolusPacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED27E062D80BA130026488B /* SetBolusPacketTests.swift */; };
 		3ED27E092D80BACB0026488B /* SetPatchPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED27E082D80BAC50026488B /* SetPatchPacket.swift */; };
 		3ED27E0B2D80BC960026488B /* SetPatchPacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED27E0A2D80BC900026488B /* SetPatchPacketTests.swift */; };
@@ -270,6 +271,7 @@
 		3EA87D6A2D7A4027007DD959 /* PrimePacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimePacket.swift; sourceTree = "<group>"; };
 		3EA87D6C2D7A4046007DD959 /* PrimePacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimePacketTests.swift; sourceTree = "<group>"; };
 		3EB1A3B02D77843E0031C044 /* BasalSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasalSchedule.swift; sourceTree = "<group>"; };
+		3ED27C062DB67ED5001B7C95 /* MedtrumUpdatePatchResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedtrumUpdatePatchResult.swift; sourceTree = "<group>"; };
 		3ED27E062D80BA130026488B /* SetBolusPacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetBolusPacketTests.swift; sourceTree = "<group>"; };
 		3ED27E082D80BAC50026488B /* SetPatchPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetPatchPacket.swift; sourceTree = "<group>"; };
 		3ED27E0A2D80BC900026488B /* SetPatchPacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetPatchPacketTests.swift; sourceTree = "<group>"; };
@@ -335,6 +337,7 @@
 		3E1390132D6E5C4900A146C1 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				3ED27C062DB67ED5001B7C95 /* MedtrumUpdatePatchResult.swift */,
 				3E6A00F12DA0428E0085E6A4 /* MedtrumDeactivatePatchResult.swift */,
 				3E9547FC2D8D9CCE00EEF259 /* MedtrumActivatePatchResult.swift */,
 				3E9547FA2D8D962D00EEF259 /* MedtrumPrimePatchResult.swift */,
@@ -877,6 +880,7 @@
 				3E9D8B0E2D88A59200008AF2 /* DoseEntry.swift in Sources */,
 				3E24AECA2DA17B7F00C7733C /* PatchActivationView.swift in Sources */,
 				3E15A47E2DA2B723007F7D3C /* NibLoadable.swift in Sources */,
+				3ED27C072DB67ED5001B7C95 /* MedtrumUpdatePatchResult.swift in Sources */,
 				3E50601A2D70F2F500376609 /* GetDeviceTypePacket.swift in Sources */,
 				3E15A4782DA2B6E6007F7D3C /* MedtrumReservoirView.swift in Sources */,
 				3E9A5C962DA1460700A4102D /* PumpBaseSettingsView.swift in Sources */,
