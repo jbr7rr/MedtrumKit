@@ -147,17 +147,20 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return hostingController(rootView: PatchActivationView(viewModel: viewModel))
             
         case .settingsScreen:
-//            let toDeactivation = { self.navigateTo(.deactivatePatchScreen) }
-            let toDeactivation = { self.navigateTo(.patchPrimingScreen) }
+            let toDeactivation = {
+                self.navigateTo(.deactivatePatchScreen)
+            }
+            let toActivation: (Bool) -> Void = { alreadyPrimed in
+                self.navigateTo(alreadyPrimed ? .patchActivationScreen : .patchPrimingScreen)
+            }
             let pumpRemoval = {
                 guard let completionDelegate = self.completionDelegate else {
                     return
                 }
-                
                 completionDelegate.completionNotifyingDidComplete(self)
             }
             
-            let viewModel = MedtrumKitSettingsViewModel(self.pumpManager, toDeactivation, pumpRemoval)
+            let viewModel = MedtrumKitSettingsViewModel(self.pumpManager, toDeactivation, toActivation, pumpRemoval)
             return hostingController(rootView: MedtrumKitSettings(viewModel: viewModel, supportedInsulinTypes: allowedInsulinTypes))
         }
     }

@@ -76,8 +76,8 @@ extension MedtrumBasePacketProtocol {
                 failed = true
             }
             
-            totalData = data
-            dataSize = data[0] + 1
+            totalData = data.subdata(in: 0..<data.count-1)
+            dataSize = data[0]
             sequenceNumber = data[3]
             
             responseCode = UInt16(data.subdata(in: 4..<6).toUInt64())

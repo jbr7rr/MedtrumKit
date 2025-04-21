@@ -43,9 +43,8 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
             return
         }
 
-        guard !manager.isScanning else {
-            completion(.failure(error: .alreadyScanning))
-            return
+        if !manager.isScanning  {
+            manager.stopScan()
         }
 
         scanCompletion = completion
@@ -69,10 +68,13 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         self.manager.connect(peripheral)
     }
     
-    func ensureConnected(_ completionAsync: @escaping (MedtrumConnectResult) async -> Void) {
+    func ensureConnected(autoDisconnect: Bool = true, _ completionAsync: @escaping (MedtrumConnectResult) async -> Void) {
         let completion = { (_ result: MedtrumConnectResult) -> Void in
             Task {
                 await completionAsync(result)
+                if autoDisconnect {
+                    self.disconnect()
+                }
             }
         }
         
@@ -127,13 +129,9 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         return await peripheralManager.writePacket(packet)
     }
     
-    func clearPeripheral() {
-        if self.peripheral != nil {
-            self.peripheral = nil
-        }
-        
-        if self.peripheralManager != nil {
-            self.peripheralManager = nil
+    func disconnect() {
+        if let peripheral = self.peripheral, peripheral.state == .connected {
+            self.manager.cancelPeripheralConnection(peripheral)
         }
     }
 }
@@ -212,6 +210,10 @@ extension BluetoothManager {
 
     func centralManager(_: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         log.info("Device disconnected, name: \(peripheral.name ?? "<NO_NAME>")")
+        
+        if self.peripheralManager != nil {
+            self.peripheralManager = nil
+        }
     }
 
     func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {

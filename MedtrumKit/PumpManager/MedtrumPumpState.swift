@@ -26,6 +26,7 @@ public class MedtrumPumpState: RawRepresentable {
         isOnboarded = rawValue["isOnboarded"] as? Bool ?? false
         lastSync = rawValue["lastSync"] as? Date ?? Date.distantPast
         pumpSN = rawValue["pumpSN"] as? Data ?? Data()
+        usingContinuousMode = rawValue["usingContinuousMode"] as? Bool ?? false
         sessionToken = rawValue["sessionToken"] as? Data ?? Data()
         patchId = rawValue["patchId"] as? Data ?? Data()
         patchActivatedAt = rawValue["patchActivatedAt"] as? Date ?? Date.distantPast
@@ -81,6 +82,7 @@ public class MedtrumPumpState: RawRepresentable {
         isOnboarded = false
         lastSync = Date.distantPast
         pumpSN = Data()
+        usingContinuousMode = false
         sessionToken = Data()
         patchId = Data()
         patchActivatedAt = Date.distantPast
@@ -116,6 +118,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["lastSync"] = lastSync
         value["insulinType"] = insulinType?.rawValue
         value["pumpSN"] = pumpSN
+        value["usingContinuousMode"] = usingContinuousMode
         value["sessionToken"] = sessionToken
         value["patchId"] = patchId
         value["patchActivatedAt"] = patchActivatedAt
@@ -144,6 +147,7 @@ public class MedtrumPumpState: RawRepresentable {
     public var insulinType: InsulinType?
     public var lastSync: Date
     public var pumpSN: Data
+    public var usingContinuousMode = false
     
     public var sessionToken: Data
     public var patchId: Data

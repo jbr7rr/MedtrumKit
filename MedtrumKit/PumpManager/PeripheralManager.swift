@@ -57,7 +57,7 @@ class PeripheralManager : NSObject {
             self.writeSequence = UInt8(self.writeSequence + 1)
             
             for package in packages {
-                self.log.info("Writing data: \(package.hexEncodedString())")
+                self.log.debug("Writing data: \(package.hexEncodedString())")
                 self.connectedDevice.writeValue(package, for: writeCharacteristic, type: .withResponse)
             }
             
@@ -137,6 +137,7 @@ extension PeripheralManager {
                 
                 await synchronize()
             } else {
+                self.log.info("Time drift detected, resetting time")
                 await setTime()
             }
         }
@@ -313,7 +314,7 @@ extension PeripheralManager : CBPeripheralDelegate {
         }
         
         Task {
-            self.log.info("Notify enabled and ready to start auth flow!")
+            self.log.debug("Notify enabled and ready to start auth flow!")
             await doAuthorize()
         }
     }
@@ -337,7 +338,7 @@ extension PeripheralManager : CBPeripheralDelegate {
                 return
             }
 
-            self.log.info("READ -> Got data: \(data.hexEncodedString())")
+            self.log.debug("READ -> Got data: \(data.hexEncodedString())")
             
             var packet = NotificationPacket()
             packet.decode(data)
@@ -353,7 +354,7 @@ extension PeripheralManager : CBPeripheralDelegate {
             return
         }
         
-        self.log.info("Got data: \(data.hexEncodedString())")
+        self.log.debug("Got data: \(data.hexEncodedString())")
         packet.decode(data)
         self.currentPacket = packet
 
@@ -376,6 +377,9 @@ extension PeripheralManager : CBPeripheralDelegate {
         }
         
         if packet.responseCode != 0 {
+            // Examples for invalid codes:
+            // 7 -> Invalid authorization: propably wrong session token used
+            // 8 -> Invalid state: The patch is not in state 32 (active), which is required for that command
             writeCallback.resume(returning: .failure(error: .invalidResponse(code: packet.responseCode)))
         } else if packet.failed {
             writeCallback.resume(returning: .failure(error: .invalidData))

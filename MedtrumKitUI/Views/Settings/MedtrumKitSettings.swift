@@ -48,19 +48,10 @@ struct MedtrumKitSettings: View {
             
             Section() {
                 HStack {
-                    Text(LocalizedString("Status", comment: "Text for status")).foregroundColor(Color.primary)
-                    Spacer()
-                    HStack(spacing: 10) {
-                        connectionStatusText
-                        connectionStatusIcon
-                    }
-                }
-                
-                HStack {
                     Text(LocalizedString("Patch state", comment: "Text for patch state"))
                         .foregroundColor(Color.primary)
                     Spacer()
-                    Text(viewModel.patchState)
+                    Text(viewModel.patchStateString)
                         .foregroundColor(.secondary)
                 }
                 
@@ -77,9 +68,28 @@ struct MedtrumKitSettings: View {
                     }
                 }
                 
-                Button(action: {
-                    viewModel.syncData()
-                }) {
+                if viewModel.usingContinuousMode {
+                    HStack {
+                        Text(LocalizedString("Status", comment: "Text for status")).foregroundColor(Color.primary)
+                        Spacer()
+                        HStack(spacing: 10) {
+                            connectionStatusText
+                            connectionStatusIcon
+                        }
+                    }
+                    
+                    Button(action: { viewModel.toggleConnection() }) {
+                        HStack {
+                            if viewModel.isConnected {
+                                Text(LocalizedString("Disconnect", comment: "disconnect from patch"))
+                            } else {
+                                Text(LocalizedString("Reconnect", comment: "reconnect to patch"))
+                            }
+                        }
+                    }
+                }
+                
+                Button(action: { viewModel.syncData() }) {
                     HStack {
                         Text(LocalizedString("Sync patch data", comment: "sync pump"))
                         Spacer()
@@ -90,12 +100,28 @@ struct MedtrumKitSettings: View {
                 }
                 .disabled(viewModel.isUpdatingPumpState)
                 
-                Button(action: {
-                    viewModel.deactivatePatchAction()
-                }) {
+                if viewModel.patchState.rawValue < PatchState.active.rawValue {
+                    Button(action: { viewModel.toPumpActivation() }) {
+                        HStack {
+                            Text(LocalizedString("Activate patch", comment: "Activate patch"))
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: UIFont.systemFontSize, weight: .bold))
+                                .opacity(0.35)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                
+                Button(action: { viewModel.deactivatePatchAction() }) {
                     HStack {
                         Text(LocalizedString("Deactivate Patch", comment: "deactivate patch"))
                             .foregroundStyle(.red)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: UIFont.systemFontSize, weight: .bold))
+                            .opacity(0.35)
+                            .foregroundColor(.red)
                     }
                 }
             }

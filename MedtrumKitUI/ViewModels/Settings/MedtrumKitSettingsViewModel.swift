@@ -23,10 +23,12 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var model: String = ""
     @Published var patchId: UInt64 = 0
     @Published var is300u: Bool = false
+    @Published var usingContinuousMode = false
     @Published var reservoirLevel: Double = 0
     @Published var battery: Double = 0
     @Published var maxReservoirLevel: Double = 1
-    @Published var patchState: String = PatchState.none.description
+    @Published var patchState: PatchState = .none
+    @Published var patchStateString: String = PatchState.none.description
     @Published var basalType: BasalState = .active
     @Published var insulinType: InsulinType = .novolog
     @Published var lastSync: Date = Date.distantPast
@@ -78,12 +80,14 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     
     let deactivatePatchAction: () -> Void
     let pumpRemovalAction: () -> Void
+    let pumpActivationAction: (Bool) -> Void
     private let log = MedtrumLogger(category: "settingsViewModel")
     private let pumpManager: MedtrumPumpManager?
-    init(_ pumpManager: MedtrumPumpManager?, _ deactivatePatchAction: @escaping () -> Void, _ pumpRemovalAction: @escaping () -> Void) {
+    init(_ pumpManager: MedtrumPumpManager?, _ deactivatePatchAction: @escaping () -> Void, _ pumpActivationAction: @escaping (Bool) -> Void, _ pumpRemovalAction: @escaping () -> Void) {
         self.pumpManager = pumpManager
         self.patchSettingsViewModel = PatchSettingsViewModel(pumpManager)
         self.deactivatePatchAction = deactivatePatchAction
+        self.pumpActivationAction = pumpActivationAction
         self.pumpRemovalAction = pumpRemovalAction
         
         guard let pumpManager = pumpManager else {
@@ -180,6 +184,19 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
         return log.getDebugLogs()
     }
     
+    func toPumpActivation() {
+        guard let pumpManager = self.pumpManager else {
+            self.pumpActivationAction(false)
+            return
+        }
+        
+        let alreadyPrimed = pumpManager.state.pumpState.rawValue >= PatchState.primed.rawValue
+        self.pumpActivationAction(alreadyPrimed)
+    }
+    
+    func toggleConnection() {
+        // TODO: 
+    }
 }
 
 extension MedtrumKitSettingsViewModel {
@@ -210,7 +227,9 @@ extension MedtrumKitSettingsViewModel {
         self.pumpBaseSN = state.pumpSN.hexEncodedString().uppercased()
         self.pumpName = state.pumpName
         self.patchId = state.patchId.toUInt64()
-        self.patchState = state.pumpState.description
+        self.usingContinuousMode = state.usingContinuousMode
+        self.patchState = state.pumpState
+        self.patchStateString = state.pumpState.description
         self.reservoirLevel = state.reservoir
         self.basalType = state.basalState
         self.lastSync = state.lastSync

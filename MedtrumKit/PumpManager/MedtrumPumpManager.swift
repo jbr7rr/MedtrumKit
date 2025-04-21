@@ -318,7 +318,7 @@ public extension MedtrumPumpManager {
             return
         }
         
-        self.bluetooth.ensureConnected { connectionResult in
+        self.bluetooth.ensureConnected(autoDisconnect: false) { connectionResult in
             if case .failure(let error) = connectionResult {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 self.resetBolusState()
@@ -672,7 +672,7 @@ public extension MedtrumPumpManager {
             self.notifyStateDidChange()
         }
         
-        self.bluetooth.ensureConnected { connectionResult in
+        self.bluetooth.ensureConnected(autoDisconnect: false) { connectionResult in
             if case .failure(let error) = connectionResult {
                 self.log.error("Failed to connect to pump: \(error)")
                 completion(.failure(error: .connectionFailure))
@@ -729,7 +729,7 @@ public extension MedtrumPumpManager {
                 
                 self.state.patchId = data.patchId
                 self.state.patchActivatedAt = Date.now
-                self.state.patchExpiresAt = Date.now.addingTimeInterval(.days(3))
+                self.state.patchExpiresAt = Date.now.addingTimeInterval(.days(3)).addingTimeInterval(.hours(8))
                 self.notifyStateDidChange()
                 
                 self.pumpDelegate.notify { (delegate) in

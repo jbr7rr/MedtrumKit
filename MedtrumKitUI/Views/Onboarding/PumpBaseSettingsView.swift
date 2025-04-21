@@ -36,7 +36,7 @@ struct PumpBaseSettingsView: View {
                     .foregroundStyle(.red)
             }
             Button(action: { viewModel.saveAndConnect() }) {
-                Text(LocalizedString("Save and connect", comment: "save and connect to pumpBase"))
+                Text(LocalizedString("Save and continue", comment: "save and continue"))
             }
             .disabled(viewModel.serialNumber.count != 8)
             .buttonStyle(ActionButtonStyle())

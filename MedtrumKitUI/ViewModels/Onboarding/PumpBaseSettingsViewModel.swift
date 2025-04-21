@@ -49,7 +49,7 @@ class PumpBaseSettingsViewModel: ObservableObject {
         pumpManager.state.isOnboarded = true
         pumpManager.state.pumpSN = snData
         pumpManager.notifyStateDidChange()
-        
+        nextStep()
 #endif
     }
 }

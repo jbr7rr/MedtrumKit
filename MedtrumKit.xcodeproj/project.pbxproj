@@ -62,7 +62,6 @@
 		3E77FEBE2D7364AC00A15134 /* ActivatePacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E77FEBD2D7364A300A15134 /* ActivatePacket.swift */; };
 		3E77FEC22D74B39800A15134 /* AlarmSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E77FEC12D74B39300A15134 /* AlarmSettings.swift */; };
 		3E92D5232DA458EA00E22577 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E92D5222DA458E500E22577 /* NotificationManager.swift */; };
-		3E92D5252DA45F3400E22577 /* ScannerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E92D5242DA45F3400E22577 /* ScannerViewController.swift */; };
 		3E9547FB2D8D963600EEF259 /* MedtrumPrimePatchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E9547FA2D8D962D00EEF259 /* MedtrumPrimePatchResult.swift */; };
 		3E9547FD2D8D9CD600EEF259 /* MedtrumActivatePatchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E9547FC2D8D9CCE00EEF259 /* MedtrumActivatePatchResult.swift */; };
 		3E98B84B2D6BB12C00DD5123 /* MedtrumKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B7D3A8D02C148CC4002EE003 /* MedtrumKit.framework */; platformFilter = ios; };
@@ -239,7 +238,6 @@
 		3E77FEBD2D7364A300A15134 /* ActivatePacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivatePacket.swift; sourceTree = "<group>"; };
 		3E77FEC12D74B39300A15134 /* AlarmSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlarmSettings.swift; sourceTree = "<group>"; };
 		3E92D5222DA458E500E22577 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
-		3E92D5242DA45F3400E22577 /* ScannerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerViewController.swift; sourceTree = "<group>"; };
 		3E9547FA2D8D962D00EEF259 /* MedtrumPrimePatchResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedtrumPrimePatchResult.swift; sourceTree = "<group>"; };
 		3E9547FC2D8D9CCE00EEF259 /* MedtrumActivatePatchResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedtrumActivatePatchResult.swift; sourceTree = "<group>"; };
 		3E98B8502D6BB2B900DD5123 /* TimeInterval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeInterval.swift; sourceTree = "<group>"; };
@@ -493,7 +491,6 @@
 		3E767D542D67BCC3004B1971 /* ViewController */ = {
 			isa = PBXGroup;
 			children = (
-				3E92D5242DA45F3400E22577 /* ScannerViewController.swift */,
 				3E4566622D8371EB00FE1E0C /* ActivityViewController.swift */,
 				3E767D552D67BCC9004B1971 /* MedtrumKitUICoordinator.swift */,
 			);
@@ -885,7 +882,6 @@
 				3E9A5C962DA1460700A4102D /* PumpBaseSettingsView.swift in Sources */,
 				B7D3A8D52C148CC4002EE003 /* MedtrumKit.docc in Sources */,
 				3E9D8B0C2D88A3FA00008AF2 /* MedtrumDoseProgressReporter.swift in Sources */,
-				3E92D5252DA45F3400E22577 /* ScannerViewController.swift in Sources */,
 				3E15A47C2DA2B718007F7D3C /* IdentifiableClass.swift in Sources */,
 				3E24AEC82DA17B4900C7733C /* PatchActivationViewModel.swift in Sources */,
 				3E5060242D70FED500376609 /* SynchronizePacket.swift in Sources */,
@@ -1227,6 +1223,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited) MEDTRUM_DEBUG_LOGS";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_INSTALL_OBJC_HEADER = NO;
 				SWIFT_VERSION = 5.0;
