@@ -264,3 +264,15 @@
 
 /* Welcome text for MedtrumKit */
 "You will start by setting up your insulin type & basic patch settings before activating your patch." = "ستبدأ بإعداد نوع الأنسولين وإعدادات التصحيح الأساسية قبل تفعيل التصحيح الخاص بك.";
+
+/* label for go to pump base patch */
+"Go back to pump base" = "العودة إلى قاعدة المضخة";
+
+/* label for go to prime patch */
+"Go back to priming" = "العودة إلى الإعداد الأولي";
+
+/* Title expire reminder notification */
+"Your patch will expire soon!" = "ستنتهي صلاحية التصحيح الخاص بك قريباً!";
+
+/* Body expire reminder notification */
+"Your patch has %i hours left" = "يتبقى لديك %i ساعة";

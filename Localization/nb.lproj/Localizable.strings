@@ -264,3 +264,15 @@
 
 /* Welcome text for MedtrumKit */
 "You will start by setting up your insulin type & basic patch settings before activating your patch." = "Du starter med å konfigurere insulintype og grunnleggende plasterinnstillinger før du aktiverer plasteret.";
+
+/* label for go to pump base patch */
+"Go back to pump base" = "Gå tilbake til pumpebasen";
+
+/* label for go to prime patch */
+"Go back to priming" = "Gå tilbake til klaring";
+
+/* Title expire reminder notification */
+"Your patch will expire soon!" = "Depotplasteret ditt vil utløpe snart!";
+
+/* Body expire reminder notification */
+"Your patch has %i hours left" = "Your patch has %i hours left";

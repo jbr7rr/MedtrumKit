@@ -264,3 +264,15 @@
 
 /* Welcome text for MedtrumKit */
 "You will start by setting up your insulin type & basic patch settings before activating your patch." = "在激活补丁之前，您将先设置您的绝缘类型和基本补丁设置。";
+
+/* label for go to pump base patch */
+"Go back to pump base" = "返回泵基地";
+
+/* label for go to prime patch */
+"Go back to priming" = "返回底漆";
+
+/* Title expire reminder notification */
+"Your patch will expire soon!" = "您的补丁即将过期！";
+
+/* Body expire reminder notification */
+"Your patch has %i hours left" = "您的补丁还剩 %i 小时";

@@ -264,3 +264,15 @@
 
 /* Welcome text for MedtrumKit */
 "You will start by setting up your insulin type & basic patch settings before activating your patch." = "Aloitat asettamalla insuliinityypin ja laastarin perusasetukset ennen kuin otat laastarin käyttöön.";
+
+/* label for go to pump base patch */
+"Go back to pump base" = "Palaa takaisin pumppupohjaan";
+
+/* label for go to prime patch */
+"Go back to priming" = "Palaa takaisin pohjustukseen";
+
+/* Title expire reminder notification */
+"Your patch will expire soon!" = "Laastarin voimassaolo päättyy pian!";
+
+/* Body expire reminder notification */
+"Your patch has %i hours left" = "Laastariasi on jäljellä %i tuntia";

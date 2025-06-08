@@ -264,3 +264,15 @@
 
 /* Welcome text for MedtrumKit */
 "You will start by setting up your insulin type & basic patch settings before activating your patch." = "Перед активацией патча вы начнете с установки типа инсулин и базовых настроек патча.";
+
+/* label for go to pump base patch */
+"Go back to pump base" = "Вернитесь на базу насосов";
+
+/* label for go to prime patch */
+"Go back to priming" = "Вернитесь к грунтовке";
+
+/* Title expire reminder notification */
+"Your patch will expire soon!" = "Срок действия вашего патча скоро истечет!";
+
+/* Body expire reminder notification */
+"Your patch has %i hours left" = "У вашего патча осталось %i часов.";
