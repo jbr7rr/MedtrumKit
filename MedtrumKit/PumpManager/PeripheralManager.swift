@@ -215,7 +215,7 @@ extension PeripheralManager {
         do {
             log.info("State update: \(String(data: try JSONEncoder().encode(syncResponse), encoding: .utf8) ?? "")")
         } catch {
-            log.warning("State update: Failed to encode JSON")
+            log.warning("State update: Failed to encode JSON - \(error)")
         }
 
         syncState(
@@ -224,6 +224,10 @@ extension PeripheralManager {
             delegate: nil,
             pumpManager: pumpManager
         )
+
+        if let bolusProgress = syncResponse.bolus {
+            pumpManager.updateBolusProgress(delivered: bolusProgress.delivered, completed: bolusProgress.completed)
+        }
         pumpManager.notifyStateDidChange()
     }
 }
