@@ -33,6 +33,8 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var isConnected: Bool = false
     @Published var isReconnecting: Bool = false
     @Published var isUpdatingPumpState = false
+    @Published var isUpdatingSuspend = false
+    @Published var isUpdatingTempBasal = false
     @Published var showingHeartbeatWarning = false
     @Published var showingDeleteConfirmation = false
     @Published var previousPatch: PreviousPatch? = nil
@@ -205,6 +207,53 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
         pumpManager.state.usingHeartbeatMode.toggle()
         pumpManager.notifyStateDidChange()
         checkConnection()
+    }
+
+    func suspendResumeButtonPressed() {
+        guard let pumpManager = self.pumpManager else {
+            return
+        }
+
+        isUpdatingSuspend = true
+        if basalType == .suspended {
+            pumpManager.resumeDelivery { error in
+                DispatchQueue.main.async {
+                    self.isUpdatingSuspend = false
+                }
+
+                if let error = error {
+                    self.log.error("Failed to resume delivery: \(error)")
+                }
+            }
+
+        } else {
+            pumpManager.suspendDelivery { error in
+                DispatchQueue.main.async {
+                    self.isUpdatingSuspend = false
+                }
+
+                if let error = error {
+                    self.log.error("Failed to suspend delivery: \(error)")
+                }
+            }
+        }
+    }
+
+    func stopTempBasal() {
+        guard let pumpManager = self.pumpManager else {
+            return
+        }
+
+        isUpdatingTempBasal = true
+        pumpManager.enactTempBasal(unitsPerHour: 0, for: 0) { error in
+            DispatchQueue.main.async {
+                self.isUpdatingTempBasal = false
+            }
+
+            if let error = error {
+                self.log.error("Failed to stop temp basal: \(error)")
+            }
+        }
     }
 
     func checkConnection() {

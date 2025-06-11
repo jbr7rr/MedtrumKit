@@ -686,6 +686,12 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            guard self.state.pumpState.rawValue < PatchState.priming.rawValue else {
+                self.log.info("Patch already activated!")
+                completion(.success)
+                return
+            }
+
             let packet = PrimePacket()
             let primeResult = await self.bluetooth.write(packet)
             if case let .failure(error) = primeResult {

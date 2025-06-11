@@ -58,6 +58,11 @@ class PatchPrimingViewModel: ObservableObject {
                     return
                 }
 
+                if pumpManager.state.pumpState.rawValue >= PatchState.primed.rawValue {
+                    self.nextStep()
+                    return
+                }
+
                 // Command send succesfully, now we have to wait till primeProgress has reached value 150
             }
         #endif
@@ -70,6 +75,7 @@ extension PatchPrimingViewModel: PumpManagerStatusObserver {
         didUpdate _: LoopKit.PumpManagerStatus,
         oldStatus _: LoopKit.PumpManagerStatus
     ) {
+        print("Go state update...")
         guard let pumpManager = pumpManager as? MedtrumPumpManager else {
             return
         }

@@ -76,6 +76,90 @@ struct MedtrumKitSettings: View {
             }
 
             Section {
+                Button(action: {
+                    viewModel.suspendResumeButtonPressed()
+                }) {
+                    HStack {
+                        if viewModel.basalType == .suspended {
+                            Text(LocalizedString("Resume delivery", comment: "Resume patch"))
+                        } else {
+                            Text(LocalizedString("Suspend delivery", comment: "Suspend patch"))
+                        }
+                        Spacer()
+                        if viewModel.isUpdatingSuspend {
+                            ActivityIndicator(isAnimating: .constant(true), style: .medium)
+                        }
+                    }
+                }
+                .disabled(viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel.isUpdatingSuspend)
+
+                if viewModel.basalType == .tempBasal {
+                    Button(action: {
+                        viewModel.stopTempBasal()
+                    }) {
+                        HStack {
+                            Text(LocalizedString("Stop temp basal", comment: "Stop temp basal"))
+                            Spacer()
+                            if viewModel.isUpdatingTempBasal {
+                                ActivityIndicator(isAnimating: .constant(true), style: .medium)
+                            }
+                        }
+                    }
+                    .disabled(viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel.isUpdatingSuspend)
+                }
+
+                Button(action: { viewModel.syncData() }) {
+                    HStack {
+                        Text(LocalizedString("Sync patch data", comment: "sync pump"))
+                        Spacer()
+                        if viewModel.isUpdatingPumpState {
+                            ActivityIndicator(isAnimating: .constant(true), style: .medium)
+                        }
+                    }
+                }
+                .disabled(viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel.isUpdatingSuspend)
+
+                if viewModel.patchState.rawValue < PatchState.active.rawValue && viewModel.patchState != .none {
+                    Button(action: { viewModel.toPumpActivation() }) {
+                        HStack {
+                            Text(LocalizedString("Activate patch", comment: "label for activate patch"))
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: UIFont.systemFontSize, weight: .bold))
+                                .opacity(0.35)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                if viewModel.usingHeartbeatMode {
+                    Button(action: { viewModel.checkConnection() }) {
+                        HStack {
+                            if viewModel.isConnected {
+                                Text(LocalizedString("Disconnect", comment: "disconnect from patch"))
+                            } else {
+                                Text(LocalizedString("Reconnect", comment: "reconnect to patch"))
+                            }
+                            Spacer()
+                            if viewModel.isReconnecting {
+                                ActivityIndicator(isAnimating: .constant(true), style: .medium)
+                            }
+                        }
+                    }
+                }
+                
+                Button(action: { viewModel.deactivatePatchAction() }) {
+                    HStack {
+                        Text(LocalizedString("Deactivate Patch", comment: "deactivate patch"))
+                            .foregroundStyle(.red)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: UIFont.systemFontSize, weight: .bold))
+                            .opacity(0.5)
+                            .foregroundColor(.red)
+                    }
+                }
+                
                 HStack {
                     Text(LocalizedString("Patch state", comment: "Text for patch state"))
                         .foregroundColor(Color.primary)
@@ -105,56 +189,6 @@ struct MedtrumKitSettings: View {
                             connectionStatusText
                             connectionStatusIcon
                         }
-                    }
-
-                    Button(action: { viewModel.checkConnection() }) {
-                        HStack {
-                            if viewModel.isConnected {
-                                Text(LocalizedString("Disconnect", comment: "disconnect from patch"))
-                            } else {
-                                Text(LocalizedString("Reconnect", comment: "reconnect to patch"))
-                            }
-                            Spacer()
-                            if viewModel.isReconnecting {
-                                ActivityIndicator(isAnimating: .constant(true), style: .medium)
-                            }
-                        }
-                    }
-                }
-
-                Button(action: { viewModel.syncData() }) {
-                    HStack {
-                        Text(LocalizedString("Sync patch data", comment: "sync pump"))
-                        Spacer()
-                        if viewModel.isUpdatingPumpState {
-                            ActivityIndicator(isAnimating: .constant(true), style: .medium)
-                        }
-                    }
-                }
-                .disabled(viewModel.isUpdatingPumpState)
-
-                if viewModel.patchState.rawValue < PatchState.active.rawValue && viewModel.patchState != .none {
-                    Button(action: { viewModel.toPumpActivation() }) {
-                        HStack {
-                            Text(LocalizedString("Activate patch", comment: "label for activate patch"))
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: UIFont.systemFontSize, weight: .bold))
-                                .opacity(0.35)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Button(action: { viewModel.deactivatePatchAction() }) {
-                    HStack {
-                        Text(LocalizedString("Deactivate Patch", comment: "deactivate patch"))
-                            .foregroundStyle(.red)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: UIFont.systemFontSize, weight: .bold))
-                            .opacity(0.5)
-                            .foregroundColor(.red)
                     }
                 }
             }
