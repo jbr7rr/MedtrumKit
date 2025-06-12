@@ -13,25 +13,6 @@ struct MedtrumKitSettings: View {
 
     var supportedInsulinTypes: [InsulinType]
 
-    var removePumpManagerActionSheet: ActionSheet {
-        ActionSheet(
-            title: Text(LocalizedString("Remove Pump", comment: "Title for PumpManager deletion action sheet.")),
-            message: Text(LocalizedString(
-                "Are you sure you want to stop using Medtrum TouchCare Nano 200u/300u?",
-                comment: "Message for PumpManager deletion action sheet"
-            )),
-            buttons: [
-                .destructive(Text(LocalizedString(
-                    "Delete pump",
-                    comment: "Button text to confirm PumpManager deletion"
-                ))) {
-                    viewModel.stopUsingMedtrum()
-                },
-                .cancel()
-            ]
-        )
-    }
-
     var heartbeatModeToggleWarning: ActionSheet {
         let message = viewModel.usingHeartbeatMode ?
             LocalizedString(
@@ -147,7 +128,7 @@ struct MedtrumKitSettings: View {
                         }
                     }
                 }
-                
+
                 Button(action: { viewModel.deactivatePatchAction() }) {
                     HStack {
                         Text(LocalizedString("Deactivate Patch", comment: "deactivate patch"))
@@ -159,7 +140,7 @@ struct MedtrumKitSettings: View {
                             .foregroundColor(.red)
                     }
                 }
-                
+
                 HStack {
                     Text(LocalizedString("Patch state", comment: "Text for patch state"))
                         .foregroundColor(Color.primary)
@@ -335,7 +316,7 @@ struct MedtrumKitSettings: View {
                         .foregroundColor(guidanceColors.critical)
                 }
                 .actionSheet(isPresented: $viewModel.showingDeleteConfirmation) {
-                    removePumpManagerActionSheet
+                    removePumpManagerActionSheet(deleteAction: viewModel.deactivatePatchAction)
                 }
             }
         }

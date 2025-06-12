@@ -75,9 +75,12 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return .welcomeScreen
         }
 
-        if pumpManager.state.pumpState.rawValue < PatchState.primed.rawValue
-        {
+        if pumpManager.state.pumpState.rawValue < PatchState.priming.rawValue {
             return .pumpBaseSettingsScreen
+        }
+
+        if pumpManager.state.pumpState.rawValue < PatchState.primed.rawValue {
+            return .patchPrimingScreen
         }
 
         if pumpManager.state.pumpState.rawValue < PatchState.active.rawValue {
@@ -129,7 +132,15 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return hostingController(rootView: PatchDeactivationView(viewModel: viewModel))
 
         case .pumpBaseSettingsScreen:
-            let viewModel = PumpBaseSettingsViewModel(pumpManager, { self.navigateTo(.patchPrimingScreen) })
+            let nextStep = { self.navigateTo(.patchPrimingScreen) }
+            let pumpRemoval = {
+                guard let completionDelegate = self.completionDelegate else {
+                    return
+                }
+                completionDelegate.completionNotifyingDidComplete(self)
+            }
+
+            let viewModel = PumpBaseSettingsViewModel(pumpManager, nextStep, pumpRemoval)
             return hostingController(rootView: PumpBaseSettingsView(viewModel: viewModel))
 
         case .patchPrimingScreen:

@@ -2,7 +2,10 @@ import LoopKitUI
 import SwiftUI
 
 struct PumpBaseSettingsView: View {
+    @State private var isShowingDeleteConfirmation: Bool = false
     @ObservedObject var viewModel: PumpBaseSettingsViewModel
+
+    @Environment(\.guidanceColors) private var guidanceColors
 
     var body: some View {
         VStack {
@@ -31,6 +34,7 @@ struct PumpBaseSettingsView: View {
                 Text(viewModel.errorMessage)
                     .foregroundStyle(.red)
             }
+
             Button(action: { viewModel.saveAndContinue() }) {
                 Text(LocalizedString("Save and continue", comment: "save and continue"))
             }
@@ -41,5 +45,18 @@ struct PumpBaseSettingsView: View {
         .listStyle(InsetGroupedListStyle())
         .edgesIgnoringSafeArea(.bottom)
         .navigationTitle(LocalizedString("Pump base settings", comment: "Pump base settings header"))
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: {
+                    isShowingDeleteConfirmation = true
+                }) {
+                    Text(LocalizedString("Delete Pump", comment: "Label for PumpManager deletion button"))
+                        .foregroundStyle(guidanceColors.critical)
+                }
+                .actionSheet(isPresented: $isShowingDeleteConfirmation) {
+                    removePumpManagerActionSheet(deleteAction: viewModel.pumpRemovalAction)
+                }
+            }
+        }
     }
 }
