@@ -41,30 +41,30 @@ class PatchPrimingViewModel: ObservableObject {
             pumpManager?.state.pumpState = .primed
             pumpManager?.notifyStateDidChange()
             nextStep()
-            return
-        #endif
-        guard let pumpManager = self.pumpManager else {
-            nextStep()
-            return
-        }
+        #else
+            guard let pumpManager = self.pumpManager else {
+                nextStep()
+                return
+            }
 
-        primingError = ""
-        pumpManager.primePatch { result in
-            if case let .failure(error) = result {
-                DispatchQueue.main.async {
-                    self.primingError = error.localizedDescription
-                    self.isPriming = false
+            primingError = ""
+            pumpManager.primePatch { result in
+                if case let .failure(error) = result {
+                    DispatchQueue.main.async {
+                        self.primingError = error.localizedDescription
+                        self.isPriming = false
+                    }
+                    return
                 }
-                return
-            }
 
-            if pumpManager.state.pumpState.rawValue >= PatchState.primed.rawValue {
-                self.nextStep()
-                return
-            }
+                if pumpManager.state.pumpState.rawValue >= PatchState.primed.rawValue {
+                    self.nextStep()
+                    return
+                }
 
-            // Command send succesfully, now we have to wait till primeProgress has reached PatchState.primed or PatchState.active
-        }
+                // Command send succesfully, now we have to wait till primeProgress has reached PatchState.primed or PatchState.active
+            }
+        #endif
     }
 }
 
@@ -74,22 +74,28 @@ extension PatchPrimingViewModel: PumpManagerStatusObserver {
         didUpdate _: LoopKit.PumpManagerStatus,
         oldStatus _: LoopKit.PumpManagerStatus
     ) {
-        guard let pumpManager = self.pumpManager else {
-            return
-        }
-
-        DispatchQueue.main.async {
-            self.isPriming = pumpManager.state.pumpState == .priming
-            self.primeProgress = Double(pumpManager.state.primeProgress) / 240
-
-            if pumpManager.state.pumpState.rawValue > PatchState.priming.rawValue,
-               pumpManager.state.pumpState.rawValue < PatchState.active.rawValue
-            {
-                self.nextStep()
-            } else if pumpManager.state.pumpState.rawValue >= PatchState.active.rawValue {
-                // Patch already activated, ready to jump to settings
-                self.done()
+        #if targetEnvironment(simulator)
+            DispatchQueue.main.async {
+                self.isPriming = false
             }
-        }
+        #else
+            guard let pumpManager = self.pumpManager else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.isPriming = pumpManager.state.pumpState == .priming
+                self.primeProgress = Double(pumpManager.state.primeProgress) / 240
+
+                if pumpManager.state.pumpState.rawValue > PatchState.priming.rawValue,
+                   pumpManager.state.pumpState.rawValue < PatchState.active.rawValue
+                {
+                    self.nextStep()
+                } else if pumpManager.state.pumpState.rawValue >= PatchState.active.rawValue {
+                    // Patch already activated, ready to jump to settings
+                    self.done()
+                }
+            }
+        #endif
     }
 }
