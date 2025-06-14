@@ -1,14 +1,10 @@
-public enum MedtrumConnectResult {
-    case success
-    case failure(error: MedtrumConnectError)
-}
-
 public enum MedtrumConnectError: LocalizedError {
     case failedToDiscoverServices(localizedError: String)
     case failedToDiscoverCharacteristics(localizedError: String)
     case failedToEnableNotify(localizedError: String)
     case failedToCompleteAuthorizationFlow(localizedError: String)
     case failedToFindDevice
+    case failedToConnectToDevice
 
     public var errorDescription: String? {
         switch self {
@@ -20,6 +16,8 @@ public enum MedtrumConnectError: LocalizedError {
             return localizedErr
         case let .failedToCompleteAuthorizationFlow(localizedErr):
             return localizedErr
+        case .failedToConnectToDevice:
+            return "Failed to connect to device -> Timeout reached..."
         case .failedToFindDevice:
             return "Failed to find device"
         }

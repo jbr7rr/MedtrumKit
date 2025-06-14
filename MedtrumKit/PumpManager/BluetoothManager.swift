@@ -12,7 +12,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     private var peripheralManager: PeripheralManager?
 
     var scanCompletion: ((MedtrumScanResult) -> Void)?
-    var connectCompletion: ((MedtrumConnectResult) -> Void)?
+    var connectCompletion: ((MedtrumConnectError?) -> Void)?
 
     public var isConnected: Bool {
         if let peripheral = peripheral, peripheral.state == .connected {
@@ -55,7 +55,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         // TODO: Add scan timeout - 15s?
     }
 
-    func connect(peripheral: CBPeripheral, _ completion: @escaping (MedtrumConnectResult) -> Void) {
+    private func connect(peripheral: CBPeripheral) {
         if manager.isScanning {
             manager.stopScan()
             scanCompletion = nil
@@ -63,45 +63,47 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
 
         log.info("Connecting to \(peripheral)")
 
-        connectCompletion = completion
         self.peripheral = peripheral
-
         manager.connect(peripheral)
     }
 
-    func ensureConnected(autoDisconnect: Bool = true, _ completionAsync: @escaping (MedtrumConnectResult) async -> Void) {
-        let completion = { (_ result: MedtrumConnectResult) -> Void in
+    func ensureConnected(autoDisconnect: Bool = true, _ completionAsync: @escaping (MedtrumConnectError?) async -> Void) {
+        let completion = { (_ result: MedtrumConnectError?) -> Void in
             Task {
                 await completionAsync(result)
                 if autoDisconnect {
                     self.disconnect()
                 }
+
+                self.connectCompletion = nil
             }
         }
+        connectCompletion = completion
 
         if let peripheral = peripheral, peripheral.state == .connected {
             // We are connected and ready to continue
-            completion(.success)
+            completion(nil)
             return
         }
 
         if let peripheral = peripheral {
             // We've the peripheral reference to a previous connection
             // Just try to reconnect
-            connect(peripheral: peripheral, completion)
+            startTimeout(seconds: .seconds(15))
+            connect(peripheral: peripheral)
             return
         }
 
         let connectedDevices = manager.retrieveConnectedPeripherals(withServices: [PeripheralManager.SERVICE_UUID])
         if let peripheral = connectedDevices.first(where: { $0.name == "MT" }) {
             // Phone is already connected, but the app is not
-            connect(peripheral: peripheral, completion)
+            connect(peripheral: peripheral)
             return
         }
 
         guard var pumpSNState = pumpManager?.state.pumpSN else {
             log.error("No pump serial number found")
-            completion(.failure(error: .failedToFindDevice))
+            completion(.failedToFindDevice)
             return
         }
 
@@ -114,7 +116,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
             case let .failure(error):
                 self.log.error("Error during scanning: \(error.localizedDescription)")
                 self.manager.stopScan()
-                completion(.failure(error: .failedToFindDevice))
+                completion(.failedToFindDevice)
 
             case let .success(peripheral, pumpSN, _, _):
                 guard pumpSN == pumpSNState else {
@@ -122,8 +124,25 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
                     return
                 }
 
-                self.connect(peripheral: peripheral, completion)
+                self.connect(peripheral: peripheral)
             }
+        }
+    }
+
+    func startTimeout(seconds: TimeInterval) {
+        Task {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                guard let connectionCallback = self.connectCompletion else {
+                    // This is amazing, we've done what we must and continue our live :)
+                    return
+                }
+
+                self.log.error("Failed to connect: Timeout reached...")
+
+                connectionCallback(.failedToConnectToDevice)
+                self.connectCompletion = nil
+            } catch {}
         }
     }
 
@@ -152,8 +171,8 @@ extension BluetoothManager {
         log.info("\(String(describing: central.state.rawValue))")
 
         if central.state == .poweredOn, !isConnected, pumpManager?.state.pumpState == .active {
-            ensureConnected { result in
-                if case let .failure(error) = result {
+            ensureConnected { error in
+                if let error = error {
                     self.log.error("Failed to auto reconnect on boot: \(error)")
                 }
             }
@@ -221,7 +240,7 @@ extension BluetoothManager {
 
         self.peripheral = peripheral
         peripheralManager = PeripheralManager(peripheral, self, pumpManager) { reconnectResult in
-            if case let .failure(error) = reconnectResult {
+            if let error = reconnectResult {
                 self.log.warning("Couldnt reconnect to pump: \(error)")
                 return
             }

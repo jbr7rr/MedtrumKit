@@ -32,7 +32,6 @@
 		3E26BE0D2D906A0D00E595B0 /* MedtrumUI.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3E26BE0C2D906A0D00E595B0 /* MedtrumUI.xcassets */; };
 		3E26BE0F2D906AEE00E595B0 /* MedtrumKitSettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E26BE0E2D906AE500E595B0 /* MedtrumKitSettingsViewModel.swift */; };
 		3E26BE112D906E5700E595B0 /* ReservoirView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E26BE102D906E5700E595B0 /* ReservoirView.swift */; };
-		3E4566612D83719C00FE1E0C /* DebugViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4566602D83719900FE1E0C /* DebugViewModel.swift */; };
 		3E4566632D8371EC00FE1E0C /* ActivityViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4566622D8371EB00FE1E0C /* ActivityViewController.swift */; };
 		3E4566652D837A4900FE1E0C /* Bundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4566642D837A4800FE1E0C /* Bundle.swift */; };
 		3E5060142D70E5CB00376609 /* Crc8.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5060132D70E5C900376609 /* Crc8.swift */; };
@@ -188,7 +187,6 @@
 		3E26BE0C2D906A0D00E595B0 /* MedtrumUI.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = MedtrumUI.xcassets; sourceTree = "<group>"; };
 		3E26BE0E2D906AE500E595B0 /* MedtrumKitSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedtrumKitSettingsViewModel.swift; sourceTree = "<group>"; };
 		3E26BE102D906E5700E595B0 /* ReservoirView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservoirView.swift; sourceTree = "<group>"; };
-		3E4566602D83719900FE1E0C /* DebugViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugViewModel.swift; sourceTree = "<group>"; };
 		3E4566622D8371EB00FE1E0C /* ActivityViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityViewController.swift; sourceTree = "<group>"; };
 		3E4566642D837A4800FE1E0C /* Bundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bundle.swift; sourceTree = "<group>"; };
 		3E5060132D70E5C900376609 /* Crc8.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Crc8.swift; sourceTree = "<group>"; };
@@ -436,7 +434,6 @@
 			children = (
 				3E24AEC62DA1733C00C7733C /* Onboarding */,
 				3E24AEC52DA1733300C7733C /* Settings */,
-				3E4566602D83719900FE1E0C /* DebugViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -875,7 +872,6 @@
 				B7189AE72C15A52800703DE2 /* MedtrumPumpManager.swift in Sources */,
 				3E767D532D67BC33004B1971 /* MedtrumHUDProvider.swift in Sources */,
 				3E24AEC02DA1639F00C7733C /* PumpImage.swift in Sources */,
-				3E4566612D83719C00FE1E0C /* DebugViewModel.swift in Sources */,
 				3E77FEBE2D7364AC00A15134 /* ActivatePacket.swift in Sources */,
 				3EFBC4F42DFB527400E0E295 /* DeleteDriverActionSheet.swift in Sources */,
 				3EA6C4512DA2947000963AAB /* OnboardingWelcomeView.swift in Sources */,

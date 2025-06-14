@@ -223,8 +223,8 @@ public extension MedtrumPumpManager {
 
         log.info("Sync pump data")
 
-        bluetooth.ensureConnected { connectionResult in
-            if case let .failure(error) = connectionResult {
+        bluetooth.ensureConnected { error in
+            if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 completion?(nil)
                 return
@@ -296,8 +296,8 @@ public extension MedtrumPumpManager {
             return
         }
 
-        bluetooth.ensureConnected(autoDisconnect: false) { connectionResult in
-            if case let .failure(error) = connectionResult {
+        bluetooth.ensureConnected(autoDisconnect: false) { error in
+            if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 self.resetBolusState()
 
@@ -367,8 +367,8 @@ public extension MedtrumPumpManager {
         state.bolusState = .canceling
         notifyStateDidChange()
 
-        bluetooth.ensureConnected { connectionResult in
-            if case let .failure(error) = connectionResult {
+        bluetooth.ensureConnected { error in
+            if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 self.state.bolusState = oldBolusState
                 self.notifyStateDidChange()
@@ -424,8 +424,8 @@ public extension MedtrumPumpManager {
     ) {
         log.info("Setting temp basal at \(unitsPerHour)U/hr for \(duration) seconds...")
 
-        bluetooth.ensureConnected { connectionResult in
-            if case let .failure(error) = connectionResult {
+        bluetooth.ensureConnected { error in
+            if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 completion(.communication(error))
                 return
@@ -508,8 +508,8 @@ public extension MedtrumPumpManager {
     func suspendDelivery(completion: @escaping ((any Error)?) -> Void) {
         log.info("Suspending delivery...")
 
-        bluetooth.ensureConnected { connectionResult in
-            if case let .failure(error) = connectionResult {
+        bluetooth.ensureConnected { error in
+            if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 completion(error)
                 return
@@ -549,8 +549,8 @@ public extension MedtrumPumpManager {
     func resumeDelivery(completion: @escaping ((any Error)?) -> Void) {
         log.info("Suspending delivery...")
 
-        bluetooth.ensureConnected { connectionResult in
-            if case let .failure(error) = connectionResult {
+        bluetooth.ensureConnected { error in
+            if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 completion(error)
                 return
@@ -600,8 +600,8 @@ public extension MedtrumPumpManager {
             return
         }
 
-        bluetooth.ensureConnected { connectionResult in
-            if case let .failure(error) = connectionResult {
+        bluetooth.ensureConnected { error in
+            if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 completion(.failure(error))
                 return
@@ -679,8 +679,8 @@ public extension MedtrumPumpManager {
             notifyStateDidChange()
         }
 
-        bluetooth.ensureConnected(autoDisconnect: false) { connectionResult in
-            if case let .failure(error) = connectionResult {
+        bluetooth.ensureConnected(autoDisconnect: false) { error in
+            if let error = error {
                 self.log.error("Failed to connect to pump: \(error)")
                 completion(.failure(error: .connectionFailure))
                 return
@@ -707,8 +707,9 @@ public extension MedtrumPumpManager {
 
     func activatePatch(_ completion: @escaping (MedtrumActivatePatchResult) -> Void) {
         log.info("Activate patch pump...")
-        bluetooth.ensureConnected { connectionResult in
-            if case let .failure(error) = connectionResult {
+
+        bluetooth.ensureConnected { error in
+            if let error = error {
                 self.log.error("Failed to connect to pump: \(error)")
                 completion(.failure(error: .connectionFailure))
                 return
@@ -764,8 +765,9 @@ public extension MedtrumPumpManager {
 
     func deactivatePatch(_ completion: @escaping (MedtrumDeactivatePatchResult) -> Void) {
         log.info("Deactivate patch pump...")
-        bluetooth.ensureConnected { connectionResult in
-            if case let .failure(error) = connectionResult {
+
+        bluetooth.ensureConnected { error in
+            if let error = error {
                 self.log.error("Failed to connect to pump: \(error)")
                 completion(.failure(error: .connectionFailure))
                 return
@@ -800,8 +802,9 @@ public extension MedtrumPumpManager {
 
     func updatePatchSettings(completion: @escaping (MedtrumUpdatePatchResult) -> Void) {
         log.info("Update patch settings...")
-        bluetooth.ensureConnected { connectionResult in
-            if case let .failure(error) = connectionResult {
+
+        bluetooth.ensureConnected { error in
+            if let error = error {
                 self.log.error("Failed to connect to pump: \(error)")
                 completion(.failure(error: .connectionFailure))
                 return

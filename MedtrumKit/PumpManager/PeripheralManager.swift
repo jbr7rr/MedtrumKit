@@ -6,7 +6,7 @@ class PeripheralManager: NSObject {
     private let connectedDevice: CBPeripheral
     private let bluetoothManager: BluetoothManager
     private let pumpManager: MedtrumPumpManager
-    private var completion: ((MedtrumConnectResult) -> Void)?
+    private var completion: ((MedtrumConnectError?) -> Void)?
 
     public static let SERVICE_UUID = CBUUID(string: "669A9001-0008-968F-E311-6050405558B3")
     private static let READ_UUID = CBUUID(string: "669a9120-0008-968f-e311-6050405558b3")
@@ -25,7 +25,7 @@ class PeripheralManager: NSObject {
         _ peripheral: CBPeripheral,
         _ bluetoothManager: BluetoothManager,
         _ pumpManager: MedtrumPumpManager,
-        _ completion: @escaping (MedtrumConnectResult) -> Void
+        _ completion: @escaping (MedtrumConnectError?) -> Void
     ) {
         connectedDevice = peripheral
         self.bluetoothManager = bluetoothManager
@@ -92,12 +92,12 @@ extension PeripheralManager {
         switch authData {
         case let .failure(error):
             log.error("Failed to complete authorization flow: \(error.localizedDescription)")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription)))
+            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case let .success(data):
             guard let authResponse = data as? AuthorizeResponse else {
                 log.error("Failed to complete authorization flow: invalid response")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: "invalid response")))
+                completion?(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
                 return
             }
 
@@ -115,12 +115,12 @@ extension PeripheralManager {
         switch timeData {
         case let .failure(error):
             log.error("Failed to get time: \(error.localizedDescription)")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription)))
+            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case let .success(data):
             guard let timeResponse = data as? GetTimePacketResponse else {
                 log.error("Failed to get time: invalid response")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: "invalid response")))
+                completion?(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
                 return
             }
 
@@ -144,7 +144,7 @@ extension PeripheralManager {
         switch timeData {
         case let .failure(error):
             log.error("Failed to set time: \(error.localizedDescription)")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription)))
+            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case .success:
             log.info("Successfully set time")
@@ -159,7 +159,7 @@ extension PeripheralManager {
         switch timeZoneData {
         case let .failure(error):
             log.error("Failed to set time: \(error.localizedDescription)")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription)))
+            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case .success:
             log.info("Successfully set timezone")
@@ -178,12 +178,12 @@ extension PeripheralManager {
         switch syncData {
         case let .failure(error):
             log.error("Failed to synchronize: \(error.localizedDescription)")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription)))
+            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case let .success(data):
             guard let syncResponse = data as? SynchronizePacketResponse else {
                 log.error("Failed to Synchronize packet: invalid response")
-                completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: "invalid response")))
+                completion?(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
                 return
             }
 
@@ -199,14 +199,14 @@ extension PeripheralManager {
         switch subscribeData {
         case let .failure(error):
             log.error("Failed to subscribe: \(error.localizedDescription)")
-            completion?(.failure(error: .failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription)))
+            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case .success:
             log.info("Connected to pump!")
 
             pumpManager.state.isConnected = false
             pumpManager.notifyStateDidChange()
-            completion?(.success)
+            completion?(nil)
         }
     }
 
@@ -236,7 +236,7 @@ extension PeripheralManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error = error {
             log.error("\(error.localizedDescription)")
-            completion?(.failure(error: .failedToDiscoverServices(localizedError: error.localizedDescription)))
+            completion?(.failedToDiscoverServices(localizedError: error.localizedDescription))
             return
         }
 
@@ -245,7 +245,7 @@ extension PeripheralManager: CBPeripheralDelegate {
             let localizedError = "No Metrum service found - " +
                 (peripheral.services?.map(\.uuid.uuidString).joined(separator: ", ") ?? "No services discovered")
             log.error(localizedError)
-            completion?(.failure(error: .failedToDiscoverServices(localizedError: localizedError)))
+            completion?(.failedToDiscoverServices(localizedError: localizedError))
             return
         }
 
@@ -255,7 +255,7 @@ extension PeripheralManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         if let error = error {
             log.error("\(error.localizedDescription)")
-            completion?(.failure(error: .failedToDiscoverCharacteristics(localizedError: error.localizedDescription)))
+            completion?(.failedToDiscoverCharacteristics(localizedError: error.localizedDescription))
             return
         }
 
@@ -268,7 +268,7 @@ extension PeripheralManager: CBPeripheralDelegate {
                 (service.characteristics?.map(\.uuid.uuidString).joined(separator: ", ") ?? "No characteristics discovered")
 
             log.error(localizedError)
-            completion?(.failure(error: .failedToDiscoverCharacteristics(localizedError: localizedError)))
+            completion?(.failedToDiscoverCharacteristics(localizedError: localizedError))
             return
         }
 
@@ -292,7 +292,7 @@ extension PeripheralManager: CBPeripheralDelegate {
         if let error = error {
             log.error("\(error.localizedDescription)")
             if let connectCompletion = completion {
-                connectCompletion(.failure(error: .failedToEnableNotify(localizedError: error.localizedDescription)))
+                connectCompletion(.failedToEnableNotify(localizedError: error.localizedDescription))
             }
             return
         }
