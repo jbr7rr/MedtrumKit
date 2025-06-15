@@ -134,10 +134,12 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
         case .pumpBaseSettingsScreen:
             let nextStep = { self.navigateTo(.patchPrimingScreen) }
             let pumpRemoval = {
-                guard let completionDelegate = self.completionDelegate else {
+                guard let completionDelegate = self.completionDelegate, let pumpManager = self.pumpManager else {
                     return
                 }
-                completionDelegate.completionNotifyingDidComplete(self)
+                pumpManager.notifyDelegateOfDeactivation {
+                    completionDelegate.completionNotifyingDidComplete(self)
+                }
             }
 
             let viewModel = PumpBaseSettingsViewModel(pumpManager, nextStep, pumpRemoval)
@@ -171,7 +173,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                 guard let completionDelegate = self.completionDelegate, let pumpManager = self.pumpManager else {
                     return
                 }
-                
+
                 pumpManager.notifyDelegateOfDeactivation {
                     completionDelegate.completionNotifyingDidComplete(self)
                 }
