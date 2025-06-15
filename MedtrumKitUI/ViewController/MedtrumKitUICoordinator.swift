@@ -168,10 +168,13 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                 self.navigateTo(alreadyPrimed ? .patchActivationScreen : .patchPrimingScreen)
             }
             let pumpRemoval = {
-                guard let completionDelegate = self.completionDelegate else {
+                guard let completionDelegate = self.completionDelegate, let pumpManager = self.pumpManager else {
                     return
                 }
-                completionDelegate.completionNotifyingDidComplete(self)
+                
+                pumpManager.notifyDelegateOfDeactivation {
+                    completionDelegate.completionNotifyingDidComplete(self)
+                }
             }
 
             let viewModel = MedtrumKitSettingsViewModel(pumpManager, toDeactivation, toActivation, pumpRemoval)

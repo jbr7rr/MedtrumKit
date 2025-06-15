@@ -38,6 +38,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var showingHeartbeatWarning = false
     @Published var showingDeleteConfirmation = false
     @Published var previousPatch: PreviousPatch? = nil
+    @Published var patchSessionToken: String? = nil
 
     public let patchSettingsViewModel: PatchSettingsViewModel
 
@@ -310,6 +311,7 @@ extension MedtrumKitSettingsViewModel {
         pumpBaseSN = state.pumpSN.hexEncodedString().uppercased()
         pumpName = state.pumpName
         patchId = state.patchId.toUInt64()
+        patchSessionToken = state.sessionToken.hexEncodedString()
         usingHeartbeatMode = state.usingHeartbeatMode
         patchState = state.pumpState
         patchStateString = state.pumpState.description

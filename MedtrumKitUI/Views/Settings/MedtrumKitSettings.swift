@@ -256,6 +256,16 @@ struct MedtrumKitSettings: View {
                     Text(viewModel.batteryText(for: viewModel.battery))
                         .foregroundColor(.secondary)
                 }
+
+                if let sessionToken = viewModel.patchSessionToken {
+                    HStack {
+                        Text(LocalizedString("Session token", comment: "Text for session token"))
+                            .foregroundColor(Color.primary)
+                        Spacer()
+                        Text(sessionToken)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
 
             if let previousPatch = viewModel.previousPatch {
@@ -316,7 +326,7 @@ struct MedtrumKitSettings: View {
                         .foregroundColor(guidanceColors.critical)
                 }
                 .actionSheet(isPresented: $viewModel.showingDeleteConfirmation) {
-                    removePumpManagerActionSheet(deleteAction: viewModel.deactivatePatchAction)
+                    removePumpManagerActionSheet(deleteAction: viewModel.pumpRemovalAction)
                 }
             }
         }
