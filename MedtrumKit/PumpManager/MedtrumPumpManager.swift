@@ -651,27 +651,11 @@ public extension MedtrumPumpManager {
     }
 
     func syncDeliveryLimits(
-        limits _: LoopKit.DeliveryLimits,
+        limits: LoopKit.DeliveryLimits,
         completion: @escaping (Result<LoopKit.DeliveryLimits, any Error>) -> Void
     ) {
-        log
-            .warning(
-                "Skipping sync delivery limits (not supported by Medtrum). Limits are always -> maxBolus: 30u, maxBasal: 25u/hr"
-            )
-        completion(
-            .success(
-                DeliveryLimits(
-                    maximumBasalRate: HKQuantity(
-                        unit: HKUnit.internationalUnit().unitDivided(by: .hour()),
-                        doubleValue: 25
-                    ),
-                    maximumBolus: HKQuantity(
-                        unit: .internationalUnit(),
-                        doubleValue: 30
-                    )
-                )
-            )
-        )
+        log.warning("Skipping sync delivery limits (not supported by Medtrum)")
+        completion(.success(limits))
     }
 
     func primePatch(_ completion: @escaping (MedtrumPrimePatchResult) -> Void) {

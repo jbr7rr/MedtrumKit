@@ -17,6 +17,29 @@ class DeactivatePatchViewModel: ObservableObject {
 
         is300u = pumpManager.state.pumpName.contains("300U")
     }
+    
+    func forceDeactivate() {
+        if let pumpManager = self.pumpManager {
+            pumpManager.state.previousPatch = PreviousPatch(
+                patchId: pumpManager.state.patchId,
+                lastStateRaw: pumpManager.state.pumpState.rawValue,
+                lastSyncAt: pumpManager.state.lastSync,
+                battery: pumpManager.state.battery,
+                activatedAt: pumpManager.state.patchActivatedAt,
+                deactivatedAt: Date.now
+            )
+            
+#if targetEnvironment(simulator)
+            pumpManager.state.patchId = Data()
+            pumpManager.state.sessionToken = Data()
+#endif
+            
+            pumpManager.state.pumpState = .none
+            pumpManager.notifyStateDidChange()
+        }
+        
+        self.nextStep()
+    }
 
     func deactivate() {
         #if targetEnvironment(simulator)
