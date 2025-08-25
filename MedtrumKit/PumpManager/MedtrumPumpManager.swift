@@ -160,26 +160,12 @@ public extension MedtrumPumpManager {
     }
 
     private func status(_ state: MedtrumPumpState) -> PumpManagerStatus {
-        let bolusState: LoopKit.PumpManagerStatus.BolusState
-        switch state.bolusState {
-        case .noBolus:
-            bolusState = .noBolus
-        case .canceling:
-            bolusState = .canceling
-        case .inProgress:
-            if let dose = doseEntry?.toDoseEntry() {
-                bolusState = .inProgress(dose)
-            } else {
-                bolusState = .noBolus
-            }
-        }
-
         return PumpManagerStatus(
             timeZone: TimeZone.current,
             device: device(state),
             pumpBatteryChargeRemaining: nil, // Patch pumps do not need to report back battery status
             basalDeliveryState: state.basalDeliveryState,
-            bolusState: bolusState,
+            bolusState: self.bolusState(state.bolusState),
             insulinType: state.insulinType
         )
     }
@@ -746,6 +732,12 @@ public extension MedtrumPumpManager {
                 self.notifyStateDidChange()
 
                 self.pumpDelegate.notify { delegate in
+                    delegate?.pumpManager(self,
+                                          hasNewPumpEvents: [NewPumpEvent.replacedPump()],
+                                          lastReconciliation: Date.now,
+                                          replacePendingEvents: true,
+                                          completion: { _ in }
+                    )
                     delegate?.pumpManagerPumpWasReplaced(self)
                 }
 

@@ -154,7 +154,10 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                 { self.navigateTo(.pumpBaseSettingsScreen) },
                 { self.resetNavigationTo(.settingsScreen) }
             )
-            return hostingController(rootView: PatchPrimingView(viewModel: viewModel))
+            return hostingController(rootView: PatchPrimingView(viewModel: viewModel)
+                .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+                .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+            )
 
         case .patchActivationScreen:
             let viewModel = PatchActivationViewModel(
@@ -162,7 +165,10 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                 { self.resetNavigationTo(.settingsScreen) },
                 { self.navigateTo(.patchPrimingScreen) }
             )
-            return hostingController(rootView: PatchActivationView(viewModel: viewModel))
+            return hostingController(rootView: PatchActivationView(viewModel: viewModel)
+                .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+                .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+            )
 
         case .settingsScreen:
             let toDeactivation = {

@@ -10,7 +10,7 @@ func syncState(
 
     if let reservoir = syncResponse.reservoir {
         state.reservoir = reservoir
-        delegate?.pumpManager(pumpManager, didReadReservoirValue: state.reservoir, at: Date.now) { _ in }
+        delegate?.pumpManager(pumpManager, didReadReservoirValue: state.reservoir.rounded(toPlaces: 1), at: Date.now) { _ in }
     }
 
     if let basal = syncResponse.basal {
