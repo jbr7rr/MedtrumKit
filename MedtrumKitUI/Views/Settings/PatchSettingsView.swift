@@ -155,7 +155,7 @@ struct PatchSettingsView: View {
                     ActivityIndicator(isAnimating: .constant(true), style: .medium)
                 }
             }
-            .disabled(doDirtyCheck && !viewModel.isDirty)
+            .disabled(viewModel.isUpdating)
             .buttonStyle(ActionButtonStyle())
             .padding([.bottom, .horizontal])
         }
