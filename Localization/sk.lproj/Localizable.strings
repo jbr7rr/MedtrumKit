@@ -276,3 +276,18 @@
 
 /* Body expire reminder notification */
 "Your patch has %i hours left" = "Tvoja náplasť má zostávajúcich %i hodín";
+
+/* Force remove */
+"Force remove" = "Násilné odstránenie";
+
+/* title force remove */
+"Are you sure?" = "Ste si istý?";
+
+/* body force remove */
+"It is recommended to deactivate first" = "Odporúča sa najprv deaktivovať";
+
+/* confirm force remove */
+"Confirm" = "Potvrďte";
+
+/* cancel force remove */
+"Cancel" = "Zrušiť";

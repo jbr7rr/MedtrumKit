@@ -276,3 +276,18 @@
 
 /* Body expire reminder notification */
 "Your patch has %i hours left" = "La vostra patch ha %i ore rimanenti";
+
+/* Force remove */
+"Force remove" = "Rimuovere con forza";
+
+/* title force remove */
+"Are you sure?" = "Sei sicuro?";
+
+/* body force remove */
+"It is recommended to deactivate first" = "Si consiglia di disattivare prima";
+
+/* confirm force remove */
+"Confirm" = "Confermare";
+
+/* cancel force remove */
+"Cancel" = "Annullamento";

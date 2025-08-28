@@ -5,7 +5,7 @@ import LoopKit
 public class MedtrumPumpManager: DeviceManager {
     public static let pluginIdentifier = "Medtrum"
     public var localizedTitle: String {
-        LocalizedString("Medtrum", comment: "Generic title of the Medtrum pump manager") + " " + state.pumpName
+        LocalizedString("Medtrum TouchCare Nano", comment: "Generic title of the Medtrum pump manager")
     }
 
     public let managerIdentifier: String = "Medtrum"
@@ -852,11 +852,11 @@ public extension MedtrumPumpManager {
 
         if completed {
             state.bolusState = .noBolus
-            notifyStateDidChange()
-
             let dose = doseEntry.toDoseEntry()
             self.doseEntry = nil
             doseReporter = nil
+            
+            notifyStateDidChange()
 
             pumpDelegate.notify { delegate in
                 delegate?.pumpManager(

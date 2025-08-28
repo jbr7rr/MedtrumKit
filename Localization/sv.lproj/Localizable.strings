@@ -276,3 +276,18 @@
 
 /* Body expire reminder notification */
 "Your patch has %i hours left" = "Din patch har %i timmar kvar";
+
+/* Force remove */
+"Force remove" = "Tvinga bort";
+
+/* title force remove */
+"Are you sure?" = "Är du säker?";
+
+/* body force remove */
+"It is recommended to deactivate first" = "Vi rekommenderar att du avaktiverar först";
+
+/* confirm force remove */
+"Confirm" = "Bekräfta";
+
+/* cancel force remove */
+"Cancel" = "Avbryt";

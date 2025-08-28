@@ -276,3 +276,18 @@
 
 /* Body expire reminder notification */
 "Your patch has %i hours left" = "Vaš popravek ima še %i ur.";
+
+/* Force remove */
+"Force remove" = "Za silo odstranite";
+
+/* title force remove */
+"Are you sure?" = "Ste prepričani?";
+
+/* body force remove */
+"It is recommended to deactivate first" = "Priporočljivo je, da najprej deaktivirate";
+
+/* confirm force remove */
+"Confirm" = "Potrdite";
+
+/* cancel force remove */
+"Cancel" = "Prekliči";

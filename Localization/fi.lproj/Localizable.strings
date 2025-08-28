@@ -276,3 +276,18 @@
 
 /* Body expire reminder notification */
 "Your patch has %i hours left" = "Laastariasi on jäljellä %i tuntia";
+
+/* Force remove */
+"Force remove" = "Poista väkisin";
+
+/* title force remove */
+"Are you sure?" = "Oletko varma?";
+
+/* body force remove */
+"It is recommended to deactivate first" = "On suositeltavaa poistaa ensin käytöstä";
+
+/* confirm force remove */
+"Confirm" = "Vahvista";
+
+/* cancel force remove */
+"Cancel" = "Peruuta";

@@ -276,3 +276,18 @@
 
 /* Body expire reminder notification */
 "Your patch has %i hours left" = "Yamanızın %i saati kaldı";
+
+/* Force remove */
+"Force remove" = "Kaldırmaya zorla";
+
+/* title force remove */
+"Are you sure?" = "Emin misin?";
+
+/* body force remove */
+"It is recommended to deactivate first" = "Önce devre dışı bırakılması önerilir";
+
+/* confirm force remove */
+"Confirm" = "Onaylayın";
+
+/* cancel force remove */
+"Cancel" = "İptal";

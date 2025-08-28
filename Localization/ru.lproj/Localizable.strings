@@ -276,3 +276,18 @@
 
 /* Body expire reminder notification */
 "Your patch has %i hours left" = "У вашего патча осталось %i часов.";
+
+/* Force remove */
+"Force remove" = "Принудительное удаление";
+
+/* title force remove */
+"Are you sure?" = "Вы уверены?";
+
+/* body force remove */
+"It is recommended to deactivate first" = "Рекомендуется сначала деактивировать";
+
+/* confirm force remove */
+"Confirm" = "Подтвердите";
+
+/* cancel force remove */
+"Cancel" = "Отмена";
