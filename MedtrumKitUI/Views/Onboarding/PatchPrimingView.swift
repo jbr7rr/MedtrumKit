@@ -117,7 +117,9 @@ struct PatchPrimingView: View {
 
     private func applyIdleTimerPolicy() {
         let shouldKeepAwake = isVisible || viewModel.isPriming
-        UIApplication.shared.isIdleTimerDisabled = shouldKeepAwake
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = shouldKeepAwake
+        }
     }
 
     @ViewBuilder func supportImage(_ imageName: String) -> some View {
