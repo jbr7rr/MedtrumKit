@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PatchPrimingView: View {
     @ObservedObject var viewModel: PatchPrimingViewModel
+    @State private var isVisible = false
 
     var body: some View {
         VStack {
@@ -99,6 +100,24 @@ struct PatchPrimingView: View {
         .edgesIgnoringSafeArea(.bottom)
         .navigationBarBackButtonHidden(viewModel.isPriming)
         .navigationTitle(LocalizedString("Patch priming", comment: "Priming header"))
+
+        // Visibility lifecycle
+        .onAppear {
+            isVisible = true
+            applyIdleTimerPolicy()
+        }
+        .onDisappear {
+            isVisible = false
+            applyIdleTimerPolicy()
+        }
+        .onChange(of: viewModel.isPriming) { _ in
+            applyIdleTimerPolicy()
+        }
+    }
+
+    private func applyIdleTimerPolicy() {
+        let shouldKeepAwake = isVisible || viewModel.isPriming
+        UIApplication.shared.isIdleTimerDisabled = shouldKeepAwake
     }
 
     @ViewBuilder func supportImage(_ imageName: String) -> some View {
