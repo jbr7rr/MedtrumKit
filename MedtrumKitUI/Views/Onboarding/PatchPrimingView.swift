@@ -117,8 +117,12 @@ struct PatchPrimingView: View {
 
     private func applyIdleTimerPolicy() {
         let shouldKeepAwake = isVisible || viewModel.isPriming
-        DispatchQueue.main.async {
+        if Thread.isMainThread {
             UIApplication.shared.isIdleTimerDisabled = shouldKeepAwake
+        } else {
+            DispatchQueue.main.async {
+                UIApplication.shared.isIdleTimerDisabled = shouldKeepAwake
+            }
         }
     }
 
