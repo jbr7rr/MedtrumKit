@@ -4,7 +4,6 @@ import SwiftUI
 struct PatchActivationView: View {
     @Environment(\.dismissAction) private var dismiss
     @ObservedObject var viewModel: PatchActivationViewModel
-    @State private var isVisible = false
 
     var body: some View {
         VStack {

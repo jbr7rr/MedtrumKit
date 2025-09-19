@@ -3,7 +3,6 @@ import SwiftUI
 
 struct PatchPrimingView: View {
     @ObservedObject var viewModel: PatchPrimingViewModel
-    @State private var isVisible = false
 
     var body: some View {
         VStack {

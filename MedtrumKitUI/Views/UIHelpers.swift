@@ -3,7 +3,7 @@ import SwiftUI
 struct KeepAwakeModifier: ViewModifier {
     @State private var isVisible = false
     let isBusy: Bool
-    let alsoWhenVisible: Bool // when true, keep awake whenever the screen is shown
+    let alsoWhenVisible: Bool
 
     func body(content: Content) -> some View {
         content
@@ -33,7 +33,6 @@ struct KeepAwakeModifier: ViewModifier {
 }
 
 extension View {
-    // Default: keep awake when visible OR busy
     func keepScreenAwake(whenBusy isBusy: Bool, alsoWhenVisible: Bool = true) -> some View {
         modifier(KeepAwakeModifier(isBusy: isBusy, alsoWhenVisible: alsoWhenVisible))
     }
