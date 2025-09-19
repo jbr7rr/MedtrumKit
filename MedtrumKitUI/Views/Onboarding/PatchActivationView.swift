@@ -4,6 +4,7 @@ import SwiftUI
 struct PatchActivationView: View {
     @Environment(\.dismissAction) private var dismiss
     @ObservedObject var viewModel: PatchActivationViewModel
+    @State private var isVisible = false
 
     var body: some View {
         VStack {
@@ -81,6 +82,7 @@ struct PatchActivationView: View {
                 })
             }
         }
+        .keepScreenAwake(whenBusy: viewModel.isActivating, alsoWhenVisible: true)
     }
 
     @ViewBuilder func supportImage(_ imageName: String) -> some View {
