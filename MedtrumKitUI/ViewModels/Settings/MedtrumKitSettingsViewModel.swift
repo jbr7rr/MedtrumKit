@@ -118,7 +118,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
 
     var patchLifecycleDays: Int? {
-        guard patchLifecycleState == .active else {
+        guard patchLifecycleState == .active || !patchLifecycleExpiration else {
             return nil
         }
 
@@ -130,7 +130,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
 
     var patchLifecycleHours: Int? {
-        guard patchLifecycleState == .active else {
+        guard patchLifecycleState == .active || !patchLifecycleExpiration else {
             return nil
         }
 
@@ -148,7 +148,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
 
     var patchLifecycleMinutes: Int? {
-        guard patchLifecycleState == .active else {
+        guard patchLifecycleState == .active || !patchLifecycleExpiration else {
             return nil
         }
 

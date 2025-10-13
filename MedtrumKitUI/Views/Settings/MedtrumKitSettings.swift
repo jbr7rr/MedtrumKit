@@ -364,44 +364,15 @@ struct MedtrumKitSettings: View {
                     Spacer()
                 }
             case .active:
-                HStack {
-                    if viewModel.patchLifecycleExpiration {
-                        Text(LocalizedString("Expires in:", comment: "Text shown while patch is active"))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(LocalizedString("Age:", comment: "Text shown while patch is active"))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    viewModel.patchLifecycleDays.map { days in
-                        timeComponent(
-                            value: days,
-                            units: days == 1 ?
-                                LocalizedString("day", comment: "Unit for singular day") :
-                                LocalizedString("days", comment: "Unit for plural days")
-                        )
-                    }
-                    viewModel.patchLifecycleHours.map { hours in
-                        timeComponent(
-                            value: hours,
-                            units: hours == 1 ?
-                                LocalizedString("hour", comment: "Unit for singular hour") :
-                                LocalizedString("hours", comment: "Unit for plural hours")
-                        )
-                    }
-                    viewModel.patchLifecycleMinutes.map { minutes in
-                        timeComponent(
-                            value: minutes,
-                            units: minutes == 1 ?
-                                LocalizedString("minute", comment: "Unit for singular minute") :
-                                LocalizedString("minutes", comment: "Unit for plural minutes")
-                        )
-                    }
-                }
+                patchAgeOrExpiration()
             case .expired:
+                if !viewModel.patchLifecycleExpiration {
+                    patchAgeOrExpiration()
+                        .padding(.bottom, 5)
+                }
                 HStack {
                     Text(LocalizedString("Patch expired", comment: "Text shown when patch expired"))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.red)
                     Spacer()
                 }
             }
@@ -409,6 +380,44 @@ struct MedtrumKitSettings: View {
             if viewModel.patchLifecycleExpiration {
                 ProgressView(progress: viewModel.patchLifecycleProgress)
                     .padding(.top, -5)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func patchAgeOrExpiration() -> some View {
+        HStack {
+            if viewModel.patchLifecycleExpiration {
+                Text(LocalizedString("Expires in:", comment: "Text shown while patch is active"))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(LocalizedString("Age:", comment: "Text shown while patch is active, or expired in extended mode"))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            viewModel.patchLifecycleDays.map { days in
+                timeComponent(
+                    value: days,
+                    units: days == 1 ?
+                    LocalizedString("day", comment: "Unit for singular day") :
+                        LocalizedString("days", comment: "Unit for plural days")
+                )
+            }
+            viewModel.patchLifecycleHours.map { hours in
+                timeComponent(
+                    value: hours,
+                    units: hours == 1 ?
+                    LocalizedString("hour", comment: "Unit for singular hour") :
+                        LocalizedString("hours", comment: "Unit for plural hours")
+                )
+            }
+            viewModel.patchLifecycleMinutes.map { minutes in
+                timeComponent(
+                    value: minutes,
+                    units: minutes == 1 ?
+                    LocalizedString("minute", comment: "Unit for singular minute") :
+                        LocalizedString("minutes", comment: "Unit for plural minutes")
+                )
             }
         }
     }
