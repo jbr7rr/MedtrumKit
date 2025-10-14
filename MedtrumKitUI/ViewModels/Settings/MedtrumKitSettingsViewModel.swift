@@ -17,6 +17,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var patchId: UInt64 = 0
     @Published var is300u: Bool = false
     @Published var usingHeartbeatMode = false
+    @Published var initialReservoirLevel: Double? = nil
     @Published var reservoirLevel: Double = 0
     @Published var battery: Double = 0
     @Published var maxReservoirLevel: Double = 1
@@ -332,6 +333,7 @@ extension MedtrumKitSettingsViewModel {
         usingHeartbeatMode = state.usingHeartbeatMode
         patchState = state.pumpState
         patchStateString = state.pumpState.description
+        initialReservoirLevel = state.initialReservoir
         reservoirLevel = state.reservoir
         basalType = state.basalState
         basalRate = basalType == .tempBasal ? (state.tempBasalUnits ?? state.currentBaseBasalRate) : state.currentBaseBasalRate

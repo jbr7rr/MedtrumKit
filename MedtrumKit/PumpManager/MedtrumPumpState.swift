@@ -19,8 +19,8 @@ public struct PreviousPatch: Codable {
     public var battery: Double
     public var activatedAt: Date
     public var deactivatedAt: Date
+    public var initialReservoirLevel: Double?
     public var reservoirLevel: Double?
-    public var maxInsulin: Int?
 }
 
 public class MedtrumPumpState: RawRepresentable {
@@ -41,6 +41,7 @@ public class MedtrumPumpState: RawRepresentable {
         pumpTimeSyncedAt = rawValue["pumpTimeSyncedAt"] as? Date ?? Date()
         maxHourlyInsulin = rawValue["maxHourlyInsulin"] as? Double ?? 20
         maxDailyInsulin = rawValue["maxDailyInsulin"] as? Double ?? 100
+        initialReservoir = rawValue["initialReservoir"] as? Double
         reservoir = rawValue["reservoir"] as? Double ?? 0
         battery = rawValue["battery"] as? Double ?? 0
         basalStateSince = rawValue["basalStateSince"] as? Date ?? Date.distantPast
@@ -148,6 +149,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["maxDailyInsulin"] = maxDailyInsulin
         value["basalSchedule"] = basalSchedule.rawValue
         value["bolusState"] = bolusState.rawValue
+        value["initialReservoir"] = initialReservoir
         value["reservoir"] = reservoir
         value["battery"] = battery
         value["basalState"] = basalState.rawValue
@@ -188,6 +190,7 @@ public class MedtrumPumpState: RawRepresentable {
     public var pumpTimeSyncedAt: Date
 
     public var pumpState: PatchState
+    public var initialReservoir: Double?
     public var reservoir: Double
     public var battery: Double
 

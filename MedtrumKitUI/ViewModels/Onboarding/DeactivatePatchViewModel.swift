@@ -27,8 +27,8 @@ class DeactivatePatchViewModel: ObservableObject {
                 battery: pumpManager.state.battery,
                 activatedAt: pumpManager.state.patchActivatedAt,
                 deactivatedAt: Date.now,
-                reservoirLevel: pumpManager.state.reservoir,
-                maxInsulin: pumpManager.state.pumpName.contains("300U") ? 300 : 200
+                initialReservoirLevel: pumpManager.state.initialReservoir,
+                reservoirLevel: pumpManager.state.reservoir
             )
 
             #if targetEnvironment(simulator)

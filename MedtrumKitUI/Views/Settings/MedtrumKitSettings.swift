@@ -222,6 +222,16 @@ struct MedtrumKitSettings: View {
                     Text(viewModel.batteryText(for: viewModel.battery))
                         .foregroundColor(.secondary)
                 }
+                if let initialReservoirLevel = viewModel.initialReservoirLevel {
+                    HStack {
+                        Text(LocalizedString("Insulin used", comment: "Text for Insulin used"))
+                            .foregroundColor(Color.primary)
+                        Spacer()
+                        Text(viewModel.reservoirText(for: initialReservoirLevel - viewModel.reservoirLevel))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
             }
 
             if let previousPatch = viewModel.previousPatch {
@@ -264,12 +274,12 @@ struct MedtrumKitSettings: View {
                         Text(viewModel.batteryText(for: previousPatch.battery))
                             .foregroundColor(.secondary)
                     }
-                    if let reservoirLevel = previousPatch.reservoirLevel, let maxInsulin = previousPatch.maxInsulin {
+                    if let reservoirLevel = previousPatch.reservoirLevel, let initialReservoirLevel = previousPatch.initialReservoirLevel {
                         HStack {
                             Text(LocalizedString("Insulin used", comment: "Text for Insulin used"))
                                 .foregroundColor(Color.primary)
                             Spacer()
-                            Text(viewModel.reservoirText(for: Double(maxInsulin) - reservoirLevel))
+                            Text(viewModel.reservoirText(for: initialReservoirLevel - reservoirLevel))
                                 .foregroundColor(.secondary)
                         }
                     }
