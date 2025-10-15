@@ -730,6 +730,7 @@ public extension MedtrumPumpManager {
 
                 self.state.patchId = data.patchId
                 self.state.patchActivatedAt = Date.now
+                self.state.initialReservoir = nil
                 self.state.patchExpiresAt = Date.now.addingTimeInterval(.days(3)).addingTimeInterval(.hours(8))
                 self.notifyStateDidChange()
 

@@ -16,6 +16,7 @@ class PatchActivationViewModel: ObservableObject {
             if let pumpManager = pumpManager {
                 // Add some mock data
                 pumpManager.state.patchId = Data([1, 2, 3, 4])
+                pumpManager.state.initialReservoir = nil
                 pumpManager.state.reservoir = 200
                 pumpManager.state.battery = 2.5
                 pumpManager.state.pumpState = .active
