@@ -296,12 +296,7 @@ extension BluetoothManager {
             peripheralManager = nil
         }
 
-        // Temporary disabled auto reconnect...
-//        ensureConnected { error in
-//            if let error = error {
-//                self.logger.error("Failed to auto reconnect - \(error)")
-//            }
-//        }
+        connectCompletion = nil
     }
 
     func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
