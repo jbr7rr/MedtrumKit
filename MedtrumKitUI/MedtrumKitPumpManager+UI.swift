@@ -81,7 +81,7 @@ extension MedtrumPumpManager: PumpManagerUI {
                 imageName: "exclamationmark.circle.fill",
                 state: .critical
             )
-        } else if state.reservoir < 1 {
+        } else if state.reservoir < 1 || state.pumpState == .reservoirEmpty {
             return PumpStatusHighlight(
                 localizedMessage: LocalizedString("No Insulin", comment: "Status highlight that a pump is out of insulin."),
                 imageName: "exclamationmark.circle.fill",
@@ -101,6 +101,15 @@ extension MedtrumPumpManager: PumpManagerUI {
                 localizedMessage: LocalizedString(
                     "Signal Loss",
                     comment: "Status highlight when communications with the patch haven't happened recently."
+                ),
+                imageName: "exclamationmark.circle.fill",
+                state: .critical
+            )
+        } else if state.pumpState.rawValue > PatchState.active_alt.rawValue {
+            return PumpStatusHighlight(
+                localizedMessage: LocalizedString(
+                    "Patch Error",
+                    comment: "Status highlight message for other alarm."
                 ),
                 imageName: "exclamationmark.circle.fill",
                 state: .critical
