@@ -110,9 +110,23 @@ extension MedtrumPumpManager: PumpManagerUI {
         return nil
     }
 
-    // Not needed
     public var pumpLifecycleProgress: DeviceLifecycleProgress? {
-        nil
+        guard let expiresAt = state.patchExpiresAt else {
+            return nil
+        }
+        
+        if expiresAt <= Date.now {
+            // Patch is expired
+            return PumpLifecycleProgress(percentComplete: 100, progressState: .critical)
+        }
+        
+        if expiresAt.addingTimeInterval(.hours(-8)) <= Date.now {
+            // Patch is in grace period
+            let completed = expiresAt.timeIntervalSince(state.patchActivatedAt) / TimeInterval(hours: 80)
+            return PumpLifecycleProgress(percentComplete: completed, progressState: .warning)
+        }
+        
+        return nil
     }
 
     // LoopKit only requires here to show "time sync required"
