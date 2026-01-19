@@ -597,8 +597,9 @@ public extension MedtrumPumpManager {
 
             self.log.info("Delivery suspended for 120min!")
 
-            var events = [NewPumpEvent.suspend(dose: DoseEntry.suspend())]
-            if let tempBasalEvent = self.getTempBasalEvent(endDate: Date.now) {
+            let start = Date.now
+            var events = [NewPumpEvent.suspend(dose: DoseEntry.suspend(suspendDate: start))]
+            if let tempBasalEvent = self.getTempBasalEvent(endDate: start) {
                 events.append(tempBasalEvent)
             }
 
@@ -645,7 +646,21 @@ public extension MedtrumPumpManager {
 
             self.log.info("Resumed delivery!")
 
-            let events = [NewPumpEvent.resume(dose: DoseEntry.resume(insulinType: self.state.insulinType))]
+            let start = Date.now
+            let events = [
+                NewPumpEvent.resume(
+                    dose: DoseEntry.resume(insulinType: self.state.insulinType, resumeDate: start),
+                    date: start
+                ),
+                NewPumpEvent.basal(
+                    dose: DoseEntry.basal(
+                        rate: self.state.currentBaseBasalRate,
+                        insulinType: self.state.insulinType,
+                        startDate: start
+                    ),
+                    date: start
+                )
+            ]
 
             self.state.basalState = .active
             self.state.basalStateSince = Date.now
@@ -821,9 +836,21 @@ public extension MedtrumPumpManager {
                     NotificationManager.activatePatchExpiredNotification(after: self.state.notificationAfterActivation)
                 }
 
+                let start = Date.now
                 let events = [
-                    NewPumpEvent.replacedPump(),
-                    NewPumpEvent.resume(dose: DoseEntry.resume(insulinType: self.state.insulinType))
+                    NewPumpEvent.replacedPump(date: start),
+                    NewPumpEvent.resume(
+                        dose: DoseEntry.resume(insulinType: self.state.insulinType, resumeDate: start),
+                        date: start
+                    ),
+                    NewPumpEvent.basal(
+                        dose: DoseEntry.basal(
+                            rate: self.state.currentBaseBasalRate,
+                            insulinType: self.state.insulinType,
+                            startDate: start
+                        ),
+                        date: start
+                    )
                 ]
 
                 self.state.patchId = data.patchId

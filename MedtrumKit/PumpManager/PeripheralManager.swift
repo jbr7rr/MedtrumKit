@@ -39,6 +39,7 @@ class PeripheralManager: NSObject {
 
     deinit {
         if let queue = writeQueue {
+            queue.yield(.failure(error: .noData))
             queue.finish()
             writeQueue = nil
         }

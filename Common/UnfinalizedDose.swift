@@ -31,9 +31,9 @@ public class UnfinalizedDose {
             type: .bolus,
             startDate: startDate,
             endDate: isMutable ? endDate : Date(),
-            value: value,
+            value: value.rounded(toPlaces: 2),
             unit: .units,
-            deliveredUnits: isMutable ? value : deliveredUnits,
+            deliveredUnits: isMutable ? value : deliveredUnits.rounded(toPlaces: 2),
             insulinType: insulinType,
             automatic: automatic,
             isMutable: isMutable
