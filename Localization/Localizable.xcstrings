@@ -3287,145 +3287,145 @@
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "قم بتغيير اللصقة الآن. سيتوقف توصيل الأنسولين خلال %%1$@ أو عندما لا يتبقى المزيد من الأنسولين."
+            "value" : "قم بتغيير اللصقة الآن. سيتوقف توصيل الأنسولين خلال%1$@ أو عندما لا يتبقى المزيد من الأنسولين."
           }
         },
         "cs" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Změňte svou záplatu. Podávání inzulínu se zastaví za %%1$@ nebo až nezbude žádný další inzulín."
+            "value" : "Změňte svou záplatu. Podávání inzulínu se zastaví za %1$@ nebo až nezbude žádný další inzulín."
           }
         },
         "da" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Skift dit plaster nu. Insulintilførslen stopper om %%1$@, eller når der ikke er mere insulin tilbage."
+            "value" : "Skift dit plaster nu. Insulintilførslen stopper om %1$@, eller når der ikke er mere insulin tilbage."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pflaster jetzt austauschen. Die Insulinabgabe stoppt in %%1$@ oder wenn kein Insulin mehr vorhanden ist."
+            "value" : "Pflaster jetzt austauschen. Die Insulinabgabe stoppt in %1$@ oder wenn kein Insulin mehr vorhanden ist."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Change your Patch now. Insulin delivery will stop in %%1$@ or when no more insulin remains."
+            "value" : "Change your Patch now. Insulin delivery will stop in %1$@ or when no more insulin remains."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Cambie su parche ahora. La administración de insulina se detendrá en %%1$@ o cuando no quede más insulina."
+            "value" : "Cambie su parche ahora. La administración de insulina se detendrá en %1$@ o cuando no quede más insulina."
           }
         },
         "fi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vaihda Patch nyt. Insuliinin jakelu loppuu %%1$@:n kuluttua tai kun insuliinia ei ole enää jäljellä."
+            "value" : "Vaihda Patch nyt. Insuliinin jakelu loppuu %1$@:n kuluttua tai kun insuliinia ei ole enää jäljellä."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Remplacez le patch maintenant. La distribution d'insuline s'arrête dans %%1$@ ou lorsqu'il n'y a plus d'insuline."
+            "value" : "Remplacez le patch maintenant. La distribution d'insuline s'arrête dans %1$@ ou lorsqu'il n'y a plus d'insuline."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Cambiare subito il cerotto. La somministrazione di insulina si interromperà tra %%1$@ o quando non ci sarà più insulina."
+            "value" : "Cambiare subito il cerotto. La somministrazione di insulina si interromperà tra %1$@ o quando non ci sarà più insulina."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "今すぐパッチを交換してください。インスリンの投与は、%%1$@ またはインスリンの残りがなくなると停止します。"
+            "value" : "今すぐパッチを交換してください。インスリンの投与は、%1$@ またはインスリンの残りがなくなると停止します。"
           }
         },
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %%1$@ eller når det ikke er mer insulin igjen."
+            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %1$@ eller når det ikke er mer insulin igjen."
           }
         },
         "nb-NO" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %%1$@ eller når det ikke er mer insulin igjen."
+            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %1$@ eller når det ikke er mer insulin igjen."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vervang Patch nu. De insulinetoediening stopt over %%1$@ of wanneer er geen insuline meer is."
+            "value" : "Vervang Patch nu. De insulinetoediening stopt over %1$@ of wanneer er geen insuline meer is."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zmień teraz plaster. Podawanie insuliny zakończy się za %%1$@ lub gdy insulina przestanie działać."
+            "value" : "Zmień teraz plaster. Podawanie insuliny zakończy się za %1$@ lub gdy insulina przestanie działać."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mude o seu Patch agora. A administração de insulina será interrompida em %%1$@ ou quando não houver mais insulina."
+            "value" : "Mude o seu Patch agora. A administração de insulina será interrompida em %1$@ ou quando não houver mais insulina."
           }
         },
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Schimbați Patch-ul acum. Administrarea insulinei se va opri în %%1$@ sau când nu va mai rămâne insulină."
+            "value" : "Schimbați Patch-ul acum. Administrarea insulinei se va opri în %1$@ sau când nu va mai rămâne insulină."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Смените пластырь немедленно. Выдача инсулина прекратится через %%1$@ или когда инсулина больше не останется."
+            "value" : "Смените пластырь немедленно. Выдача инсулина прекратится через %1$@ или когда инсулина больше не останется."
           }
         },
         "sk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zmeňte svoju záplatu. Podávanie inzulínu sa zastaví za %%1$@ alebo keď už nezostane žiadny inzulín."
+            "value" : "Zmeňte svoju záplatu. Podávanie inzulínu sa zastaví za %1$@ alebo keď už nezostane žiadny inzulín."
           }
         },
         "sl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zdaj spremenite svoj paket. Dostavljanje insulina se bo ustavilo v %%1$@ ali ko ne bo več insulina."
+            "value" : "Zdaj spremenite svoj paket. Dostavljanje insulina se bo ustavilo v %1$@ ali ko ne bo več insulina."
           }
         },
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ändra din patch nu. Insulintillförseln kommer att upphöra om %%1$@ eller när det inte finns mer insulin kvar."
+            "value" : "Ändra din patch nu. Insulintillförseln kommer att upphöra om %1$@ eller när det inte finns mer insulin kvar."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch'inizi şimdi değiştirin. İnsülin verilmesi %%1$@ içinde veya daha fazla insülin kalmadığında duracaktır."
+            "value" : "Patch'inizi şimdi değiştirin. İnsülin verilmesi %1$@ içinde veya daha fazla insülin kalmadığında duracaktır."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Замініть пластир зараз. Доставка інсуліну припиниться через %%1$@ або коли не залишиться більше інсуліну."
+            "value" : "Замініть пластир зараз. Доставка інсуліну припиниться через %1$@ або коли не залишиться більше інсуліну."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Thay miếng dán ngay. Việc cung cấp insulin sẽ dừng lại sau %%1$@ hoặc khi hết insulin."
+            "value" : "Thay miếng dán ngay. Việc cung cấp insulin sẽ dừng lại sau %1$@ hoặc khi hết insulin."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "现在就更换补丁。胰岛素输送将在 %%1$@ 或胰岛素耗尽时停止。"
+            "value" : "现在就更换补丁。胰岛素输送将在 %1$@ 或胰岛素耗尽时停止。"
           }
         }
       }
