@@ -46,8 +46,15 @@ public class MedtrumPumpState: RawRepresentable {
         basalStateSince = rawValue["basalStateSince"] as? Date ?? Date.distantPast
         tempBasalUnits = rawValue["tempBasalUnits"] as? Double
         tempBasalDuration = rawValue["tempBasalDuration"] as? Double
-        expirationTimer = rawValue["expirationTimer"] as? UInt8 ?? 1
         notificationAfterActivation = rawValue["notificationAfterActivation"] as? TimeInterval ?? .hours(72)
+
+        if let extendedMode = rawValue["usingExtendedMode"] as? Bool {
+            usingExtendedMode = extendedMode
+        } else if let expirationTimer = rawValue["expirationTimer"] as? UInt8 {
+            usingExtendedMode = expirationTimer == 0
+        } else {
+            usingExtendedMode = false
+        }
 
         if let previousPatchRaw = rawValue["previousPatch"] as? Data {
             do {
@@ -122,7 +129,7 @@ public class MedtrumPumpState: RawRepresentable {
         tempBasalDuration = nil
         bolusState = .noBolus
         alarmSetting = .BeepOnly
-        expirationTimer = 1
+        usingExtendedMode = false
         notificationAfterActivation = .hours(72)
         previousPatch = nil
 
@@ -164,7 +171,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["tempBasalUnits"] = tempBasalUnits
         value["tempBasalDuration"] = tempBasalDuration
         value["alarmSetting"] = alarmSetting.rawValue
-        value["expirationTimer"] = expirationTimer
+        value["usingExtendedMode"] = usingExtendedMode
         value["notificationAfterActivation"] = notificationAfterActivation
 
         if let previousPatch = previousPatch {
@@ -191,7 +198,7 @@ public class MedtrumPumpState: RawRepresentable {
             return nil
         }
 
-        let gracePeriod: TimeInterval = expirationTimer == 0 ? .hours(112) : .hours(72)
+        let gracePeriod: TimeInterval = usingExtendedMode ? .hours(112) : .hours(72)
         return activatedAt.addingTimeInterval(gracePeriod)
     }
 
@@ -200,7 +207,7 @@ public class MedtrumPumpState: RawRepresentable {
             return nil
         }
 
-        let expiresPeriod: TimeInterval = expirationTimer == 0 ? .hours(120) : .hours(80)
+        let expiresPeriod: TimeInterval = usingExtendedMode ? .hours(120) : .hours(80)
         return activatedAt.addingTimeInterval(expiresPeriod)
     }
 
@@ -222,7 +229,7 @@ public class MedtrumPumpState: RawRepresentable {
     public var maxHourlyInsulin: Double
     public var maxDailyInsulin: Double
     public var alarmSetting: AlarmSettings
-    public var expirationTimer: UInt8
+    public var usingExtendedMode: Bool
     public var notificationAfterActivation: TimeInterval
 
     // **** THESE VALUES SHOULD NOT BE PERSISTED ****

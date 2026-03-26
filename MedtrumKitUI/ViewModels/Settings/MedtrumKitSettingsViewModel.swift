@@ -370,7 +370,7 @@ extension MedtrumKitSettingsViewModel {
         }
 
         if let patchExpiresAt, Date.now > patchExpiresAt {
-            return state.expirationTimer == 0 ? .expiredBasalOnly : .expired
+            return state.usingExtendedMode ? .expiredBasalOnly : .expired
         }
 
         return .gracePeriod
