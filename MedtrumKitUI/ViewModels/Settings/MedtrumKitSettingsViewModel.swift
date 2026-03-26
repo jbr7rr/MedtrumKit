@@ -344,14 +344,14 @@ extension MedtrumKitSettingsViewModel {
         patchExpiresAt = state.patchExpiresAt
         hasPreviousPatch = state.previousPatch != nil
 
-        if !state.patchId.isEmpty, let patchActivatedAt, let patchGracePeriodFrom, let patchExpiresAt {
+        if !state.patchId.isEmpty, let patchActivatedAt, let patchGracePeriodFrom {
             let totalLifetime = patchGracePeriodFrom.timeIntervalSince(patchActivatedAt)
             let progress = Date.now.timeIntervalSince1970 - patchActivatedAt.timeIntervalSince1970
 
             patchLifecycleProgress = min(progress / totalLifetime, 1)
             patchLifecycleState = getLifecycleState(state: state)
 
-            if patchLifecycleState == .gracePeriod {
+            if patchLifecycleState == .gracePeriod, let patchExpiresAt {
                 let timeRemaining = patchExpiresAt.timeIntervalSinceNow
                 patchGraceTimeout = timeRemainingFormatter.string(from: timeRemaining) ?? ""
             }

@@ -49,7 +49,7 @@ class DeactivatePatchViewModel: ObservableObject {
                             lastStateRaw: pumpManager.state.pumpState.rawValue,
                             lastSyncAt: pumpManager.state.lastSync,
                             battery: pumpManager.state.battery,
-                            activatedAt: pumpManager.state.patchActivatedAt,
+                            activatedAt: pumpManager.state.patchActivatedAt ?? Date.distantPast,
                             deactivatedAt: Date.now,
                             initialReservoirLevel: pumpManager.state.initialReservoir,
                             reservoirLevel: pumpManager.state.reservoir
