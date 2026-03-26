@@ -40,6 +40,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var showingHeartbeatWarning = false
     @Published var showingDeleteConfirmation = false
     @Published var hasPreviousPatch = false
+    @Published var isClearingAlert = false
 
     public var pumpName: String {
         pumpManager?.state.pumpName ?? "Medtrum Nano"
@@ -169,6 +170,19 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
         pumpManager.syncPumpData { _ in
             DispatchQueue.main.async {
                 self.isUpdatingPumpState = false
+            }
+        }
+    }
+
+    func clearAlert(_ alertType: AlertType) {
+        guard let pumpManager else {
+            return
+        }
+
+        isClearingAlert = true
+        pumpManager.clearAlert(alertType: alertType) { _ in
+            DispatchQueue.main.async {
+                self.isClearingAlert = false
             }
         }
     }

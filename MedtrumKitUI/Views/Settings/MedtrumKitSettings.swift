@@ -46,27 +46,7 @@ struct MedtrumKitSettings: View {
                     .padding(.bottom, 5)
                 }
 
-                if viewModel.showPumpTimeSyncWarning {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(LocalizedString("Time Change Detected", comment: "title for time change detected notice"))
-                            .font(Font.subheadline.weight(.bold))
-                        Text(LocalizedString(
-                            "The time on your pump is different from the current time. Your pump’s time controls your scheduled therapy settings. Scroll down to Pump Time row to review the time difference and configure your pump.",
-                            comment: "description for time change detected notice"
-                        ))
-                            .font(Font.footnote.weight(.semibold))
-                    }.padding(.vertical, 8)
-                }
-
-                if viewModel.patchLifecycleState == .gracePeriod {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(String(format: LocalizedString(
-                            "Change your Patch now. Insulin delivery will stop in %1$@ or when no more insulin remains.",
-                            comment: "description for grace period notice"
-                        ), viewModel.patchGraceTimeout))
-                            .font(Font.footnote.weight(.semibold))
-                    }.padding(.vertical, 8)
-                }
+                patchAlerts
             }
 
             Section {
@@ -86,7 +66,7 @@ struct MedtrumKitSettings: View {
                             }
                         }
                     }
-                    .disabled(viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel.isUpdatingSuspend)
+                    .disabled(viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel.isUpdatingSuspend || viewModel.isClearingAlert)
 
                     if viewModel.basalType == .tempBasal {
                         Button(action: {
@@ -100,7 +80,7 @@ struct MedtrumKitSettings: View {
                                 }
                             }
                         }
-                        .disabled(viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel.isUpdatingSuspend)
+                        .disabled(viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel.isUpdatingSuspend || viewModel.isClearingAlert)
                     }
 
                     Button(action: { viewModel.syncData() }) {
@@ -112,7 +92,7 @@ struct MedtrumKitSettings: View {
                             }
                         }
                     }
-                    .disabled(viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel.isUpdatingSuspend)
+                    .disabled(viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel.isUpdatingSuspend || viewModel.isClearingAlert)
 
                     if viewModel.patchState.rawValue < PatchState.active.rawValue && viewModel.patchState != .none {
                         Button(action: { viewModel.toPumpActivation() }) {
@@ -431,6 +411,81 @@ struct MedtrumKitSettings: View {
                         .fontWeight(.bold)
                         .fixedSize()
                 }
+            }
+        }
+    }
+
+    var patchAlerts: some View {
+        VStack {
+            if viewModel.showPumpTimeSyncWarning {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(LocalizedString("Time Change Detected", comment: "title for time change detected notice"))
+                        .font(Font.subheadline.weight(.bold))
+                    Text(LocalizedString(
+                        "The time on your pump is different from the current time. Your pump’s time controls your scheduled therapy settings. Scroll down to Pump Time row to review the time difference and configure your pump.",
+                        comment: "description for time change detected notice"
+                    ))
+                        .font(Font.footnote.weight(.semibold))
+                }.padding(.vertical, 8)
+            }
+
+            if viewModel.patchLifecycleState == .gracePeriod {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(String(format: LocalizedString(
+                        "Change your Patch now. Insulin delivery will stop in %1$@ or when no more insulin remains.",
+                        comment: "description for grace period notice"
+                    ), viewModel.patchGraceTimeout))
+                        .font(Font.footnote.weight(.semibold))
+                }.padding(.vertical, 8)
+            }
+
+            if viewModel.patchState == .hourlyMaxSuspended {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(LocalizedString("Alert: Hourly max insulin", comment: "title hourlyMaxSuspended"))
+                            .font(Font.footnote.weight(.semibold))
+                        Spacer()
+
+                        if viewModel.isClearingAlert {
+                            ActivityIndicator()
+                        } else {
+                            Button(action: { viewModel.clearAlert(AlertType.hourly) }) {
+                                Text(LocalizedString("Clear alert", comment: "clear alert"))
+                                    .font(.footnote)
+                            }
+                        }
+                    }
+
+                    Text(LocalizedString(
+                        "Patch is suspended. You've used the hourly insulin limit. Clear the alert to resume insulin delivery",
+                        comment: "description hourlyMaxSuspended"
+                    ))
+                        .font(.footnote)
+                }.padding(.vertical, 8)
+            }
+
+            if viewModel.patchState == .dailyMaxSuspended {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(LocalizedString("Alert: Daily max insulin", comment: "title dailyMaxSuspended"))
+                            .font(Font.footnote.weight(.semibold))
+                        Spacer()
+                        if viewModel.isClearingAlert {
+                            ActivityIndicator()
+                        } else {
+                            Button(action: { viewModel.clearAlert(AlertType.daily) }) {
+                                Text(LocalizedString("Clear alert", comment: "clear alert"))
+                                    .font(.footnote)
+                            }
+                        }
+                    }
+
+                    Text(LocalizedString(
+                        "Patch is suspended. You've used the daily insulin limit. Clear the alert to resume insulin delivery",
+                        comment: "description dailyMaxSuspended"
+                    ))
+                        .font(.footnote)
+                }.padding(.vertical, 8)
             }
         }
     }

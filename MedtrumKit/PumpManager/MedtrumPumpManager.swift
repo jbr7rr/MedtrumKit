@@ -986,6 +986,29 @@ public extension MedtrumPumpManager {
         }
     }
 
+    func clearAlert(alertType: AlertType, completion: @escaping (Bool) -> Void) {
+        log.info("Clearing alert - alertType: \(alertType.rawValue)")
+
+        bluetooth.ensureConnected { error in
+            if let error = error {
+                self.log.error("Failed to connect to pump: \(error)")
+                completion(false)
+                return
+            }
+
+            let package = ClearAlertPacket(alertType: alertType)
+            let result = await self.bluetooth.write(package)
+            if case let .failure(error) = result {
+                self.log.error("Failed to update settings: \(error)")
+                completion(false)
+                return
+            }
+
+            self.log.info("Alert cleared!")
+            completion(true)
+        }
+    }
+
     func updatePatchSettings(completion: @escaping (MedtrumUpdatePatchResult) -> Void) {
         log.info("Update patch settings...")
 

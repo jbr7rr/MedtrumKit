@@ -2230,6 +2230,294 @@
         }
       }
     },
+    "Alert: Daily max insulin" : {
+      "comment" : "title dailyMaxSuspended",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تنبيه: الحد الأقصى اليومي للأنسولين"
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upozornění: Maximální denní dávka inzulínu"
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advarsel: Daglig max insulin"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alert: Tägliches Höchstinsulin"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alert: Daily max insulin"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alerta: insulina máxima diaria"
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hälytys: Päivittäinen enimmäisinsuliini"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alerte : Insuline maximale quotidienne"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allarme: insulina massima giornaliera"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "警告：1日の最大インスリン量"
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Varsel: Daglig maks insulin"
+          }
+        },
+        "nb-NO" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Varsel: Daglig maks insulin"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waarschuwing: Dagelijkse max. insuline"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alert: Maksymalna dzienna dawka insuliny"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alerta: Insulina máxima diária"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alertă: insulină maximă zilnică"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оповещение: Ежедневный максимальный инсулин"
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upozornenie: Denný maximálny inzulín"
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opozorilo: Dnevni maksimalni inzulin"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Varning: Dagligt maxinsulin"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uyarı: Günlük maksimum insülin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тривога: Добовий максимум інсуліну"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cảnh báo: Liều insulin tối đa hàng ngày"
+          }
+        }
+      }
+    },
+    "Alert: Hourly max insulin" : {
+      "comment" : "title hourlyMaxSuspended",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تنبيه: الحد الأقصى للأنسولين في الساعة"
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upozornění: Hodinový maximální inzulín"
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advarsel: Maksimalt insulin pr. time"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alert: Stündliches Höchstinsulin"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alert: Hourly max insulin"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alerta: insulina máxima por hora"
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hälytys: Tuntikohtainen maksimi-insuliini"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alerte : Insuline maximale horaire"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allarme: insulina massima oraria"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アラート：1時間ごとの最大インスリン量"
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Varsling: Maks insulin per time"
+          }
+        },
+        "nb-NO" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Varsling: Maks insulin per time"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waarschuwing: Uurlijkse max insuline"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alert: Godzinowa maksymalna dawka insuliny"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alerta: insulina máxima por hora"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alertă: insulină maximă orară"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оповещение: Часовой максимальный инсулин"
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upozornenie: Hodinový maximálny inzulín"
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opozorilo: urni maksimalni inzulin"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Varning: Insulin max per timme"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uyarı: Saatlik maksimum insülin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тривога: Годинний максимум інсуліну"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cảnh báo: Liều insulin tối đa mỗi giờ"
+          }
+        }
+      }
+    },
     "Are you sure you want to stop using Medtrum TouchCare Nano 200u/300u?" : {
       "comment" : "Message for PumpManager deletion action sheet",
       "extractionState" : "manual",
@@ -3280,152 +3568,152 @@
         }
       }
     },
-    "Change your Patch now. Insulin delivery will stop in %1$@ or when no more insulin remains." : {
+    "Change your Patch now. Insulin delivery will stop in {0} or when no more insulin remains." : {
       "comment" : "description for grace period notice",
       "extractionState" : "manual",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "قم بتغيير اللصقة الآن. سيتوقف توصيل الأنسولين خلال%1$@ أو عندما لا يتبقى المزيد من الأنسولين."
+            "value" : "قم بتغيير اللصقة الآن. سيتوقف توصيل الأنسولين خلال %@ أو عندما لا يتبقى المزيد من الأنسولين."
           }
         },
         "cs" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Změňte svou záplatu. Podávání inzulínu se zastaví za %1$@ nebo až nezbude žádný další inzulín."
+            "value" : "Změňte svou záplatu. Podávání inzulínu se zastaví za %@ nebo až nezbude žádný další inzulín."
           }
         },
         "da" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Skift dit plaster nu. Insulintilførslen stopper om %1$@, eller når der ikke er mere insulin tilbage."
+            "value" : "Skift dit plaster nu. Insulintilførslen stopper om %@, eller når der ikke er mere insulin tilbage."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pflaster jetzt austauschen. Die Insulinabgabe stoppt in %1$@ oder wenn kein Insulin mehr vorhanden ist."
+            "value" : "Pflaster jetzt austauschen. Die Insulinabgabe stoppt in %@ oder wenn kein Insulin mehr vorhanden ist."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Change your Patch now. Insulin delivery will stop in %1$@ or when no more insulin remains."
+            "value" : "Change your Patch now. Insulin delivery will stop in %@ or when no more insulin remains."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Cambie su parche ahora. La administración de insulina se detendrá en %1$@ o cuando no quede más insulina."
+            "value" : "Cambie su parche ahora. La administración de insulina se detendrá en %@ o cuando no quede más insulina."
           }
         },
         "fi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vaihda Patch nyt. Insuliinin jakelu loppuu %1$@:n kuluttua tai kun insuliinia ei ole enää jäljellä."
+            "value" : "Vaihda Patch nyt. Insuliinin jakelu loppuu %@:n kuluttua tai kun insuliinia ei ole enää jäljellä."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Remplacez le patch maintenant. La distribution d'insuline s'arrête dans %1$@ ou lorsqu'il n'y a plus d'insuline."
+            "value" : "Remplacez le patch maintenant. La distribution d'insuline s'arrête dans %@ ou lorsqu'il n'y a plus d'insuline."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Cambiare subito il cerotto. La somministrazione di insulina si interromperà tra %1$@ o quando non ci sarà più insulina."
+            "value" : "Cambiare subito il cerotto. La somministrazione di insulina si interromperà tra %@ o quando non ci sarà più insulina."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "今すぐパッチを交換してください。インスリンの投与は、%1$@ またはインスリンの残りがなくなると停止します。"
+            "value" : "今すぐパッチを交換してください。インスリンの投与は、%@ またはインスリンの残りがなくなると停止します。"
           }
         },
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %1$@ eller når det ikke er mer insulin igjen."
+            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %@ eller når det ikke er mer insulin igjen."
           }
         },
         "nb-NO" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %1$@ eller når det ikke er mer insulin igjen."
+            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %@ eller når det ikke er mer insulin igjen."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vervang Patch nu. De insulinetoediening stopt over %1$@ of wanneer er geen insuline meer is."
+            "value" : "Vervang Patch nu. De insulinetoediening stopt over %@ of wanneer er geen insuline meer is."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zmień teraz plaster. Podawanie insuliny zakończy się za %1$@ lub gdy insulina przestanie działać."
+            "value" : "Zmień teraz plaster. Podawanie insuliny zakończy się za %@ lub gdy insulina przestanie działać."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mude o seu Patch agora. A administração de insulina será interrompida em %1$@ ou quando não houver mais insulina."
+            "value" : "Mude o seu Patch agora. A administração de insulina será interrompida em %@ ou quando não houver mais insulina."
           }
         },
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Schimbați Patch-ul acum. Administrarea insulinei se va opri în %1$@ sau când nu va mai rămâne insulină."
+            "value" : "Schimbați Patch-ul acum. Administrarea insulinei se va opri în %@ sau când nu va mai rămâne insulină."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Смените пластырь немедленно. Выдача инсулина прекратится через %1$@ или когда инсулина больше не останется."
+            "value" : "Смените пластырь немедленно. Выдача инсулина прекратится через %@ или когда инсулина больше не останется."
           }
         },
         "sk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zmeňte svoju záplatu. Podávanie inzulínu sa zastaví za %1$@ alebo keď už nezostane žiadny inzulín."
+            "value" : "Zmeňte svoju záplatu. Podávanie inzulínu sa zastaví za %@ alebo keď už nezostane žiadny inzulín."
           }
         },
         "sl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zdaj spremenite svoj paket. Dostavljanje insulina se bo ustavilo v %1$@ ali ko ne bo več insulina."
+            "value" : "Zdaj spremenite svoj paket. Dostavljanje insulina se bo ustavilo v %@ ali ko ne bo več insulina."
           }
         },
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ändra din patch nu. Insulintillförseln kommer att upphöra om %1$@ eller när det inte finns mer insulin kvar."
+            "value" : "Ändra din patch nu. Insulintillförseln kommer att upphöra om %@ eller när det inte finns mer insulin kvar."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch'inizi şimdi değiştirin. İnsülin verilmesi %1$@ içinde veya daha fazla insülin kalmadığında duracaktır."
+            "value" : "Patch'inizi şimdi değiştirin. İnsülin verilmesi %@ içinde veya daha fazla insülin kalmadığında duracaktır."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Замініть пластир зараз. Доставка інсуліну припиниться через %1$@ або коли не залишиться більше інсуліну."
+            "value" : "Замініть пластир зараз. Доставка інсуліну припиниться через %@ або коли не залишиться більше інсуліну."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Thay miếng dán ngay. Việc cung cấp insulin sẽ dừng lại sau %1$@ hoặc khi hết insulin."
+            "value" : "Thay miếng dán ngay. Việc cung cấp insulin sẽ dừng lại sau %@ hoặc khi hết insulin."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "现在就更换补丁。胰岛素输送将在 %1$@ 或胰岛素耗尽时停止。"
+            "value" : "现在就更换补丁。胰岛素输送将在 %@ 或胰岛素耗尽时停止。"
           }
         }
       }
@@ -3576,6 +3864,150 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "检查地点"
+          }
+        }
+      }
+    },
+    "Clear alert" : {
+      "comment" : "clear alert",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تنبيه واضح"
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vymazat upozornění"
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ryd alarm"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alarm löschen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear alert"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desactivar alerta"
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tyhjennä hälytys"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alerte claire"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allarme chiaro"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クリアアラート"
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fjern varsel"
+          }
+        },
+        "nb-NO" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fjern varsel"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waarschuwing wissen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wyczyść alert"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Limpar alerta"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alertă clară"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Четкое оповещение"
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jasné upozornenie"
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jasno opozorilo"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tydlig varning"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Açık uyarı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тривога!"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cảnh báo rõ ràng"
           }
         }
       }
@@ -5514,6 +5946,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Деактивація"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vô hiệu hóa"
           }
         },
         "zh-Hans" : {
@@ -11960,6 +12398,12 @@
             "value" : "Детальна інформація про патч"
           }
         },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chi tiết bản vá"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -12414,6 +12858,294 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "补丁ID"
+          }
+        }
+      }
+    },
+    "Patch is suspended. You've used the daily insulin limit. Clear the alert to resume insulin delivery" : {
+      "comment" : "description dailyMaxSuspended",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تم تعليق اللصقة. لقد استخدمت الحد اليومي للأنسولين. امسح التنبيه لاستئناف توصيل الأنسولين"
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Záplata je pozastavena. Vyčerpali jste denní limit inzulínu. Zrušením upozornění obnovíte podávání inzulínu."
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plasteret er suspenderet. Du har brugt den daglige grænse for insulin. Fjern advarslen for at genoptage insulintilførslen"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Pflaster ist ausgesetzt. Sie haben das tägliche Insulinlimit ausgeschöpft. Löschen Sie den Alarm, um die Insulinabgabe wieder aufzunehmen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch is suspended. You've used the daily insulin limit. Clear the alert to resume insulin delivery"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El parche está suspendido. Has utilizado el límite diario de insulina. Borre la alerta para reanudar la administración de insulina"
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Laastari on keskeytetty. Olet käyttänyt päivittäisen insuliinirajan. Poista hälytys, jotta insuliinin antaminen jatkuu."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le patch est suspendu. Vous avez utilisé la limite quotidienne d'insuline. Effacez l'alerte pour reprendre l'administration d'insuline"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il cerotto è sospeso. È stato raggiunto il limite giornaliero di insulina. Cancellare l'avviso per riprendere la somministrazione di insulina"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "パッチが中断されました。1日のインスリン上限量を使用しました。アラートを解除してインスリン投与を再開してください。"
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plasteret er suspendert. Du har brukt opp den daglige insulinmengden. Fjern varselet for å gjenoppta insulintilførselen"
+          }
+        },
+        "nb-NO" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plasteret er suspendert. Du har brukt opp den daglige insulinmengden. Fjern varselet for å gjenoppta insulintilførselen"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch is opgeschort. U hebt de dagelijkse insulinelimiet gebruikt. Wis de waarschuwing om de insulinetoediening te hervatten"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plaster jest zawieszony. Wykorzystano dzienny limit insuliny. Usuń alert, aby wznowić podawanie insuliny"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O adesivo está suspenso. Utilizou o limite diário de insulina. Limpe o alerta para retomar a administração de insulina"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch-ul este suspendat. Ați utilizat limita zilnică de insulină. Anulați alerta pentru a relua administrarea de insulină"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Действие пластыря приостановлено. Вы использовали дневной лимит инсулина. Снимите предупреждение, чтобы возобновить доставку инсулина"
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Záplata je pozastavená. Využili ste denný limit inzulínu. Zrušte upozornenie, aby ste obnovili podávanie inzulínu"
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Popravek je začasno prekinjen. Porabili ste dnevno omejitev insulina. Odpravite opozorilo, da ponovno začnete dovajati inzulin."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch är avstängd. Du har använt den dagliga insulinmängden. Avlägsna varningen för att återuppta insulintillförseln"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch askıya alındı. Günlük insülin limitini kullandınız. İnsülin dağıtımına devam etmek için uyarıyı temizleyin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дія пластиру призупиняється. Ви використали добову норму інсуліну. Очистити попередження, щоб відновити доставку інсуліну"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Việc sử dụng miếng dán đã bị tạm dừng. Bạn đã sử dụng hết giới hạn insulin hàng ngày. Hãy xóa cảnh báo để tiếp tục cung cấp insulin."
+          }
+        }
+      }
+    },
+    "Patch is suspended. You've used the hourly insulin limit. Clear the alert to resume insulin delivery" : {
+      "comment" : "description hourlyMaxSuspended",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تم تعليق اللصقة. لقد استخدمت الحد الأقصى للأنسولين بالساعة. امسح التنبيه لاستئناف توصيل الأنسولين"
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Záplata je pozastavena. Vyčerpali jste hodinový limit inzulínu. Zrušením upozornění obnovíte podávání inzulínu."
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plasteret er suspenderet. Du har brugt grænsen for insulin pr. time. Fjern advarslen for at genoptage insulintilførslen"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Pflaster ist ausgesetzt. Sie haben das stündliche Insulinlimit ausgeschöpft. Löschen Sie den Alarm, um die Insulinabgabe wieder aufzunehmen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch is suspended. You've used the hourly insulin limit. Clear the alert to resume insulin delivery"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El parche está suspendido. Has utilizado el límite de insulina por hora. Borre la alerta para reanudar la administración de insulina"
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Laastari on keskeytetty. Olet käyttänyt tunnin insuliinirajan. Poista hälytys jatkaaksesi insuliinin antamista."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le patch est suspendu. Vous avez utilisé la limite horaire d'insuline. Effacez l'alerte pour reprendre l'administration d'insuline"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il cerotto è sospeso. È stato raggiunto il limite orario di insulina. Cancellare l'avviso per riprendere la somministrazione di insulina"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "パッチが中断されました。1時間あたりのインスリン上限量を使用しました。アラートを解除してインスリン投与を再開してください。"
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plasteret er suspendert. Du har brukt opp grensen for insulin per time. Fjern varselet for å gjenoppta insulintilførselen"
+          }
+        },
+        "nb-NO" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plasteret er suspendert. Du har brukt opp grensen for insulin per time. Fjern varselet for å gjenoppta insulintilførselen"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch is opgeschort. U hebt de uurlimiet voor insuline gebruikt. Wis de waarschuwing om de insulinetoediening te hervatten"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch jest zawieszony. Wykorzystano godzinowy limit insuliny. Usuń alert, aby wznowić podawanie insuliny"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O adesivo está suspenso. Utilizou o limite de insulina por hora. Limpe o alerta para retomar a administração de insulina"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch-ul este suspendat. Ați utilizat limita orară de insulină. Anulați alerta pentru a relua administrarea de insulină"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Действие пластыря приостановлено. Вы использовали часовой лимит инсулина. Снимите предупреждение, чтобы возобновить подачу инсулина"
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Záplata je pozastavená. Využili ste hodinový limit inzulínu. Zrušte upozornenie, aby ste obnovili podávanie inzulínu"
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Popravek je začasno prekinjen. Izkoristili ste urno omejitev inzulina. Izbrišite opozorilo in nadaljujte z dovajanjem inzulina."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch är avstängd. Du har använt timgränsen för insulin. Avlägsna varningen för att återuppta insulintillförseln"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yama askıya alındı. Saatlik insülin limitini kullandınız. İnsülin dağıtımına devam etmek için uyarıyı temizleyin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пластир призупинено. Ви використали погодинний ліміт інсуліну. Зняти попередження, щоб відновити доставку інсуліну"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Việc cung cấp insulin đã bị tạm dừng. Bạn đã sử dụng hết giới hạn insulin mỗi giờ. Hãy xóa cảnh báo để tiếp tục cung cấp insulin."
           }
         }
       }
