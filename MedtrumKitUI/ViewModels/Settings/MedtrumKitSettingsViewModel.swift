@@ -28,9 +28,9 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var lastSync = Date.distantPast
     @Published var patchLifecycleProgress: Double = 0
     @Published var patchLifecycleState: PatchLifecycleState = .noPatch
-    @Published var patchActivatedAt = Date.distantPast
-    @Published var patchExpiresAt = Date.distantFuture
-    @Published var patchGracePeriodFrom = Date.distantFuture
+    @Published var patchActivatedAt: Date? = nil
+    @Published var patchExpiresAt: Date? = nil
+    @Published var patchGracePeriodFrom: Date? = nil
     @Published var patchGraceTimeout = ""
     @Published var isConnected: Bool = false
     @Published var isReconnecting: Bool = false
@@ -131,7 +131,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
 
     var patchLifecycleDays: Int? {
-        guard patchLifecycleState == .active else {
+        guard patchLifecycleState == .active, let patchGracePeriodFrom else {
             return nil
         }
 
@@ -139,7 +139,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
 
     var patchLifecycleHours: Int? {
-        guard patchLifecycleState == .active else {
+        guard patchLifecycleState == .active, let patchGracePeriodFrom else {
             return nil
         }
 
@@ -150,7 +150,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
 
     var patchLifecycleMinutes: Int? {
-        guard patchLifecycleState == .active else {
+        guard patchLifecycleState == .active, let patchGracePeriodFrom else {
             return nil
         }
 
@@ -340,13 +340,13 @@ extension MedtrumKitSettingsViewModel {
         basalRate = basalType == .tempBasal ? (state.tempBasalUnits ?? state.currentBaseBasalRate) : state.currentBaseBasalRate
         lastSync = state.lastSync
         patchActivatedAt = state.patchActivatedAt
-        patchGracePeriodFrom = state.patchGracePeriodFrom ?? state.patchActivatedAt.addingTimeInterval(.hours(72))
-        patchExpiresAt = state.patchExpiresAt ?? state.patchActivatedAt.addingTimeInterval(.hours(80))
+        patchGracePeriodFrom = state.patchGracePeriodFrom
+        patchExpiresAt = state.patchExpiresAt
         hasPreviousPatch = state.previousPatch != nil
 
-        if !state.patchId.isEmpty {
+        if !state.patchId.isEmpty, let patchActivatedAt, let patchGracePeriodFrom, let patchExpiresAt {
             let totalLifetime = patchGracePeriodFrom.timeIntervalSince(patchActivatedAt)
-            let progress = Date.now.timeIntervalSince1970 - state.patchActivatedAt.timeIntervalSince1970
+            let progress = Date.now.timeIntervalSince1970 - patchActivatedAt.timeIntervalSince1970
 
             patchLifecycleProgress = min(progress / totalLifetime, 1)
             patchLifecycleState = getLifecycleState(state: state)
@@ -369,7 +369,7 @@ extension MedtrumKitSettingsViewModel {
             return .active
         }
 
-        if Date.now > patchExpiresAt {
+        if let patchExpiresAt, Date.now > patchExpiresAt {
             return state.expirationTimer == 0 ? .expiredBasalOnly : .expired
         }
 

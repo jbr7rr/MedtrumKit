@@ -229,43 +229,49 @@ struct MedtrumKitSettings: View {
             }
 
             Section {
-                HStack {
-                    Text(LocalizedString("Activation", comment: "Text for activatedAt"))
-                        .foregroundColor(Color.primary)
-                    Spacer()
-                    if viewModel.patchLifecycleState != .noPatch {
-                        Text(viewModel.dateTimeFormatter.string(from: viewModel.patchActivatedAt))
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    } else {
-                        Text("-")
-                            .foregroundColor(.secondary)
+                if let activatedAt = viewModel.patchActivatedAt {
+                    HStack {
+                        Text(LocalizedString("Activation", comment: "Text for activatedAt"))
+                            .foregroundColor(Color.primary)
+                        Spacer()
+                        if viewModel.patchLifecycleState != .noPatch {
+                            Text(viewModel.dateTimeFormatter.string(from: activatedAt))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        } else {
+                            Text("-")
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
-                HStack {
-                    Text(LocalizedString("Expiration", comment: "Text for expiresAt"))
-                        .foregroundColor(Color.primary)
-                    Spacer()
-                    if viewModel.patchLifecycleState != .noPatch {
-                        Text(viewModel.dateTimeFormatter.string(from: viewModel.patchGracePeriodFrom))
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    } else {
-                        Text("-")
-                            .foregroundColor(.secondary)
+                if let gracePeriodFrom = viewModel.patchGracePeriodFrom {
+                    HStack {
+                        Text(LocalizedString("Expiration", comment: "Text for expiresAt"))
+                            .foregroundColor(Color.primary)
+                        Spacer()
+                        if viewModel.patchLifecycleState != .noPatch {
+                            Text(viewModel.dateTimeFormatter.string(from: gracePeriodFrom))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        } else {
+                            Text("-")
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
-                HStack {
-                    Text(LocalizedString("No Delivery", comment: "Text for expiresAt"))
-                        .foregroundColor(Color.primary)
-                    Spacer()
-                    if viewModel.patchLifecycleState != .noPatch {
-                        Text(viewModel.dateTimeFormatter.string(from: viewModel.patchExpiresAt))
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    } else {
-                        Text("-")
-                            .foregroundColor(.secondary)
+                if let expiresAt = viewModel.patchExpiresAt {
+                    HStack {
+                        Text(LocalizedString("No Delivery", comment: "Text for expiresAt"))
+                            .foregroundColor(Color.primary)
+                        Spacer()
+                        if viewModel.patchLifecycleState != .noPatch {
+                            Text(viewModel.dateTimeFormatter.string(from: expiresAt))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        } else {
+                            Text("-")
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
                 HStack {

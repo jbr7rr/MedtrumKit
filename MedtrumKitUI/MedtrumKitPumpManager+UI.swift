@@ -96,10 +96,10 @@ extension MedtrumPumpManager: PumpManagerUI {
                 imageName: "pause.circle.fill",
                 state: .warning
             )
-        } else if state.expirationTimer == 0, min(
+        } else if state.expirationTimer == 0, let patchActivatedAt = state.patchActivatedAt, min(
             // expirationTimer == 0 means user selected extended mode
             // hard check if we are past 120 hrs
-            (Date.now.timeIntervalSince1970 - state.patchActivatedAt.timeIntervalSince1970) / TimeInterval(hours: 80),
+            (Date.now.timeIntervalSince1970 - patchActivatedAt.timeIntervalSince1970) / TimeInterval(hours: 120),
             1
         ) == 1 {
             return PumpStatusHighlight(
@@ -143,9 +143,9 @@ extension MedtrumPumpManager: PumpManagerUI {
             return PumpLifecycleProgress(percentComplete: 100, progressState: .critical)
         }
 
-        if expiresAt.addingTimeInterval(.hours(-8)) <= Date.now {
+        if let patchActivatedAt = state.patchActivatedAt, expiresAt.addingTimeInterval(.hours(-8)) <= Date.now {
             // Patch is in grace period
-            let completed = expiresAt.timeIntervalSince(state.patchActivatedAt) / TimeInterval(hours: 80)
+            let completed = expiresAt.timeIntervalSince(patchActivatedAt) / TimeInterval(hours: 80)
             return PumpLifecycleProgress(percentComplete: completed, progressState: .warning)
         }
 

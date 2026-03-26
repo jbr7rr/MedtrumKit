@@ -66,8 +66,6 @@ enum StateSyncer {
 
         if let startTime = syncResponse.startTime {
             state.patchActivatedAt = startTime
-            state.patchGracePeriodFrom = state.patchActivatedAt.addingTimeInterval(.hours(72))
-            state.patchExpiresAt = state.patchActivatedAt.addingTimeInterval(.hours(80))
         }
 
         if let storage = syncResponse.storage {

@@ -33,9 +33,7 @@ public class MedtrumPumpState: RawRepresentable {
         lowReservoirWarning = rawValue["lowReservoirWarning"] as? Double
         sessionToken = rawValue["sessionToken"] as? Data ?? Data()
         patchId = rawValue["patchId"] as? Data ?? Data()
-        patchActivatedAt = rawValue["patchActivatedAt"] as? Date ?? Date.distantPast
-        patchGracePeriodFrom = rawValue["patchGracePeriodFrom"] as? Date
-        patchExpiresAt = rawValue["patchExpiresAt"] as? Date
+        patchActivatedAt = rawValue["patchActivatedAt"] as? Date ?? nil
         deviceType = rawValue["deviceType"] as? UInt8 ?? 0
         swVersion = rawValue["swVersion"] as? String ?? "0.0.0"
         pumpTime = rawValue["pumpTime"] as? Date ?? Date()
@@ -107,9 +105,7 @@ public class MedtrumPumpState: RawRepresentable {
         doseEntry = nil
         sessionToken = Data()
         patchId = Data()
-        patchActivatedAt = Date.distantPast
-        patchGracePeriodFrom = nil
-        patchExpiresAt = nil
+        patchActivatedAt = nil
         deviceType = 0
         swVersion = "0.0.0"
         pumpTime = Date()
@@ -189,9 +185,24 @@ public class MedtrumPumpState: RawRepresentable {
     // Patch specific data
     public var sessionToken: Data
     public var patchId: Data
-    public var patchActivatedAt: Date
-    public var patchGracePeriodFrom: Date?
-    public var patchExpiresAt: Date?
+    public var patchActivatedAt: Date?
+    public var patchGracePeriodFrom: Date? {
+        guard let activatedAt = patchActivatedAt else {
+            return nil
+        }
+
+        let gracePeriod: TimeInterval = expirationTimer == 0 ? .hours(112) : .hours(72)
+        return activatedAt.addingTimeInterval(gracePeriod)
+    }
+
+    public var patchExpiresAt: Date? {
+        guard let activatedAt = patchActivatedAt else {
+            return nil
+        }
+
+        let expiresPeriod: TimeInterval = expirationTimer == 0 ? .hours(120) : .hours(80)
+        return activatedAt.addingTimeInterval(expiresPeriod)
+    }
 
     public var previousPatch: PreviousPatch?
 
