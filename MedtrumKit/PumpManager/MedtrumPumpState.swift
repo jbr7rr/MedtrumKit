@@ -21,17 +21,12 @@ public enum ExpiryMode: Int {
         case .default:
             return .hours(72)
         case .extended:
-            return .hours(120)
+            return .hours(112)
         }
     }
 
-    var gradePeriod: TimeInterval {
-        switch self {
-        case .default:
-            return .hours(8)
-        case .extended:
-            return .hours(0)
-        }
+    var gracePeriod: TimeInterval {
+        .hours(8)
     }
 
     var timer: UInt8 {
@@ -233,7 +228,7 @@ public class MedtrumPumpState: RawRepresentable {
             return nil
         }
 
-        return activatedAt.addingTimeInterval(expiryMode.lifespan + expiryMode.gradePeriod)
+        return activatedAt.addingTimeInterval(expiryMode.lifespan + expiryMode.gracePeriod)
     }
 
     public var previousPatch: PreviousPatch?
