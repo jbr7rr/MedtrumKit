@@ -26,6 +26,8 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var basalRate: Double = 0
     @Published var insulinType: InsulinType = .novolog
     @Published var lastSync = Date.distantPast
+    @Published var hourlyLimit = 0
+    @Published var dailyLimit = 0
     @Published var patchLifecycleProgress: Double = 0
     @Published var patchLifecycleState: PatchLifecycleState = .noPatch
     @Published var patchActivatedAt: Date? = nil
@@ -357,6 +359,8 @@ extension MedtrumKitSettingsViewModel {
         patchGracePeriodFrom = state.patchGracePeriodFrom
         patchExpiresAt = state.patchExpiresAt
         hasPreviousPatch = state.previousPatch != nil
+        hourlyLimit = Int(state.maxHourlyInsulin)
+        dailyLimit = Int(state.maxDailyInsulin)
 
         if !state.patchId.isEmpty, let patchActivatedAt, let patchGracePeriodFrom {
             let totalLifetime = patchGracePeriodFrom.timeIntervalSince(patchActivatedAt)

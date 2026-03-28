@@ -150,7 +150,6 @@
       }
     },
     "%llu" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -12730,302 +12729,152 @@
         }
       }
     },
-    "Patch is suspended. You've used the daily insulin limit. Clear the alert to resume insulin delivery" : {
-      "comment" : "description dailyMaxSuspended",
+    "Patch is suspended. Limit of %lld U exceeded. If you increase the limit, you can clear the alert now. If you wait, patch will resume when enough time passes." : {
+      "comment" : "description hourlyMaxSuspended or dailyMaxSuspended",
       "extractionState" : "manual",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "تم تعليق اللصقة. لقد استخدمت الحد اليومي للأنسولين. امسح التنبيه لاستئناف توصيل الأنسولين"
+            "value" : "تم تعليق التصحيح. حد %lld تم تجاوز U. إذا قمت بزيادة الحد، يمكنك مسح التنبيه الآن. إذا انتظرت، سيتم استئناف التصحيح عندما يمر وقت كافٍ."
           }
         },
         "cs" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Záplata je pozastavena. Vyčerpali jste denní limit inzulínu. Zrušením upozornění obnovíte podávání inzulínu."
+            "value" : "Záplata je pozastavena. Limit %lld U překročen. Pokud limit zvýšíte, můžete nyní výstrahu vymazat. Pokud počkáte, oprava se obnoví, až uplyne dostatečně dlouhá doba."
           }
         },
         "da" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plasteret er suspenderet. Du har brugt den daglige grænse for insulin. Fjern advarslen for at genoptage insulintilførslen"
+            "value" : "Patch er suspenderet. Grænsen for %lld U overskredet. Hvis du øger grænsen, kan du fjerne advarslen nu. Hvis du venter, vil patchen blive genoptaget, når der er gået tilstrækkelig tid."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Das Pflaster ist ausgesetzt. Sie haben das tägliche Insulinlimit ausgeschöpft. Löschen Sie den Alarm, um die Insulinabgabe wieder aufzunehmen."
+            "value" : "Patch wird ausgesetzt. Grenze von %lld U überschritten. Wenn Sie den Grenzwert erhöhen, können Sie die Meldung jetzt löschen. Wenn Sie warten, wird der Patch wieder aufgenommen, wenn genügend Zeit verstrichen ist."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch is suspended. You've used the daily insulin limit. Clear the alert to resume insulin delivery"
+            "value" : "Patch is suspended. Limit of %lld U exceeded. If you increase the limit, you can clear the alert now. If you wait, patch will resume when enough time passes."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El parche está suspendido. Has utilizado el límite diario de insulina. Borre la alerta para reanudar la administración de insulina"
+            "value" : "Parche suspendido. Límite de %lld U excedido. Si aumenta el límite, puede borrar la alerta ahora. Si espera, el parche se reanudará cuando pase el tiempo suficiente."
           }
         },
         "fi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Laastari on keskeytetty. Olet käyttänyt päivittäisen insuliinirajan. Poista hälytys, jotta insuliinin antaminen jatkuu."
+            "value" : "Laastari on keskeytetty. Raja %lld U ylitetty. Jos nostat rajaa, voit poistaa hälytyksen nyt. Jos odotat, paikkaus jatkuu, kun tarpeeksi aikaa kuluu."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Le patch est suspendu. Vous avez utilisé la limite quotidienne d'insuline. Effacez l'alerte pour reprendre l'administration d'insuline"
+            "value" : "Le patch est suspendu. Limite de %lld U dépassée. Si vous augmentez la limite, vous pouvez supprimer l'alerte maintenant. Si vous attendez, le patch reprendra lorsque le temps sera écoulé."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Il cerotto è sospeso. È stato raggiunto il limite giornaliero di insulina. Cancellare l'avviso per riprendere la somministrazione di insulina"
+            "value" : "La patch è sospesa. Limite di %lld U superato. Se aumentate il limite, potete cancellare subito l'avviso. Se si attende, la patch riprenderà quando sarà trascorso un tempo sufficiente."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "パッチが中断されました。1日のインスリン上限量を使用しました。アラートを解除してインスリン投与を再開してください。"
+            "value" : "パッチが中断されました。xxx0xx}の上限を超えた。U を超えました。リミットを増やせば、今すぐアラートを解除できる。待っていれば、十分な時間が経過した時点でパッチが再開される。"
           }
         },
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plasteret er suspendert. Du har brukt opp den daglige insulinmengden. Fjern varselet for å gjenoppta insulintilførselen"
+            "value" : "Oppdateringen er suspendert. Grensen på %lld U overskredet. Hvis du øker grensen, kan du fjerne varselet nå. Hvis du venter, vil patchen gjenopptas når det har gått nok tid."
           }
         },
         "nb-NO" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plasteret er suspendert. Du har brukt opp den daglige insulinmengden. Fjern varselet for å gjenoppta insulintilførselen"
+            "value" : "Oppdateringen er suspendert. Grensen på %lld U overskredet. Hvis du øker grensen, kan du fjerne varselet nå. Hvis du venter, vil patchen gjenopptas når det har gått nok tid."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch is opgeschort. U hebt de dagelijkse insulinelimiet gebruikt. Wis de waarschuwing om de insulinetoediening te hervatten"
+            "value" : "Patch is opgeschort. Limiet van %lld U overschreden. Als u de limiet verhoogt, kunt u de waarschuwing nu wissen. Als je wacht, wordt de patch hervat als er genoeg tijd verstreken is."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plaster jest zawieszony. Wykorzystano dzienny limit insuliny. Usuń alert, aby wznowić podawanie insuliny"
+            "value" : "Patch jest zawieszony. Przekroczono limit %lld U został przekroczony. Jeśli zwiększysz limit, możesz teraz usunąć alert. Jeśli zaczekasz, patch zostanie wznowiony, gdy upłynie wystarczająco dużo czasu."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "O adesivo está suspenso. Utilizou o limite diário de insulina. Limpe o alerta para retomar a administração de insulina"
+            "value" : "O patch está suspenso. Limite de %lld U excedido. Se aumentar o limite, pode apagar o alerta agora. Se esperar, o patch será retomado quando passar tempo suficiente."
           }
         },
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch-ul este suspendat. Ați utilizat limita zilnică de insulină. Anulați alerta pentru a relua administrarea de insulină"
+            "value" : "Patch-ul este suspendat. Limita de %lld U depășită. Dacă măriți limita, puteți șterge alerta acum. Dacă așteptați, patch-ul va fi reluat când va trece suficient timp."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Действие пластыря приостановлено. Вы использовали дневной лимит инсулина. Снимите предупреждение, чтобы возобновить доставку инсулина"
+            "value" : "Патч приостановлен. Предел %lld U превышен. Если вы увеличите лимит, вы можете снять предупреждение сейчас. Если вы подождете, патч возобновит работу, когда пройдет достаточно времени."
           }
         },
         "sk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Záplata je pozastavená. Využili ste denný limit inzulínu. Zrušte upozornenie, aby ste obnovili podávanie inzulínu"
+            "value" : "Záplata je pozastavená. Limit %lld U prekročený. Ak limit zvýšite, môžete teraz upozornenie vymazať. Ak počkáte, oprava sa obnoví, keď uplynie dostatočný čas."
           }
         },
         "sl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Popravek je začasno prekinjen. Porabili ste dnevno omejitev insulina. Odpravite opozorilo, da ponovno začnete dovajati inzulin."
+            "value" : "Popravek je začasno prekinjen. Omejitev %lld U je presežena. Če omejitev povečate, lahko opozorilo zdaj izbrišete. Če počakate, se bo popravek nadaljeval, ko bo preteklo dovolj časa."
           }
         },
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch är avstängd. Du har använt den dagliga insulinmängden. Avlägsna varningen för att återuppta insulintillförseln"
+            "value" : "Patchen är upphävd. Gränsen för %lld U överskreds. Om du höjer gränsen kan du ta bort varningen nu. Om du väntar kommer patchen att återupptas när tillräckligt med tid har gått."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch askıya alındı. Günlük insülin limitini kullandınız. İnsülin dağıtımına devam etmek için uyarıyı temizleyin"
+            "value" : "Yama askıya alındı. xx0xx} limiti U aşıldı. Sınırı artırırsanız, uyarıyı şimdi temizleyebilirsiniz. Beklerseniz, yeterli zaman geçtiğinde yama devam edecektir."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Дія пластиру призупиняється. Ви використали добову норму інсуліну. Очистити попередження, щоб відновити доставку інсуліну"
+            "value" : "Патч призупинено. Ліміт %lld U перевищено. Якщо ви збільшите ліміт, ви можете очистити попередження зараз. Якщо ви зачекаєте, патч буде відновлено, коли мине достатньо часу."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Việc sử dụng miếng dán đã bị tạm dừng. Bạn đã sử dụng hết giới hạn insulin hàng ngày. Hãy xóa cảnh báo để tiếp tục cung cấp insulin."
+            "value" : "Quá trình cập nhật bị tạm dừng. Đã vượt quá giới hạn %lld U. Nếu bạn tăng giới hạn, bạn có thể xóa cảnh báo ngay bây giờ. Nếu bạn chờ, quá trình cập nhật sẽ tiếp tục khi đủ thời gian trôi qua."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "胰岛素注射已暂停。您已用完每日胰岛素限额。清除此提示即可恢复胰岛素输注。"
-          }
-        }
-      }
-    },
-    "Patch is suspended. You've used the hourly insulin limit. Clear the alert to resume insulin delivery" : {
-      "comment" : "description hourlyMaxSuspended",
-      "extractionState" : "manual",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "تم تعليق اللصقة. لقد استخدمت الحد الأقصى للأنسولين بالساعة. امسح التنبيه لاستئناف توصيل الأنسولين"
-          }
-        },
-        "cs" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Záplata je pozastavena. Vyčerpali jste hodinový limit inzulínu. Zrušením upozornění obnovíte podávání inzulínu."
-          }
-        },
-        "da" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Plasteret er suspenderet. Du har brugt grænsen for insulin pr. time. Fjern advarslen for at genoptage insulintilførslen"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Das Pflaster ist ausgesetzt. Sie haben das stündliche Insulinlimit ausgeschöpft. Löschen Sie den Alarm, um die Insulinabgabe wieder aufzunehmen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Patch is suspended. You've used the hourly insulin limit. Clear the alert to resume insulin delivery"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El parche está suspendido. Has utilizado el límite de insulina por hora. Borre la alerta para reanudar la administración de insulina"
-          }
-        },
-        "fi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Laastari on keskeytetty. Olet käyttänyt tunnin insuliinirajan. Poista hälytys jatkaaksesi insuliinin antamista."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le patch est suspendu. Vous avez utilisé la limite horaire d'insuline. Effacez l'alerte pour reprendre l'administration d'insuline"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Il cerotto è sospeso. È stato raggiunto il limite orario di insulina. Cancellare l'avviso per riprendere la somministrazione di insulina"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "パッチが中断されました。1時間あたりのインスリン上限量を使用しました。アラートを解除してインスリン投与を再開してください。"
-          }
-        },
-        "nb" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Plasteret er suspendert. Du har brukt opp grensen for insulin per time. Fjern varselet for å gjenoppta insulintilførselen"
-          }
-        },
-        "nb-NO" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Plasteret er suspendert. Du har brukt opp grensen for insulin per time. Fjern varselet for å gjenoppta insulintilførselen"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Patch is opgeschort. U hebt de uurlimiet voor insuline gebruikt. Wis de waarschuwing om de insulinetoediening te hervatten"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Patch jest zawieszony. Wykorzystano godzinowy limit insuliny. Usuń alert, aby wznowić podawanie insuliny"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "O adesivo está suspenso. Utilizou o limite de insulina por hora. Limpe o alerta para retomar a administração de insulina"
-          }
-        },
-        "ro" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Patch-ul este suspendat. Ați utilizat limita orară de insulină. Anulați alerta pentru a relua administrarea de insulină"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Действие пластыря приостановлено. Вы использовали часовой лимит инсулина. Снимите предупреждение, чтобы возобновить подачу инсулина"
-          }
-        },
-        "sk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Záplata je pozastavená. Využili ste hodinový limit inzulínu. Zrušte upozornenie, aby ste obnovili podávanie inzulínu"
-          }
-        },
-        "sl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Popravek je začasno prekinjen. Izkoristili ste urno omejitev inzulina. Izbrišite opozorilo in nadaljujte z dovajanjem inzulina."
-          }
-        },
-        "sv" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Patch är avstängd. Du har använt timgränsen för insulin. Avlägsna varningen för att återuppta insulintillförseln"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yama askıya alındı. Saatlik insülin limitini kullandınız. İnsülin dağıtımına devam etmek için uyarıyı temizleyin"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Пластир призупинено. Ви використали погодинний ліміт інсуліну. Зняти попередження, щоб відновити доставку інсуліну"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Việc cung cấp insulin đã bị tạm dừng. Bạn đã sử dụng hết giới hạn insulin mỗi giờ. Hãy xóa cảnh báo để tiếp tục cung cấp insulin."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "胰岛素输注已暂停。您已用完每小时胰岛素输注限额。清除此提示即可恢复胰岛素输注。"
+            "value" : "补丁程序已暂停。已超出 %lld 个 U 的限制。如果您提高限制，即可立即清除此警告。如果您稍等片刻，补丁程序将在足够长的时间后恢复运行。"
           }
         }
       }

@@ -129,7 +129,7 @@ extension MedtrumPumpManager: PumpManagerUI {
     }
 
     public var pumpLifecycleProgress: DeviceLifecycleProgress? {
-        guard let expiresAt = state.patchExpiresAt else {
+        guard let expiresAt = state.patchGracePeriodFrom else {
             return nil
         }
 
@@ -138,9 +138,8 @@ extension MedtrumPumpManager: PumpManagerUI {
             return PumpLifecycleProgress(percentComplete: 100, progressState: .critical)
         }
 
-        if let patchActivatedAt = state.patchActivatedAt, expiresAt.addingTimeInterval(.hours(-8)) <= Date.now {
-            // Patch is in grace period
-            let completed = expiresAt.timeIntervalSince(patchActivatedAt) / TimeInterval(hours: 80)
+        if let patchActivatedAt = state.patchActivatedAt, expiresAt.addingTimeInterval(.days(-1)) <= Date.now {
+            let completed = expiresAt.timeIntervalSince(patchActivatedAt) / state.expiryMode.lifespan
             return PumpLifecycleProgress(percentComplete: completed, progressState: .warning)
         }
 

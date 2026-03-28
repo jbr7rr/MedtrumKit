@@ -69,53 +69,59 @@ struct MedtrumKitSettings: View {
                 }
 
                 if viewModel.patchState == .hourlyMaxSuspended {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(alignment: .center) {
-                            Text(LocalizedString("Alert: Hourly max insulin", comment: "title hourlyMaxSuspended"))
-                                .font(Font.footnote.weight(.semibold))
-                            Spacer()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(LocalizedString("Alert: Hourly max insulin", comment: "title hourlyMaxSuspended"))
+                            .font(Font.footnote.weight(.semibold))
+                        Text(
+                            String(
+                                format: LocalizedString(
+                                    "Patch is suspended. Limit of %lld U exceeded. If you increase the limit, you can clear the alert now. If you wait, patch will resume when enough time passes.",
+                                    comment: "description dailyMaxSuspended"
+                                ),
+                                viewModel.hourlyLimit
+                            )
+                        )
+                        .font(.footnote)
+                        .padding(.bottom, 4)
 
-                            if viewModel.isClearingAlert {
-                                ActivityIndicator()
-                            } else {
-                                Button(action: { viewModel.clearAlert(AlertType.hourly) }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.red)
-                                }
-                                .buttonStyle(.plain)
-                            }
+                        Button {
+                            viewModel.clearAlert(AlertType.hourly)
+                        } label: {
+                            Text(LocalizedString("Clear alert", comment: ""))
+                                .font(.title3)
+                                .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(.bordered)
+                        .disabled(viewModel.isClearingAlert)
 
-                        Text(LocalizedString(
-                            "Patch is suspended. You've used the hourly insulin limit. Clear the alert to resume insulin delivery",
-                            comment: "description hourlyMaxSuspended"
-                        ))
-                            .font(.footnote)
                     }.padding(.vertical, 8)
                 }
 
                 if viewModel.patchState == .dailyMaxSuspended {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(LocalizedString("Alert: Daily max insulin", comment: "title dailyMaxSuspended"))
-                                .font(Font.footnote.weight(.semibold))
-                            Spacer()
-                            if viewModel.isClearingAlert {
-                                ActivityIndicator()
-                            } else {
-                                Button(action: { viewModel.clearAlert(AlertType.daily) }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.red)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(LocalizedString("Alert: Daily max insulin", comment: "title dailyMaxSuspended"))
+                            .font(Font.footnote.weight(.semibold))
+                        Text(
+                            String(
+                                format: LocalizedString(
+                                    "Patch is suspended. Limit of %@ U exceeded. If you increase the limit, you can clear the alert now. If you wait, patch will resume when enough time passes.",
+                                    comment: "description dailyMaxSuspended"
+                                ),
+                                viewModel.dailyLimit
+                            )
+                        )
+                        .font(.footnote)
+                        .padding(.bottom, 4)
 
-                        Text(LocalizedString(
-                            "Patch is suspended. You've used the daily insulin limit. Clear the alert to resume insulin delivery",
-                            comment: "description dailyMaxSuspended"
-                        ))
-                            .font(.footnote)
+                        Button {
+                            viewModel.clearAlert(AlertType.daily)
+                        } label: {
+                            Text(LocalizedString("Clear alert", comment: ""))
+                                .font(.title3)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(viewModel.isClearingAlert)
                     }.padding(.vertical, 8)
                 }
             }
