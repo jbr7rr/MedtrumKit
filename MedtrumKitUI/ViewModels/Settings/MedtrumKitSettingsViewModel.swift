@@ -384,7 +384,7 @@ extension MedtrumKitSettingsViewModel {
         }
 
         if let patchExpiresAt, Date.now > patchExpiresAt {
-            return state.usingExtendedMode ? .expiredBasalOnly : .expired
+            return state.expiryMode == .extended ? .expiredBasalOnly : .expired
         }
 
         return .gracePeriod

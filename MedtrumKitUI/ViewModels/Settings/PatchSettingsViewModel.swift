@@ -13,7 +13,7 @@ class PatchSettingsViewModel: ObservableObject {
         didSet { checkDirtyState() }
     }
 
-    @Published var usingExtendedMode: Double = 0 {
+    @Published var expirationTimer: Double = 1 {
         didSet { checkDirtyState() }
     }
 
@@ -67,7 +67,7 @@ class PatchSettingsViewModel: ObservableObject {
         pumpManager.state.maxHourlyInsulin = maxHourlyInsulin
         pumpManager.state.maxDailyInsulin = maxDailyInsulin
         pumpManager.state.alarmSetting = AlarmSettings(rawValue: UInt8(alarmSettings)) ?? .None
-        pumpManager.state.usingExtendedMode = usingExtendedMode == 0
+        pumpManager.state.expiryMode = expirationTimer == 1 ? .default : .extended
         pumpManager.state.notificationAfterActivation = .hours(notificationAfterActivation)
 
         if lowReservoirNotification == 0 {
@@ -111,7 +111,7 @@ class PatchSettingsViewModel: ObservableObject {
                 pumpManager.state.maxDailyInsulin != self.maxDailyInsulin ||
                     pumpManager.state.maxHourlyInsulin != self.maxHourlyInsulin ||
                     pumpManager.state.alarmSetting.rawValue != UInt8(self.alarmSettings) ||
-                    (pumpManager.state.usingExtendedMode ? 0 : 1) != self.usingExtendedMode ||
+                    Double(pumpManager.state.expiryMode.timer) != self.expirationTimer ||
                     pumpManager.state.notificationAfterActivation.hours != self.notificationAfterActivation ||
                     (pumpManager.state.lowReservoirWarning ?? 0) != self.lowReservoirNotification
             )
@@ -138,7 +138,7 @@ extension PatchSettingsViewModel: PumpManagerStatusObserver {
             self.maxHourlyInsulin = state.maxHourlyInsulin
             self.maxDailyInsulin = state.maxDailyInsulin
             self.alarmSettings = Double(state.alarmSetting.rawValue)
-            self.usingExtendedMode = state.usingExtendedMode ? 0 : 1
+            self.expirationTimer = Double(state.expiryMode.timer)
             self.notificationAfterActivation = state.notificationAfterActivation.hours
             self.lowReservoirNotification = state.lowReservoirWarning ?? 0
 

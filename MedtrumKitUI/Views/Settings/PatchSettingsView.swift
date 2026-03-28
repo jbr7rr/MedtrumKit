@@ -98,7 +98,7 @@ struct PatchSettingsView: View {
                     sectionItem(
                         title: LocalizedString("Patch lifetime", comment: "Label for expiration alarm"),
                         isEditing: isEditingExpirationTimer,
-                        value: $viewModel.usingExtendedMode,
+                        value: $viewModel.expirationTimer,
                         valueRange: Array(0 ... 1).map({ Double($0) }),
                         formatter: { value in
                             switch value {
@@ -120,7 +120,7 @@ struct PatchSettingsView: View {
                         }
                     }
 
-                    if viewModel.usingExtendedMode == 0 {
+                    if viewModel.expirationTimer == 1 {
                         sectionItem(
                             title: LocalizedString(
                                 "Notification for expirate patch",
@@ -171,7 +171,7 @@ struct PatchSettingsView: View {
                     }
                 }
 
-                if viewModel.usingExtendedMode == 1 {
+                if viewModel.expirationTimer == 0 {
                     Section {
                         VStack {
                             Text(LocalizedString("Use at your own risk!", comment: "warning title"))

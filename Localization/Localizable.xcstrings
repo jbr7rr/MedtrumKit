@@ -2371,6 +2371,12 @@
             "state" : "translated",
             "value" : "Cảnh báo: Liều insulin tối đa hàng ngày"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提醒：每日最大胰岛素剂量"
+          }
         }
       }
     },
@@ -2514,6 +2520,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cảnh báo: Liều insulin tối đa mỗi giờ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提醒：每小时最大胰岛素用量"
           }
         }
       }
@@ -4008,6 +4020,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cảnh báo rõ ràng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清晰警报"
           }
         }
       }
@@ -13003,6 +13021,12 @@
             "state" : "translated",
             "value" : "Việc sử dụng miếng dán đã bị tạm dừng. Bạn đã sử dụng hết giới hạn insulin hàng ngày. Hãy xóa cảnh báo để tiếp tục cung cấp insulin."
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "胰岛素注射已暂停。您已用完每日胰岛素限额。清除此提示即可恢复胰岛素输注。"
+          }
         }
       }
     },
@@ -13146,6 +13170,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Việc cung cấp insulin đã bị tạm dừng. Bạn đã sử dụng hết giới hạn insulin mỗi giờ. Hãy xóa cảnh báo để tiếp tục cung cấp insulin."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "胰岛素输注已暂停。您已用完每小时胰岛素输注限额。清除此提示即可恢复胰岛素输注。"
           }
         }
       }
@@ -14496,6 +14526,156 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "之前的补丁详情"
+          }
+        }
+      }
+    },
+    "Pump base Firmware" : {
+      "comment" : "Text for firmware version",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "البرنامج الثابت لقاعدة المضخة"
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmware základny čerpadla"
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmware til pumpebase"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pumpenbasis Firmware"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pump base Firmware"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmware de la base de bomba"
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pumpun pohja Firmware"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmware de la base de la pompe"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmware della base della pompa"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ポンプベースファームウェア"
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fastvare for pumpebase"
+          }
+        },
+        "nb-NO" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fastvare for pumpebase"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pomp basis Firmware"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oprogramowanie sprzętowe podstawy pompy"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmware da base da bomba"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmware bază pompă"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Встроенное программное обеспечение базы насоса"
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmvér základne čerpadla"
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vdelana programska oprema baze črpalke"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Firmware för pumpbas"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pompa tabanı Ürün Yazılımı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прошивка основи насоса"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Phần mềm điều khiển máy bơm"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "泵底座固件"
           }
         }
       }

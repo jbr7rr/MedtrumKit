@@ -814,7 +814,7 @@ public extension MedtrumPumpManager {
             await StateSyncer.syncTime(pumpManager: self)
 
             let packet = ActivatePacket(
-                expirationTimer: self.state.usingExtendedMode ? 0 : 1,
+                expirationTimer: self.state.expiryMode.timer,
                 alarmSetting: self.state.alarmSetting,
                 hourlyMaxInsulin: self.state.maxHourlyInsulin,
                 dailyMaxInsulin: self.state.maxDailyInsulin,
@@ -835,7 +835,7 @@ public extension MedtrumPumpManager {
                     return
                 }
 
-                if !self.state.usingExtendedMode {
+                if self.state.expiryMode == .default {
                     NotificationManager.activatePatchExpiredNotification(after: self.state.notificationAfterActivation)
                 }
 
@@ -996,16 +996,26 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let package = ClearAlertPacket(alertType: alertType)
-            let result = await self.bluetooth.write(package)
-            if case let .failure(error) = result {
-                self.log.error("Failed to update settings: \(error)")
+            let clearAlertPackage = ClearAlertPacket(alertType: alertType)
+            let clearAlertResult = await self.bluetooth.write(clearAlertPackage)
+            if case let .failure(error) = clearAlertResult {
+                self.log.error("Failed to clear alert: \(error)")
                 completion(false)
                 return
             }
 
-            self.log.info("Alert cleared!")
-            completion(true)
+            let resumePackage = ResumePumpPacket()
+            let resumeResult = await self.bluetooth.write(resumePackage)
+            if case let .failure(error) = resumeResult {
+                self.log.error("Failed to resume patch: \(error)")
+                completion(false)
+                return
+            }
+
+            self.syncPumpData { _ in
+                self.log.info("Alert cleared!")
+                completion(true)
+            }
         }
     }
 
@@ -1023,7 +1033,7 @@ public extension MedtrumPumpManager {
                 alarmSettings: self.state.alarmSetting,
                 hourlyMaxInsulin: self.state.maxHourlyInsulin,
                 dailyMaxInsulin: self.state.maxDailyInsulin,
-                expirationTimer: self.state.usingExtendedMode ? 0 : 1
+                expirationTimer: self.state.expiryMode.timer
             )
             let result = await self.bluetooth.write(package)
             if case let .failure(error) = result {

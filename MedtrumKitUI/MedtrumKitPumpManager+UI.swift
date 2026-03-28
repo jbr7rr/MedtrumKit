@@ -96,7 +96,7 @@ extension MedtrumPumpManager: PumpManagerUI {
                 imageName: "pause.circle.fill",
                 state: .warning
             )
-        } else if state.usingExtendedMode, let expiresAt = state.patchExpiresAt, Date.now > expiresAt {
+        } else if state.expiryMode == .extended, let expiresAt = state.patchExpiresAt, Date.now > expiresAt {
             return PumpStatusHighlight(
                 localizedMessage: LocalizedString(
                     "Patch expired. Basal only.",

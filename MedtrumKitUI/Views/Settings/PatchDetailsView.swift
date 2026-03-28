@@ -15,6 +15,10 @@ struct PatchDetailsView: View {
                     value: viewModel.pumpBaseSN
                 )
                 sectionItem(
+                    title: LocalizedString("Pump base Firmware", comment: "Text for firmware version"),
+                    value: viewModel.swVersion
+                )
+                sectionItem(
                     title: LocalizedString("Pump base model", comment: "Text for model"),
                     value: viewModel.model
                 )
