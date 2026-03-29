@@ -1,5 +1,3 @@
-import LocalAuthentication
-
 class DeactivatePatchViewModel: ObservableObject {
     @Published var isDeactivating = false
     @Published var deactivationError = ""
@@ -19,7 +17,7 @@ class DeactivatePatchViewModel: ObservableObject {
     }
 
     func forceDeactivate() {
-        authenticate { success in
+        AuthorizeBiometrics.authenticate { success in
             guard success else {
                 DispatchQueue.main.async {
                     self.deactivationError = LocalizedString("Authentication failure", comment: "auth failed")
@@ -36,7 +34,7 @@ class DeactivatePatchViewModel: ObservableObject {
 
     func deactivate() {
         #if targetEnvironment(simulator)
-            authenticate { success in
+            AuthorizeBiometrics.authenticate { success in
                 DispatchQueue.main.async {
                     guard success else {
                         self.deactivationError = LocalizedString("Authentication failure", comment: "auth failed")
@@ -73,7 +71,7 @@ class DeactivatePatchViewModel: ObservableObject {
             isDeactivating = true
             deactivationError = ""
 
-            authenticate { success in
+            AuthorizeBiometrics.authenticate { success in
                 guard success else {
                     DispatchQueue.main.async {
                         self.deactivationError = LocalizedString("Authentication failure", comment: "auth failed")
@@ -95,23 +93,5 @@ class DeactivatePatchViewModel: ObservableObject {
                 }
             }
         #endif
-    }
-
-    private func authenticate(success authSuccess: @escaping (Bool) -> Void) {
-        let context = LAContext()
-        var error: NSError?
-
-        // check whether authentication is possible
-        if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
-            // it's possible, so go ahead and use it
-            let reason = "We need to unlock your data."
-
-            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, _ in
-                authSuccess(success)
-            }
-        } else {
-            // no auth, automatically allow
-            authSuccess(true)
-        }
     }
 }

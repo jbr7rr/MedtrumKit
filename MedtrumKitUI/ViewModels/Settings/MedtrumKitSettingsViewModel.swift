@@ -1,10 +1,12 @@
 import HealthKit
 import LoopKit
+import LoopKitUI
 import SwiftUI
 
 enum PatchLifecycleState {
     case noPatch
     case active
+    case activeLast24h
     case gracePeriod
     case expired
     case expiredBasalOnly
@@ -48,10 +50,10 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
         pumpManager?.state.pumpName ?? "Medtrum Nano"
     }
 
-    let reservoirVolumeFormatter: QuantityFormatter = {
-        let formatter = QuantityFormatter(for: .internationalUnit())
-        formatter.numberFormatter.minimumFractionDigits = 0
-        formatter.numberFormatter.maximumFractionDigits = 0
+    let reservoirVolumeFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 0
         return formatter
     }()
 
@@ -129,12 +131,11 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
 
     func reservoirText(for units: Double) -> String {
-        let quantity = HKQuantity(unit: .internationalUnit(), doubleValue: units)
-        return reservoirVolumeFormatter.string(from: quantity) ?? ""
+        reservoirVolumeFormatter.string(from: units as NSNumber) ?? ""
     }
 
     var patchLifecycleDays: Int? {
-        guard patchLifecycleState == .active, let patchGracePeriodFrom else {
+        guard patchLifecycleState == .active || patchLifecycleState == .activeLast24h, let patchGracePeriodFrom else {
             return nil
         }
 
@@ -142,7 +143,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
 
     var patchLifecycleHours: Int? {
-        guard patchLifecycleState == .active, let patchGracePeriodFrom else {
+        guard patchLifecycleState == .active || patchLifecycleState == .activeLast24h, let patchGracePeriodFrom else {
             return nil
         }
 
@@ -153,7 +154,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     }
 
     var patchLifecycleMinutes: Int? {
-        guard patchLifecycleState == .active, let patchGracePeriodFrom else {
+        guard patchLifecycleState == .active || patchLifecycleState == .activeLast24h, let patchGracePeriodFrom else {
             return nil
         }
 
@@ -383,6 +384,12 @@ extension MedtrumKitSettingsViewModel {
     }
 
     private func getLifecycleState(state: MedtrumPumpState) -> PatchLifecycleState {
+        if let patchGracePeriodFrom = state.patchGracePeriodFrom,
+           patchGracePeriodFrom.addingTimeInterval(.days(-1)) <= Date.now
+        {
+            return .activeLast24h
+        }
+
         if patchLifecycleProgress < 1 {
             return .active
         }

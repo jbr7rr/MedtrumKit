@@ -23,7 +23,7 @@ struct PatchSettingsView: View {
                         title: LocalizedString("Max hourly insulin", comment: "Label for maximum hourly insulin delivery"),
                         isEditing: isEditingMaxHourly,
                         value: $viewModel.maxHourlyInsulin,
-                        valueRange: (viewModel.is300u ? Array(0 ... 12) : Array(0 ... 8)).map({ Double($0) * 5 }),
+                        valueRange: viewModel.allowedOptionsHourly,
                         formatter: { value in "\(String(format: "%.0f", value)) \(self.unitText)" }
                     )
                     .onTapGesture {
@@ -41,7 +41,7 @@ struct PatchSettingsView: View {
                         title: LocalizedString("Max daily insulin", comment: "Label for maximum daily insulin delivery"),
                         isEditing: isEditingMaxDaily,
                         value: $viewModel.maxDailyInsulin,
-                        valueRange: (viewModel.is300u ? Array(0 ... 54) : Array(0 ... 36)).map({ Double($0) * 5 }),
+                        valueRange: viewModel.allowedOptionsDaily,
                         formatter: { value in "\(String(format: "%.0f", value)) \(self.unitText)" }
                     )
                     .onTapGesture {

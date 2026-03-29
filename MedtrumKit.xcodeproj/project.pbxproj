@@ -116,6 +116,7 @@
 		3EEA52012D7E1E10000C9E1E /* SetBasalProfilePacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EEA52002D7E1E0D000C9E1E /* SetBasalProfilePacketTests.swift */; };
 		3EEA52072D7E2265000C9E1E /* SetBolusPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EEA52062D7E2264000C9E1E /* SetBolusPacket.swift */; };
 		3EF31CC62DF5DC5500EA6300 /* StateSyncer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EF31CC52DF5DC5200EA6300 /* StateSyncer.swift */; };
+		3EF5B0702F79381B00504678 /* AuthorizeBiometrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EF5B06F2F79381400504678 /* AuthorizeBiometrics.swift */; };
 		3EFBC4F42DFB527400E0E295 /* DeleteDriverActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EFBC4F32DFB526900E0E295 /* DeleteDriverActionSheet.swift */; };
 		B6E920502EAFBB390076D719 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = B6E9204F2EAFBB380076D719 /* Localizable.xcstrings */; };
 		B7189AE72C15A52800703DE2 /* MedtrumPumpManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7189AE52C15A52800703DE2 /* MedtrumPumpManager.swift */; };
@@ -264,6 +265,7 @@
 		3EEA52002D7E1E0D000C9E1E /* SetBasalProfilePacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetBasalProfilePacketTests.swift; sourceTree = "<group>"; };
 		3EEA52062D7E2264000C9E1E /* SetBolusPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetBolusPacket.swift; sourceTree = "<group>"; };
 		3EF31CC52DF5DC5200EA6300 /* StateSyncer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StateSyncer.swift; sourceTree = "<group>"; };
+		3EF5B06F2F79381400504678 /* AuthorizeBiometrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthorizeBiometrics.swift; sourceTree = "<group>"; };
 		3EFBC4F32DFB526900E0E295 /* DeleteDriverActionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteDriverActionSheet.swift; sourceTree = "<group>"; };
 		B6E9204F2EAFBB380076D719 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		B7189AE52C15A52800703DE2 /* MedtrumPumpManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MedtrumPumpManager.swift; sourceTree = "<group>"; };
@@ -441,6 +443,7 @@
 				3E45665A2D83712D00FE1E0C /* Views */,
 				3E767CFE2D67B1A9004B1971 /* MedtrumHUDProvider.swift */,
 				3E767CE22D67ADFA004B1971 /* MedtrumKitPumpManager+UI.swift */,
+				3EF5B06F2F79381400504678 /* AuthorizeBiometrics.swift */,
 				3E26BE0C2D906A0D00E595B0 /* MedtrumUI.xcassets */,
 			);
 			path = MedtrumKitUI;
@@ -798,6 +801,7 @@
 				3E5060262D71035900376609 /* SubscribePacket.swift in Sources */,
 				3E5060202D70F97500376609 /* SetTimePacket.swift in Sources */,
 				3E9D8B122D88A8F600008AF2 /* NewPumpEvent.swift in Sources */,
+				3EF5B0702F79381B00504678 /* AuthorizeBiometrics.swift in Sources */,
 				3E9547FB2D8D963600EEF259 /* MedtrumPrimePatchResult.swift in Sources */,
 				3EA87D4F2D7A2930007DD959 /* CancelBolusPacket.swift in Sources */,
 				3E1390172D6E5EA000A146C1 /* MedtrumConnectResult.swift in Sources */,

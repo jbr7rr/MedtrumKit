@@ -104,7 +104,7 @@ struct MedtrumKitSettings: View {
                         Text(
                             String(
                                 format: LocalizedString(
-                                    "Patch is suspended. Limit of %@ U exceeded. If you increase the limit, you can clear the alert now. If you wait, patch will resume when enough time passes.",
+                                    "Patch is suspended. Limit of %lld U exceeded. If you increase the limit, you can clear the alert now. If you wait, patch will resume when enough time passes.",
                                     comment: "description dailyMaxSuspended"
                                 ),
                                 viewModel.dailyLimit
@@ -448,20 +448,26 @@ struct MedtrumKitSettings: View {
     }
 
     var reservoirStatus: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .trailing, spacing: 5) {
             Text(LocalizedString("Insulin Remaining", comment: "Header for insulin remaining on pod settings screen"))
                 .foregroundColor(Color(UIColor.secondaryLabel))
-            HStack {
+            HStack(alignment: .center, spacing: 10) {
                 ReservoirView(
                     reservoirLevel: viewModel.reservoirLevel,
                     fillColor: reservoirColor,
                     maxReservoirLevel: viewModel.maxReservoirLevel
                 )
                 .frame(width: 23, height: 32)
-                Text(viewModel.reservoirText(for: viewModel.reservoirLevel))
-                    .font(.system(size: 28))
-                    .fontWeight(.heavy)
-                    .fixedSize()
+
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(viewModel.reservoirText(for: viewModel.reservoirLevel))
+                        .font(.system(size: 28))
+                        .fontWeight(.heavy)
+                        .fixedSize()
+
+                    Text(LocalizedString("U", comment: "Insulin unit"))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -510,7 +516,8 @@ struct MedtrumKitSettings: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
-            case .active:
+            case .active,
+                 .activeLast24h:
                 HStack {
                     Text(LocalizedString("Expires in:", comment: "Text shown while patch is active"))
                         .foregroundStyle(.secondary)
@@ -561,7 +568,7 @@ struct MedtrumKitSettings: View {
             }
 
             ProgressView(value: viewModel.patchLifecycleProgress)
-                .tint(viewModel.patchLifecycleState == .active ? .accentColor : .red)
+                .tint(progressColor)
                 .padding(.top, -5)
         }
     }
@@ -594,6 +601,20 @@ struct MedtrumKitSettings: View {
         }
 
         return guidanceColors.critical
+    }
+
+    public var progressColor: Color {
+        switch viewModel.patchLifecycleState {
+        case .active:
+            return .accentColor
+        case .activeLast24h:
+            return guidanceColors.warning
+        case .expired,
+             .expiredBasalOnly,
+             .gracePeriod,
+             .noPatch:
+            return guidanceColors.critical
+        }
     }
 
     var connectionStatusText: some View {
