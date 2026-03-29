@@ -384,14 +384,14 @@ extension MedtrumKitSettingsViewModel {
     }
 
     private func getLifecycleState(state: MedtrumPumpState) -> PatchLifecycleState {
-        if let patchGracePeriodFrom = state.patchGracePeriodFrom,
-           patchGracePeriodFrom.addingTimeInterval(.days(-1)) <= Date.now
-        {
-            return .activeLast24h
-        }
-
         if patchLifecycleProgress < 1 {
-            return .active
+            if let patchGracePeriodFrom = state.patchGracePeriodFrom,
+               patchGracePeriodFrom.addingTimeInterval(.days(-1)) <= Date.now
+            {
+                return .activeLast24h
+            } else {
+                return .active
+            }
         }
 
         if let patchExpiresAt, Date.now > patchExpiresAt {
