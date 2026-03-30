@@ -15431,152 +15431,152 @@
         }
       }
     },
-    "Reservoir low (%iU)" : {
+    "Reservoir low (%lld U)" : {
       "comment" : "Title low reservoir notification",
       "extractionState" : "manual",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "انخفاض الخزان (%lld U)"
           }
         },
         "cs" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Nízká hladina v nádrži (%lld U)"
           }
         },
         "da" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Reservoir lavt (%lld U)"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Vorratsbehälter niedrig (%lld U)"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Reservoir low (%lld U)"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Depósito bajo (%lld U)"
           }
         },
         "fi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Säiliö matala (%lld U)"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Réservoir bas (%lld U)"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Serbatoio basso (%lld U)"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "リザーバ低 (%lld U)"
           }
         },
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoar lavt (%%iU)"
+            "value" : "Reservoar lavt (%lld U)"
           }
         },
         "nb-NO" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Reservoar lavt (%lld U)"
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Reservoir laag (%lld U)"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Niski stan zbiornika (%lld U)"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Reservatório baixo (%lld U)"
           }
         },
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Rezervor scăzut (%lld U)"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Низкий уровень резервуара (%lld U)"
           }
         },
         "sk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Nízka úroveň zásobníka (%lld U)"
           }
         },
         "sl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Nizka vrednost rezervoarja (%lld U)"
           }
         },
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Reservoaren låg (%lld U)"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Rezervuar düşük (%lld U)"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Водосховище низьке (%%iU)"
+            "value" : "Низький рівень водосховища (%lld U)"
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "Mức nước thấp trong hồ chứa (%lld U)"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoir low (%%iU)"
+            "value" : "水库低位（%lld U）"
           }
         }
       }
