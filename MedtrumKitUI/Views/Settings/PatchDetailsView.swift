@@ -30,6 +30,14 @@ struct PatchDetailsView: View {
                     title: LocalizedString("Battery", comment: "Text for battery voltageB"),
                     value: viewModel.batteryText(for: viewModel.battery)
                 )
+                sectionItem(
+                    title: LocalizedString("Activation", comment: "Text for activatedAt"),
+                    value: viewModel.activatedAt
+                )
+                sectionItem(
+                    title: LocalizedString("Elapsed time", comment: "Text for elapsed patch lifetime"),
+                    value: viewModel.patchLifetime
+                )
 
                 if let initialReservoirLevel = viewModel.initialReservoirLevel {
                     sectionItem(

@@ -6731,6 +6731,18 @@
         }
       }
     },
+    "Elapsed time" : {
+      "comment" : "Text for elapsed patch lifetime",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elapsed time"
+          }
+        }
+      }
+    },
     "Expiration" : {
       "comment" : "Text for expiresAt",
       "extractionState" : "manual",
