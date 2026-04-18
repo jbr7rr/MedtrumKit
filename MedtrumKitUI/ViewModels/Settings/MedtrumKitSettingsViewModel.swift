@@ -12,7 +12,7 @@ enum PatchLifecycleState {
     case expiredBasalOnly
 }
 
-class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
+class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver, PatchLifetimeFormatting {
     private let processQueue = DispatchQueue(label: "com.nightscout.medtrumkit.settingsViewModel")
 
     @Published var model: String = ""
@@ -32,6 +32,7 @@ class MedtrumKitSettingsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var dailyLimit = 0
     @Published var patchLifecycleProgress: Double = 0
     @Published var patchLifecycleState: PatchLifecycleState = .noPatch
+    @Published var patchLifetime: String = ""
     @Published var patchActivatedAt: Date? = nil
     @Published var patchExpiresAt: Date? = nil
     @Published var patchGracePeriodFrom: Date? = nil
@@ -359,6 +360,9 @@ extension MedtrumKitSettingsViewModel {
         patchActivatedAt = state.patchActivatedAt
         patchGracePeriodFrom = state.patchGracePeriodFrom
         patchExpiresAt = state.patchExpiresAt
+        if let patchActivatedAt = state.patchActivatedAt {
+            patchLifetime = self.processPatchLifetime(patchActivatedAt, Date())
+        }
         hasPreviousPatch = state.previousPatch != nil
         hourlyLimit = Int(state.maxHourlyInsulin)
         dailyLimit = Int(state.maxDailyInsulin)

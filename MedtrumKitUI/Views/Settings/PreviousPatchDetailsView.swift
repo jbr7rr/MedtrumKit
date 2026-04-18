@@ -23,7 +23,7 @@ struct PreviousPatchDetailsView: View {
                     value: viewModel.deactivatedAt
                 )
                 sectionItem(
-                    title: LocalizedString("Elapsed time", comment: "Text for elapsed patch lifetime"),
+                    title: LocalizedString("Cannula Age", comment: "Text for cannula age (CAGE)"),
                     value: viewModel.patchLifetime
                 )
                 sectionItem(
