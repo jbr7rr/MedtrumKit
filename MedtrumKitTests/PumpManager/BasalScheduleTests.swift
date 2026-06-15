@@ -31,3 +31,43 @@ final class BasalScheduleTests: XCTestCase {
         XCTAssert(actual.elementsEqual(expected))
     }
 }
+
+final class SessionTokenPolicyTests: XCTestCase {
+    // Genuinely terminal (must-replace) states back up + clear the token.
+    func testTerminalStatesAreTerminal() {
+        XCTAssertTrue(SessionTokenPolicy.isTerminal(.occlusion))
+        XCTAssertTrue(SessionTokenPolicy.isTerminal(.expired))
+        XCTAssertTrue(SessionTokenPolicy.isTerminal(.reservoirEmpty))
+        XCTAssertTrue(SessionTokenPolicy.isTerminal(.patchFault))
+        XCTAssertTrue(SessionTokenPolicy.isTerminal(.patchFaultd2))
+        XCTAssertTrue(SessionTokenPolicy.isTerminal(.baseFault))
+        XCTAssertTrue(SessionTokenPolicy.isTerminal(.batteryOut))
+        XCTAssertTrue(SessionTokenPolicy.isTerminal(.stopped))
+    }
+
+    // Active and the recoverable suspend/paused states are NOT terminal and MUST
+    // keep their token - they are >32 but below `occlusion`.
+    func testActiveAndSuspendStatesAreNotTerminal() {
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.active))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.active_alt))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.lowBgSuspended))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.autoSuspended))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.hourlyMaxSuspended))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.dailyMaxSuspended))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.suspended))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.paused))
+    }
+
+    // Transient activation/needle states (ejecting/ejected) and pre-active states
+    // are NOT terminal - clearing the token here was the regression that wiped a
+    // live patch's token mid-activation.
+    func testTransientAndPreActiveStatesAreNotTerminal() {
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.none))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.idle))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.filled))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.priming))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.primed))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.ejecting))
+        XCTAssertFalse(SessionTokenPolicy.isTerminal(.ejected))
+    }
+}

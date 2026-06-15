@@ -54,6 +54,7 @@ public class MedtrumPumpState: RawRepresentable {
         pumpSN = rawValue["pumpSN"] as? Data ?? Data()
         lowReservoirWarning = rawValue["lowReservoirWarning"] as? Double
         sessionToken = rawValue["sessionToken"] as? Data ?? Data()
+        backupSessionToken = rawValue["backupSessionToken"] as? Data ?? Data()
         patchId = rawValue["patchId"] as? Data ?? Data()
         patchActivatedAt = rawValue["patchActivatedAt"] as? Date ?? nil
         deviceType = rawValue["deviceType"] as? UInt8 ?? 0
@@ -137,6 +138,7 @@ public class MedtrumPumpState: RawRepresentable {
         lowReservoirWarning = nil
         bolusDose = nil
         sessionToken = Data()
+        backupSessionToken = Data()
         patchId = Data()
         patchActivatedAt = nil
         deviceType = 0
@@ -174,6 +176,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["lowReservoirWarning"] = lowReservoirWarning
         value["pumpSN"] = pumpSN
         value["sessionToken"] = sessionToken
+        value["backupSessionToken"] = backupSessionToken
         value["patchId"] = patchId
         value["patchActivatedAt"] = patchActivatedAt
         value["patchGracePeriodFrom"] = patchGracePeriodFrom
@@ -214,6 +217,10 @@ public class MedtrumPumpState: RawRepresentable {
 
     // Patch specific data
     public var sessionToken: Data
+    /// Last-known-good auth token, kept so it can be restored if the active token
+    /// is cleared/replaced and the patch then rejects auth (responseCode 7), or
+    /// when the active token is found empty.
+    public var backupSessionToken: Data
     public var patchId: Data
     public var patchActivatedAt: Date?
     public var patchGracePeriodFrom: Date? {

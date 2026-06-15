@@ -16,6 +16,16 @@ enum StateSyncer {
 
         StateSyncer.updatePumpState(syncResponse: syncResponse, state: state)
 
+        // When the patch permanently ends (occlusion / expired / reservoir empty /
+        // fault / battery out / stopped - i.e. >= occlusion), back up and clear the
+        // session token so the next patch starts with a fresh one. The old token
+        // stays recoverable via restore-on-auth-failure. NOTE: this must NOT fire
+        // on suspends/paused (64-70) or transient activation states (ejecting/
+        // ejected) - those keep their token.
+        if SessionTokenPolicy.isTerminal(syncResponse.state) {
+            pumpManager.backupAndClearSessionToken(reason: "patch terminal: \(syncResponse.state.description)")
+        }
+
         if let reservoir = syncResponse.reservoir {
             if let lowReservoirWarning = state.lowReservoirWarning,
                state.reservoir > lowReservoirWarning,

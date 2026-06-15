@@ -76,3 +76,19 @@ public enum PatchState: UInt8, Codable {
         }
     }
 }
+
+/// Classifies patch states for session-token lifecycle decisions.
+enum SessionTokenPolicy {
+    /// True when the patch has permanently ended and must be replaced (occlusion,
+    /// expired, reservoir empty, fault, battery out, stopped, ...). When this is
+    /// reached we back up and clear the active token so the next patch starts with
+    /// a fresh one.
+    ///
+    /// IMPORTANT: the boundary is `>= occlusion` (96), NOT `> active` (32).
+    /// States 33-70 (active_alt, the suspends and paused) are also `> 32` but are
+    /// recoverable and must KEEP their token; and transient activation states like
+    /// `ejecting`/`ejected` (5/6) are below 32 and must also keep their token.
+    static func isTerminal(_ state: PatchState) -> Bool {
+        state.rawValue >= PatchState.occlusion.rawValue
+    }
+}

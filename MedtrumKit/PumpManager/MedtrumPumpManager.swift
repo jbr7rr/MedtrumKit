@@ -622,10 +622,9 @@ public extension MedtrumPumpManager {
         }
 
         if state.sessionToken.isEmpty {
-            log.debug("Refreshing session token...")
-
-            // Patch has been disabled and thus a new session token is needed
-            state.sessionToken = Crypto.genSessionToken()
+            // No token yet (fresh base, or it was cleared when the previous patch
+            // ended). Mint one; the patch binds it during the prime/activate auth.
+            setSessionToken(Crypto.genSessionToken(), reason: "prime: token was empty")
             notifyStateDidChange()
         }
 
@@ -760,7 +759,7 @@ public extension MedtrumPumpManager {
 
             self.state.patchId = Data()
             self.state.pumpState = .none
-            self.state.sessionToken = Data()
+            self.backupAndClearSessionToken(reason: "deactivate")
             self.state.lastSync = Date.now
             self.state.basalDose = suspendDose
             self.notifyStateDidChange()
@@ -793,13 +792,76 @@ public extension MedtrumPumpManager {
 
         state.patchId = Data()
         state.pumpState = .none
-        state.sessionToken = Data()
+        backupAndClearSessionToken(reason: "force deactivate")
         state.lastSync = Date.now
         state.basalDose = suspendDose
         notifyStateDidChange()
 
         emitPumpEvents(events)
     }
+
+    #if MEDTRUM_DEBUG
+    // MARK: - Debug helpers (MEDTRUM_DEBUG builds only; not for public release)
+    //
+    // Tooling to experiment with the session token on an already-active patch.
+    // NOTE: a patch that rejects auth with responseCode 7 is bound to a token we
+    // cannot reproduce, and the firmware offers no way to re-bind a token to an
+    // active patch - so these are unlikely to recover it. They are kept for
+    // local debugging only.
+
+    var debugSessionTokenHex: String { state.sessionToken.hexEncodedString() }
+    var debugBackupSessionTokenHex: String { state.backupSessionToken.hexEncodedString() }
+    var debugPumpSNHex: String { state.pumpSN.hexEncodedString() }
+
+    /// Replace the stored session token with a fresh random value.
+    func debugRegenerateSessionToken() {
+        setSessionToken(Crypto.genSessionToken(), reason: "debug: regenerate")
+        notifyStateDidChange()
+    }
+
+    /// Replace the stored session token with a specific 4-byte value (hex string).
+    @discardableResult
+    func debugSetSessionToken(hex: String) -> Bool {
+        let cleaned = hex.replacingOccurrences(of: " ", with: "")
+        guard !cleaned.isEmpty, let data = Data(hex: cleaned), data.count == 4 else {
+            log.error("DEBUG: invalid session token hex (need 4 bytes / 8 hex chars)")
+            return false
+        }
+
+        setSessionToken(data, reason: "debug: set hex")
+        notifyStateDidChange()
+        return true
+    }
+
+    /// Clear the stored session token (next activation will mint a new one).
+    func debugClearSessionToken() {
+        setSessionToken(Data(), reason: "debug: clear")
+        notifyStateDidChange()
+    }
+
+    /// Promote the backup token to the active one (manual restore).
+    func debugRestoreBackupSessionToken() {
+        if restoreBackupSessionToken(reason: "debug: restore backup") {
+            notifyStateDidChange()
+        } else {
+            log.error("DEBUG: no usable backup session token to restore")
+        }
+    }
+
+    /// Drop the current connection and immediately re-run the auth flow using the
+    /// currently stored session token.
+    func debugForceReconnect() {
+        log.debug("DEBUG: forcing reconnect to re-attempt authorization")
+        bluetooth.disconnect(force: true)
+        bluetooth.ensureConnected { error in
+            if let error = error {
+                self.log.error("DEBUG: reconnect failed: \(error)")
+            } else {
+                self.log.debug("DEBUG: reconnect + authorization succeeded")
+            }
+        }
+    }
+    #endif
 
     func clearAlert(alertType: AlertType, completion: @escaping (Bool) -> Void) {
         log.info("Clearing alert - alertType: \(alertType.rawValue)")
@@ -866,6 +928,43 @@ public extension MedtrumPumpManager {
 
     func removeStatusObserver(_ observer: PumpManagerStatusObserver) {
         statusObservers.removeElement(observer)
+    }
+
+    // MARK: - Session token
+
+    /// Single funnel for every write to the active session token, so all
+    /// manipulations are auditable (logged under MEDTRUM_DEBUG).
+    func setSessionToken(_ newValue: Data, reason: String) {
+        #if MEDTRUM_DEBUG
+        let from = state.sessionToken.isEmpty ? "(empty)" : state.sessionToken.hexEncodedString()
+        let to = newValue.isEmpty ? "(empty)" : newValue.hexEncodedString()
+        log.info("sessionToken [\(reason)]: \(from) -> \(to)")
+        #endif
+        state.sessionToken = newValue
+    }
+
+    /// Back up the current token (if any) and clear the active one. Used when the
+    /// patch permanently ends, so the next patch starts with a fresh token while
+    /// the old one stays recoverable via `restoreBackupSessionToken` if the patch
+    /// later rejects auth (responseCode 7), or when the active token is empty.
+    func backupAndClearSessionToken(reason: String) {
+        guard !state.sessionToken.isEmpty else { return }
+        #if MEDTRUM_DEBUG
+        log.info("sessionToken backup [\(reason)]: \(state.sessionToken.hexEncodedString()) -> backup")
+        #endif
+        state.backupSessionToken = state.sessionToken
+        setSessionToken(Data(), reason: reason)
+    }
+
+    /// Promote the backup token to the active one (used on an auth rejection).
+    /// Returns false if there is no usable, different backup to try.
+    @discardableResult
+    func restoreBackupSessionToken(reason: String) -> Bool {
+        guard !state.backupSessionToken.isEmpty, state.backupSessionToken != state.sessionToken else {
+            return false
+        }
+        setSessionToken(state.backupSessionToken, reason: reason)
+        return true
     }
 
     func notifyStateDidChange() {

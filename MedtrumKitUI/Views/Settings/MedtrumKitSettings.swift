@@ -6,6 +6,10 @@ struct MedtrumKitSettings: View {
     @State private var isSharePresented: Bool = false
     @ObservedObject var viewModel: MedtrumKitSettingsViewModel
 
+    #if MEDTRUM_DEBUG
+    @State private var debugTokenInput: String = ""
+    #endif
+
     @Environment(\.dismissAction) private var dismiss
     @Environment(\.insulinTintColor) var insulinTintColor
     @Environment(\.guidanceColors) private var guidanceColors
@@ -477,10 +481,75 @@ struct MedtrumKitSettings: View {
                     removePumpManagerActionSheet(deleteAction: viewModel.pumpRemovalAction)
                 }
             }
+
+            #if MEDTRUM_DEBUG
+            debugSection
+            #endif
         }
         .listStyle(InsetGroupedListStyle())
         .navigationBarItems(trailing: doneButton)
     }
+
+    #if MEDTRUM_DEBUG
+    @ViewBuilder var debugSection: some View {
+        Section {
+            HStack {
+                Text(verbatim: "Pump SN")
+                Spacer()
+                Text(viewModel.debugPumpSN).foregroundColor(.secondary).font(.system(.body, design: .monospaced))
+            }
+            HStack {
+                Text(verbatim: "Session token")
+                Spacer()
+                Text(viewModel.debugSessionToken.isEmpty ? "(empty)" : viewModel.debugSessionToken)
+                    .foregroundColor(.secondary)
+                    .font(.system(.body, design: .monospaced))
+            }
+            HStack {
+                Text(verbatim: "Backup token")
+                Spacer()
+                Text(viewModel.debugBackupToken.isEmpty ? "(empty)" : viewModel.debugBackupToken)
+                    .foregroundColor(.secondary)
+                    .font(.system(.body, design: .monospaced))
+            }
+            HStack {
+                Text(verbatim: "Patch state")
+                Spacer()
+                Text(viewModel.debugPatchState).foregroundColor(.secondary)
+            }
+
+            Button(action: { viewModel.debugRegenerateToken() }) {
+                Text(verbatim: "Regenerate session token")
+            }
+            Button(action: { viewModel.debugRestoreBackup() }) {
+                Text(verbatim: "Restore backup token")
+            }
+            Button(action: { viewModel.debugClearToken() }) {
+                Text(verbatim: "Clear session token")
+            }
+
+            HStack {
+                TextField("hex (8 chars)", text: $debugTokenInput)
+                    .autocorrectionDisabled(true)
+                    .textInputAutocapitalization(.never)
+                    .font(.system(.body, design: .monospaced))
+                Button(action: { _ = viewModel.debugSetToken(debugTokenInput) }) {
+                    Text(verbatim: "Set")
+                }
+                .disabled(debugTokenInput.isEmpty)
+            }
+
+            Button(action: { viewModel.debugForceReconnect() }) {
+                Text(verbatim: "Force reconnect (re-auth)")
+            }
+        } header: {
+            Text(verbatim: "DEBUG · Session token")
+        } footer: {
+            Text(verbatim: "Debug build only. On auth rejection (code 7) or an empty token the driver auto-retries with the backup token; use Restore/Set to recover manually. Token changes are logged.")
+        }
+        .onAppear { viewModel.debugRefreshToken() }
+    }
+    #endif
 
     var reservoirStatus: some View {
         VStack(alignment: .trailing, spacing: 5) {

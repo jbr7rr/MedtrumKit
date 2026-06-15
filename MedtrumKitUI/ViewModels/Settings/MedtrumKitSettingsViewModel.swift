@@ -48,6 +48,11 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
     @Published var hasPreviousPatch = false
     @Published var isClearingAlert = false
 
+    #if MEDTRUM_DEBUG
+    @Published var debugSessionToken: String = ""
+    @Published var debugBackupToken: String = ""
+    #endif
+
     public var pumpName: String {
         pumpManager?.state.pumpName ?? "Medtrum Nano"
     }
@@ -397,6 +402,42 @@ extension MedtrumKitSettingsViewModel {
             self.insulinType = insulinType
         }
     }
+
+    #if MEDTRUM_DEBUG
+    var debugPumpSN: String { pumpManager?.debugPumpSNHex ?? "" }
+    var debugPatchState: String { pumpManager?.state.pumpState.description ?? "-" }
+
+    func debugRefreshToken() {
+        debugSessionToken = pumpManager?.debugSessionTokenHex ?? ""
+        debugBackupToken = pumpManager?.debugBackupSessionTokenHex ?? ""
+    }
+
+    func debugRegenerateToken() {
+        pumpManager?.debugRegenerateSessionToken()
+        debugRefreshToken()
+    }
+
+    func debugClearToken() {
+        pumpManager?.debugClearSessionToken()
+        debugRefreshToken()
+    }
+
+    @discardableResult
+    func debugSetToken(_ hex: String) -> Bool {
+        let ok = pumpManager?.debugSetSessionToken(hex: hex) ?? false
+        debugRefreshToken()
+        return ok
+    }
+
+    func debugRestoreBackup() {
+        pumpManager?.debugRestoreBackupSessionToken()
+        debugRefreshToken()
+    }
+
+    func debugForceReconnect() {
+        pumpManager?.debugForceReconnect()
+    }
+    #endif
 
     private func getLifecycleState(state: MedtrumPumpState) -> PatchLifecycleState {
         if patchLifecycleProgress < 1 {

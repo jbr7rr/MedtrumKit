@@ -84,14 +84,49 @@ class PeripheralManager: NSObject {
 }
 
 extension PeripheralManager {
+    /// Auth was rejected because of a wrong session token. Only `7` is
+    /// documented ("invalid authorization"). We intentionally do NOT act on other
+    /// codes (e.g. 32) - their meaning is undocumented and 32 collides with the
+    /// value of the active patch state, so treating it as a token error would be a
+    /// guess. The empty-token case is handled separately, before sending auth.
+    private static func isAuthTokenRejection(_ error: MedtrumWriteError) -> Bool {
+        if case let .invalidResponse(code) = error {
+            return code == 7
+        }
+        return false
+    }
+
     // Connect step 1
-    private func doAuthorize() {
+    private func doAuthorize(triedBackup: Bool = false) {
+        // An empty active token can never authorize. If we have a backup (e.g. the
+        // token was cleared when the previous patch ended), use it rather than
+        // sending an empty request - this avoids depending on whatever code the
+        // patch returns for an empty token.
+        if !triedBackup, pumpManager.state.sessionToken.isEmpty,
+           pumpManager.restoreBackupSessionToken(reason: "auth: active token empty, using backup")
+        {
+            pumpManager.notifyStateDidChange()
+        }
+
         let authData = writePacket(
             AuthorizePacket(pumpSN: pumpManager.state.pumpSN, sessionToken: pumpManager.state.sessionToken)
         )
 
         switch authData {
         case let .failure(error):
+            // Wrong token (code 7). The patch still responded, so the connection is
+            // up: try the backup token once on the same connection before giving up.
+            // This recovers patches whose active token was cleared/replaced (e.g.
+            // force-deactivate) while the patch is still bound to the previous one.
+            if !triedBackup, Self.isAuthTokenRejection(error),
+               pumpManager.restoreBackupSessionToken(reason: "auth rejected: \(error.errorDescription)")
+            {
+                pumpManager.notifyStateDidChange()
+                log.info("Authorization rejected (\(error.errorDescription)); retrying with backup session token")
+                doAuthorize(triedBackup: true)
+                return
+            }
+
             log.error("Failed to complete authorization flow: \(error.localizedDescription)")
             bluetoothManager.disconnect()
             completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
