@@ -414,6 +414,11 @@ extension MedtrumKitSettingsViewModel {
         hourlyLimit = Int(state.maxHourlyInsulin)
         dailyLimit = Int(state.maxDailyInsulin)
 
+        // Reflect the persisted value; guard avoids re-persisting via didSet on every refresh
+        if useSilentTones != state.useSilentTones {
+            useSilentTones = state.useSilentTones
+        }
+
         if !state.patchId.isEmpty, let patchActivatedAt, let patchGracePeriodFrom {
             let totalLifetime = patchGracePeriodFrom.timeIntervalSince(patchActivatedAt)
             let progress = Date.now.timeIntervalSince1970 - patchActivatedAt.timeIntervalSince1970
