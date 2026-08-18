@@ -40,6 +40,7 @@ public class MedtrumPumpManager: DeviceManager {
         )
 
         bluetooth.pumpManager = self
+        MedtrumLogger.pumpManager = self
     }
 
     /// background sync, doesn't lock loops
