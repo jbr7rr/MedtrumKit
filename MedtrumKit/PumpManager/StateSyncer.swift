@@ -66,39 +66,43 @@ enum StateSyncer {
                     state.basalDose = UnfinalizedDose(suspendStartTime: eventTime)
                     let basalDose = state.basalDose.toDoseEntry()
 
-                    events.append(NewPumpEvent.suspend(dose: basalDose, date: basalDose.startDate))
+                    events.append(NewPumpEvent.suspend(dose: basalDose))
                     if dose.type == .tempBasal {
                         // Record finalized temp basal, resume/basal is already finalized
-                        events.append(NewPumpEvent.tempBasal(dose: dose, date: dose.startDate))
+                        events.append(NewPumpEvent.tempBasal(dose: dose))
                     }
                 }
 
                 state.basalState = .suspended
 
             default:
-                if state.basalDose.type == .suspend || state.basalDose.type == .tempBasal {
-                    // unfinalized dose is finalized!
-                    let eventTime = Date.now
-                    let dose = state.basalDose.toDoseEntry(isMutable: false, endDate: eventTime)
-                    state.basalDose = dose.type == .tempBasal ?
-                        UnfinalizedDose(
-                            basalRate: state.currentBaseBasalRate,
-                            insulinType: state.insulinType
-                        ) :
-                        UnfinalizedDose(
-                            resumeStartTime: eventTime,
-                            insulinType: state.insulinType
-                        )
+                // The patch is delivering on its schedule again
+                let eventTime = Date.now
 
-                    let basalDose = state.basalDose.toDoseEntry(isMutable: true)
-                    events.append(basalDose.type == .resume ?
-                            NewPumpEvent.resume(dose: basalDose, date: basalDose.startDate) :
-                            NewPumpEvent.basal(dose: basalDose, date: basalDose.startDate)
+                switch state.basalDose.type {
+                case .tempBasal:
+                    // A temp basal was running - finalize it, and go back to scheduled basal
+                    let finishedTempBasal = state.basalDose.toDoseEntry(isMutable: false, endDate: eventTime)
+                    state.basalDose = UnfinalizedDose(
+                        basalRate: state.currentBaseBasalRate,
+                        insulinType: state.insulinType
                     )
-                    if dose.type == .tempBasal {
-                        // Record finalized temp basal, suspend is already finalized
-                        events.append(NewPumpEvent.tempBasal(dose: dose, date: dose.startDate))
-                    }
+
+                    events.append(NewPumpEvent.basal(dose: state.basalDose.toDoseEntry()))
+                    // Record finalized temp basal, the scheduled basal above is already finalized
+                    events.append(NewPumpEvent.tempBasal(dose: finishedTempBasal))
+
+                case .suspend:
+                    // Delivery was suspended - report the resume. The suspend is already finalized.
+                    state.basalDose = UnfinalizedDose(
+                        resumeStartTime: eventTime,
+                        insulinType: state.insulinType
+                    )
+
+                    events.append(NewPumpEvent.resume(dose: state.basalDose.toDoseEntry()))
+
+                default:
+                    break
                 }
 
                 state.basalState = .active
@@ -130,7 +134,7 @@ enum StateSyncer {
         } else if duringReconnect {
             pumpManager.checkBolusDone()
         }
-        
+
         if fullSync || !events.isEmpty {
             pumpManager.state.lastSync = syncDate
             pumpManager.emitPumpEvents(events)
