@@ -12,6 +12,7 @@ import Foundation
 final class ConnectAttempt {
     private(set) var completions: [(MedtrumConnectError?) -> Void]
     var timeout: Task<Void, Never>?
+    var timeoutGeneration = 0
     private var reported = false
 
     /// When the deadline currently in flight was armed. `Task.sleep` does not advance while iOS has
