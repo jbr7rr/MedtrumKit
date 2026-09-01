@@ -128,6 +128,8 @@
 		B7189AEA2C15A8CE00703DE2 /* LoopKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B7189AE92C15A8CE00703DE2 /* LoopKit.framework */; };
 		B7D3A8DB2C148CC4002EE003 /* MedtrumKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B7D3A8D02C148CC4002EE003 /* MedtrumKit.framework */; };
 		DD334CAC2F941CC90082A5B5 /* PatchLifetimeFormatting+Helper.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD334CAB2F941CC90082A5B5 /* PatchLifetimeFormatting+Helper.swift */; };
+		E2491D983045D210005BDC18 /* GetRecordPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2491D973045D210005BDC18 /* GetRecordPacket.swift */; };
+		E2491D9A3045D22B005BDC18 /* GetRecordPacketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2491D993045D22B005BDC18 /* GetRecordPacketTests.swift */; };
 		F28B06BC301E269100A59FA7 /* ConnectAttempt.swift in Sources */ = {isa = PBXBuildFile; fileRef = F28B06BB301E268F00A59FA7 /* ConnectAttempt.swift */; };
 /* End PBXBuildFile section */
 
@@ -286,6 +288,8 @@
 		B7D3A8DA2C148CC4002EE003 /* MedtrumKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MedtrumKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B7D3A8ED2C14F0EF002EE003 /* MedtrumKitPlugin.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MedtrumKitPlugin.swift; sourceTree = "<group>"; };
 		DD334CAB2F941CC90082A5B5 /* PatchLifetimeFormatting+Helper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PatchLifetimeFormatting+Helper.swift"; sourceTree = "<group>"; };
+		E2491D973045D210005BDC18 /* GetRecordPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetRecordPacket.swift; sourceTree = "<group>"; };
+		E2491D993045D22B005BDC18 /* GetRecordPacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetRecordPacketTests.swift; sourceTree = "<group>"; };
 		F28B06BB301E268F00A59FA7 /* ConnectAttempt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectAttempt.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -336,6 +340,7 @@
 		3E1532402D6F93DD0020F015 /* Packets */ = {
 			isa = PBXGroup;
 			children = (
+				E2491D973045D210005BDC18 /* GetRecordPacket.swift */,
 				3E77FEBD2D7364A300A15134 /* ActivatePacket.swift */,
 				3E1532432D6F94E20020F015 /* AuthorizePacket.swift */,
 				3EA87D4E2D7A292A007DD959 /* CancelBolusPacket.swift */,
@@ -509,6 +514,7 @@
 		3E77FEBF2D74B16100A15134 /* Packets */ = {
 			isa = PBXGroup;
 			children = (
+				E2491D993045D22B005BDC18 /* GetRecordPacketTests.swift */,
 				3EA87D4A2D7A214B007DD959 /* ActivatePacketTests.swift */,
 				3EA87D4C2D7A25E5007DD959 /* AuthorizePacketTests.swift */,
 				3EA87D502D7A29A1007DD959 /* CancelBolusPacketTests.swift */,
@@ -836,6 +842,7 @@
 				3E1532442D6F94E30020F015 /* AuthorizePacket.swift in Sources */,
 				3E3E78B52F6B2BA700DC4DF4 /* PatchDetailsView.swift in Sources */,
 				3E2F65A7301E320B00705889 /* BackgroundTask.swift in Sources */,
+				E2491D983045D210005BDC18 /* GetRecordPacket.swift in Sources */,
 				3E4961252FEC587C006EF07F /* ManualTempBasalView.swift in Sources */,
 				3E77FEC22D74B39800A15134 /* AlarmSettings.swift in Sources */,
 				3E767D522D67BC2E004B1971 /* MedtrumKitPumpManager+UI.swift in Sources */,
@@ -918,6 +925,7 @@
 				3EA87D512D7A29A4007DD959 /* CancelBolusPacketTests.swift in Sources */,
 				3ED27E0B2D80BC960026488B /* SetPatchPacketTests.swift in Sources */,
 				3EA87D6D2D7A404C007DD959 /* PrimePacketTests.swift in Sources */,
+				E2491D9A3045D22B005BDC18 /* GetRecordPacketTests.swift in Sources */,
 				3EA87D652D7A3DCE007DD959 /* GetTimePacketTest.swift in Sources */,
 				3ED27E192D80CA3B0026488B /* SubscribePacketTests.swift in Sources */,
 				3ED27E112D80C4320026488B /* SetTimePacketTests.swift in Sources */,
