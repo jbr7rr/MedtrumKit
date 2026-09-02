@@ -125,6 +125,8 @@ enum StateSyncer {
             state.patchId = UInt64(storage.patchId).toData(length: 4)
         }
 
+        StateSyncer.trackRecordSequence(syncResponse: syncResponse, state: state)
+
         if let bolusProgress = syncResponse.bolus {
             pumpManager.updateBolusProgress(
                 delivered: bolusProgress.delivered,
@@ -141,6 +143,40 @@ enum StateSyncer {
         }
 
         pumpManager.notifyStateDidChange()
+    }
+
+    /// Track the patch's own record counter, so `reconcileRecords()` knows how far behind it is.
+    /// It arrives in whichever status block carries it (basal or storage) and only moves forward.
+    /// Per patch, so a new patch anchors at its current position instead of replaying its history.
+    private static func trackRecordSequence(syncResponse: SynchronizePacketResponse, state: MedtrumPumpState) {
+        func clamp(_ value: Double) -> UInt16 {
+            UInt16(max(0, min(Double(UInt16.max), value)))
+        }
+
+        var reported: UInt16 = 0
+        if let storage = syncResponse.storage {
+            reported = max(reported, clamp(storage.sequence))
+        }
+        if let basal = syncResponse.basal {
+            reported = max(reported, clamp(basal.sequence))
+        }
+
+        guard reported > 0 else {
+            return
+        }
+
+        guard state.recordSyncPatchId == state.patchId else {
+            state.recordSyncPatchId = state.patchId
+            state.syncedRecordSequence = reported
+            state.currentRecordSequence = reported
+            state.emittedBoluses = []
+            logger.info("Record sync anchored at sequence \(reported) for patch \(state.patchId.hexEncodedString())")
+            return
+        }
+
+        if reported > state.currentRecordSequence {
+            state.currentRecordSequence = reported
+        }
     }
 
     public static func fetchPatchTimeIfStale(pumpManager: MedtrumPumpManager) {

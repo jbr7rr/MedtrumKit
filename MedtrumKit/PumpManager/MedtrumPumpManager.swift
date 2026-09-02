@@ -305,6 +305,8 @@ public extension MedtrumPumpManager {
                     fullSync: true
                 )
 
+                self.reconcileRecords()
+
                 completion?(Date.now)
             }
         }
@@ -380,6 +382,11 @@ public extension MedtrumPumpManager {
             self.emitPumpEvents(events, replacePendingEvents: false)
 
             self.state.bolusDose = doseEntry
+            self.state.rememberEmittedBolus(
+                startDate: doseEntry.startDate,
+                units: units,
+                automatic: activationType.isAutomatic
+            )
             self.notifyStateDidChange()
 
             completion(nil)
@@ -990,6 +997,7 @@ public extension MedtrumPumpManager {
 
         state.bolusDose = nil
         state.lastSync = Date.now
+        state.finalizeEmittedBolus(startDate: doseEntry.startDate, deliveredUnits: delivered)
         notifyStateDidChange()
 
         pumpDelegate.notify { delegate in
@@ -1171,5 +1179,135 @@ public extension MedtrumPumpManager {
                 }
             }
         }
+    }
+
+    /// Most records the reconciliation reads in one sync. Each is a separate round trip holding
+    /// the single BLE command slot (`writePacket`'s semaphore), so a bolus or temp basal issued
+    /// meanwhile waits behind them; ten is ~30 s, a longer backlog drains a page per sync.
+    private static let maxRecordsPerSync = 10
+
+    /// Read the records the patch has written since the last sync and enter any bolus among them
+    /// that never reached the therapy history. Safety net: `enactBolus` emits its pump event only
+    /// after the pump acknowledges the write, so a link that dies in that window leaves insulin
+    /// delivered and nothing recorded. It equally covers a bolus given from another controller.
+    func reconcileRecords() {
+        guard !state.patchId.isEmpty, state.recordSyncPatchId == state.patchId else {
+            return
+        }
+
+        let synced = Int(state.syncedRecordSequence)
+        let current = Int(state.currentRecordSequence)
+        guard synced < current else {
+            return
+        }
+
+        let last = min(current, synced + Self.maxRecordsPerSync)
+        log.info("Reconciling records \(synced + 1)...\(last) of \(current)")
+
+        var events: [NewPumpEvent] = []
+        var brokenRecords = 0
+
+        for sequence in (synced + 1) ... last {
+            let result = bluetooth.write(GetRecordPacket(recordIndex: UInt16(sequence), patchId: state.patchId))
+
+            guard case let .success(data) = result, let record = data as? GetRecordPacketResponse else {
+                // Communication problem rather than a bad record: stop without advancing, so the
+                // same sequence is retried on the next sync instead of being skipped silently.
+                log.warning("Failed to read record \(sequence), retrying on next sync")
+                break
+            }
+
+            switch record.record {
+            case let .bolus(bolus):
+                if let event = pumpEvent(forRecordedBolus: bolus) {
+                    events.append(event)
+                }
+            case .invalidHeader, .truncated:
+                // A single unreadable record must not wedge the sync forever, but a run of them
+                // means something is wrong - bail out and let the next sync try again. The
+                // two-strike threshold is the one value taken from AAPS (`failureCount >= 2`).
+                brokenRecords += 1
+                log.error("Record \(sequence) is unreadable (\(brokenRecords))")
+            default:
+                // Basal, alarm and TDD records are already covered by the live state packets.
+                break
+            }
+
+            state.syncedRecordSequence = UInt16(sequence)
+
+            if brokenRecords >= 2 {
+                break
+            }
+        }
+
+        notifyStateDidChange()
+
+        guard !events.isEmpty else {
+            return
+        }
+
+        log.warning("Recovered \(events.count) unrecorded pump event(s) from patch history")
+        emitPumpEvents(events, replacePendingEvents: false)
+    }
+
+    /// Turn a bolus history record into a pump event, unless this bolus is already accounted for.
+    private func pumpEvent(forRecordedBolus bolus: BolusRecord) -> NewPumpEvent? {
+        // Extended and combi boluses would be guesswork to reconstruct.
+        guard bolus.bolusType == .NORMAL, bolus.bolusNormalDelivered > 0 else {
+            return nil
+        }
+
+        if let emitted = state.emittedBolus(matching: bolus.bolusStartTime) {
+            // Already booked by the live path - but one that stopped early while the app was
+            // disconnected was closed out by `checkBolusDone()` as the full programmed amount.
+            // Re-emitting with the delivered amount corrects it: the host takes the smaller value.
+            guard bolus.bolusNormalDelivered + 0.025 < emitted.units else {
+                return nil
+            }
+
+            log.warning(
+                "Correcting bolus at \(emitted.startDate) from \(emitted.units)U to \(bolus.bolusNormalDelivered)U (patch record)"
+            )
+
+            let dose = DoseEntry(
+                type: .bolus,
+                startDate: emitted.startDate,
+                endDate: emitted.startDate.addingTimeInterval(estimatedDuration(toBolus: bolus.bolusNormalDelivered)),
+                value: emitted.units,
+                unit: .units,
+                deliveredUnits: bolus.bolusNormalDelivered,
+                insulinType: state.insulinType,
+                automatic: emitted.automatic ?? false,
+                isMutable: false
+            )
+
+            return NewPumpEvent.bolus(dose: dose)
+        }
+
+        // A bolus that is still running belongs to the live path, which finalises it itself.
+        if let running = state.bolusDose,
+           abs(running.startDate.timeIntervalSince(bolus.bolusStartTime)) <= MedtrumPumpState.emittedBolusMatchTolerance
+        {
+            return nil
+        }
+
+        let dose = DoseEntry(
+            type: .bolus,
+            startDate: bolus.bolusStartTime,
+            endDate: bolus.bolusStartTime.addingTimeInterval(estimatedDuration(toBolus: bolus.bolusNormalDelivered)),
+            value: bolus.bolusNormalAmount,
+            unit: .units,
+            deliveredUnits: bolus.bolusNormalDelivered,
+            insulinType: state.insulinType,
+            // The record does not say whether this was an SMB, and claiming "automatic" for a
+            // bolus we cannot attribute would misreport it. Manual is the honest default.
+            automatic: false,
+            isMutable: false
+        )
+
+        log.warning("Recovered unrecorded bolus of \(bolus.bolusNormalDelivered)U at \(bolus.bolusStartTime)")
+        state.rememberEmittedBolus(startDate: bolus.bolusStartTime, units: bolus.bolusNormalDelivered, automatic: false)
+
+        return NewPumpEvent.bolus(dose: dose)
     }
 }
