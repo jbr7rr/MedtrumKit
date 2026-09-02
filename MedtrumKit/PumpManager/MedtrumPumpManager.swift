@@ -344,6 +344,15 @@ public extension MedtrumPumpManager {
             return
         }
 
+        // An earlier command whose fate is still unknown must be settled first. Letting a second
+        // one through is how a single lost acknowledgement turns into a double dose: the first
+        // bolus looks failed to the user, so they send it again.
+        guard !state.needsBolusRecovery else {
+            log.error("Refusing bolus: an earlier bolus command is still unresolved")
+            completion(.deviceState(MedtrumConnectError.unacknowledgedBolus))
+            return
+        }
+
         guard state.basalState != .suspended else {
             log.error("Pump is suspended...")
             completion(.deviceState(MedtrumConnectError.isSuspended))
@@ -362,14 +371,34 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            // Write-ahead: record the intent, and get it on disk, before the command can possibly
+            // be executed - `notifyStateDidChange()` is what persists the pump manager state.
+            self.state.pendingBolus = PendingBolus(units: units, startDate: Date.now, isInFlight: true)
+            self.notifyStateDidChange()
+
             let writeResult = self.bluetooth.write(SetBolusPacket(bolusAmount: units))
             if case let .failure(error) = writeResult {
-                self.log.error("Failed to write: \(error.localizedDescription)")
-                self.resetBolusState()
+                // The packet went out over GATT; only the patch's reply is missing. Delivery is
+                // therefore *unknown*, not failed - keep the pending record so the next sync can
+                // settle it against the patch's own log, and block further boluses until it does.
+                self.log.error("Failed to write: \(error.localizedDescription), bolus outcome is unknown")
+                self.state.pendingBolus?.isInFlight = false
+                self.state.bolusDose = nil
+                self.notifyStateDidChange()
+
+                // Ask the patch what happened instead of waiting for the next scheduled sync. The
+                // short delay lets a bolus that did start register: either the state packet still
+                // reports it running, or the patch has written its record by then.
+                DispatchQueue.global(qos: .userInitiated)
+                    .asyncAfter(deadline: .now() + Self.pendingBolusResolveDelay) { [weak self] in
+                        self?.syncPumpData(completion: nil)
+                    }
 
                 completion(.communication(error))
                 return
             }
+
+            self.state.pendingBolus = nil
 
             let doseEntry = UnfinalizedDose(
                 units: units,
@@ -1186,6 +1215,14 @@ public extension MedtrumPumpManager {
     /// meanwhile waits behind them; ten is ~30 s, a longer backlog drains a page per sync.
     private static let maxRecordsPerSync = 10
 
+    /// How long to wait after an unacknowledged bolus command before asking the patch what it did.
+    private static let pendingBolusResolveDelay: TimeInterval = .seconds(5)
+
+    /// How long a bolus command may stay unresolved before the block on further boluses is lifted.
+    /// Only reachable when the patch stops answering entirely - in which case no bolus can be sent
+    /// anyway - so this exists purely so the state can never wedge for good.
+    private static let pendingBolusMaxAge: TimeInterval = .hours(2)
+
     /// Read the records the patch has written since the last sync and enter any bolus among them
     /// that never reached the therapy history. Safety net: `enactBolus` emits its pump event only
     /// after the pump acknowledges the write, so a link that dies in that window leaves insulin
@@ -1198,6 +1235,11 @@ public extension MedtrumPumpManager {
         let synced = Int(state.syncedRecordSequence)
         let current = Int(state.currentRecordSequence)
         guard synced < current else {
+            // Nothing new in the patch's log - and for an unconfirmed bolus command that is itself
+            // the answer: had it been executed, the patch would have written a record.
+            if expirePendingBolusIfCaughtUp() {
+                notifyStateDidChange()
+            }
             return
         }
 
@@ -1219,6 +1261,8 @@ public extension MedtrumPumpManager {
 
             switch record.record {
             case let .bolus(bolus):
+                resolvePendingBolus(against: bolus)
+
                 if let event = pumpEvent(forRecordedBolus: bolus) {
                     events.append(event)
                 }
@@ -1240,6 +1284,7 @@ public extension MedtrumPumpManager {
             }
         }
 
+        expirePendingBolusIfCaughtUp()
         notifyStateDidChange()
 
         guard !events.isEmpty else {
@@ -1248,6 +1293,55 @@ public extension MedtrumPumpManager {
 
         log.warning("Recovered \(events.count) unrecorded pump event(s) from patch history")
         emitPumpEvents(events, replacePendingEvents: false)
+    }
+
+    /// Settle an unconfirmed bolus command against a history record: a bolus the patch logged at
+    /// or after the moment the command was sent means the command did arrive and was executed.
+    /// Cleared here rather than at the end of the scan, because a long backlog drains over several
+    /// syncs and the verdict must not be forgotten in between.
+    private func resolvePendingBolus(against bolus: BolusRecord) {
+        guard let pending = state.pendingBolus, !pending.isInFlight else {
+            return
+        }
+
+        let earliest = pending.startDate.addingTimeInterval(-MedtrumPumpState.emittedBolusMatchTolerance)
+        guard bolus.bolusStartTime >= earliest else {
+            return
+        }
+
+        log.warning(
+            "Unconfirmed bolus of \(pending.units)U was delivered (\(bolus.bolusNormalDelivered)U at \(bolus.bolusStartTime))"
+        )
+        state.pendingBolus = nil
+    }
+
+    /// Close out an unconfirmed bolus command once the patch's log has been read to the end
+    /// without a matching bolus turning up: the command never reached the patch.
+    @discardableResult private func expirePendingBolusIfCaughtUp() -> Bool {
+        guard let pending = state.pendingBolus, !pending.isInFlight else {
+            return false
+        }
+
+        // A bolus that is still running has not been written to the patch's log yet.
+        guard state.bolusState == .noBolus else {
+            return false
+        }
+
+        if state.syncedRecordSequence >= state.currentRecordSequence {
+            log.warning("Unconfirmed bolus of \(pending.units)U was not delivered")
+            state.pendingBolus = nil
+            return true
+        }
+
+        // Escape hatch: never leave the bolus path blocked indefinitely because the patch cannot
+        // be read. Insulin accounting stays uncertain here, hence the loud log.
+        if Date.now.timeIntervalSince(pending.startDate) > Self.pendingBolusMaxAge {
+            log.error("Giving up on unconfirmed bolus of \(pending.units)U — patch history unreadable")
+            state.pendingBolus = nil
+            return true
+        }
+
+        return false
     }
 
     /// Turn a bolus history record into a pump event, unless this bolus is already accounted for.

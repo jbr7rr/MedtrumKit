@@ -7,6 +7,7 @@ public enum MedtrumConnectError: LocalizedError {
     case failedToConnectToDevice
     case isBolussing
     case isSuspended
+    case unacknowledgedBolus
 
     public var errorDescription: String? {
         switch self {
@@ -29,6 +30,11 @@ public enum MedtrumConnectError: LocalizedError {
             return String(localized: "Bolus issue. Patch is already bolussing", comment: "MedtrumError patch bolussing")
         case .isSuspended:
             return String(localized: "Bolus issue. Patch is suspended. Resume delivery", comment: "MedtrumError patch suspended")
+        case .unacknowledgedBolus:
+            return String(
+                localized: "Bolus issue. A previous bolus could not be confirmed. Wait for the patch to be read out",
+                comment: "MedtrumError previous bolus command still unacknowledged"
+            )
         }
     }
 }

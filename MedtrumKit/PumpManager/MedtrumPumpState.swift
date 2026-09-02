@@ -55,6 +55,19 @@ public struct EmittedBolus: Codable {
     public var automatic: Bool?
 }
 
+/// A bolus command that has been handed to the patch but whose outcome is unknown. Written to
+/// disk *before* `SetBolusPacket` goes out, so a link or app death during the command still
+/// leaves a trace of what was attempted.
+public struct PendingBolus: Codable {
+    public var units: Double
+    public var startDate: Date
+
+    /// True only while the write is genuinely in progress. Forced to `false` on reload from
+    /// disk: if the state is being read back, communication is over by definition and whatever
+    /// happened needs resolving (OmniBLE's `commsFinished` trick).
+    public var isInFlight: Bool
+}
+
 public class MedtrumPumpState: RawRepresentable {
     public typealias RawValue = PumpManager.RawStateValue
 
@@ -129,6 +142,15 @@ public class MedtrumPumpState: RawRepresentable {
             bolusDose = nil
         }
 
+        if let rawPending = rawValue["pendingBolus"] as? Data,
+           let decoded = try? JSONDecoder().decode(PendingBolus.self, from: rawPending)
+        {
+            // Reloading the state means the app was restarted, so no write can still be running.
+            pendingBolus = PendingBolus(units: decoded.units, startDate: decoded.startDate, isInFlight: false)
+        } else {
+            pendingBolus = nil
+        }
+
         syncedRecordSequence = rawValue["syncedRecordSequence"] as? UInt16 ?? 0
         currentRecordSequence = rawValue["currentRecordSequence"] as? UInt16 ?? 0
         recordSyncPatchId = rawValue["recordSyncPatchId"] as? Data ?? Data()
@@ -177,6 +199,7 @@ public class MedtrumPumpState: RawRepresentable {
         notificationAfterActivation = .hours(72)
         previousPatch = nil
 
+        pendingBolus = nil
         syncedRecordSequence = 0
         currentRecordSequence = 0
         recordSyncPatchId = Data()
@@ -224,6 +247,10 @@ public class MedtrumPumpState: RawRepresentable {
         value["expiryMode"] = expiryMode.rawValue
         value["notificationAfterActivation"] = notificationAfterActivation
         value["useSilentTones"] = useSilentTones
+
+        if let pendingBolus = pendingBolus, let encoded = try? JSONEncoder().encode(pendingBolus) {
+            value["pendingBolus"] = encoded
+        }
 
         value["syncedRecordSequence"] = syncedRecordSequence
         value["currentRecordSequence"] = currentRecordSequence
@@ -315,6 +342,9 @@ public class MedtrumPumpState: RawRepresentable {
 
     // `currentRecordSequence` is the patch's own record counter, `syncedRecordSequence` how far
     // this driver has read. Both are per patch, hence the `recordSyncPatchId` guard.
+    /// Set while a bolus command's fate is undecided; blocks further boluses until resolved.
+    public var pendingBolus: PendingBolus?
+
     public var syncedRecordSequence: UInt16
     public var currentRecordSequence: UInt16
     public var recordSyncPatchId: Data
@@ -406,6 +436,16 @@ public class MedtrumPumpState: RawRepresentable {
         }
     }
 
+    /// A bolus command is awaiting resolution: its write did not come back, so it is unknown
+    /// whether the patch executed it. No further bolus may be sent until this is settled.
+    public var needsBolusRecovery: Bool {
+        guard let pendingBolus = pendingBolus else {
+            return false
+        }
+
+        return !pendingBolus.isInFlight
+    }
+
     /// How far apart the phone-clock and patch-clock timestamps of one and the same bolus may be
     /// before the record reconciliation stops recognising it. The two clocks are re-synced on every
     /// connection, so the real spread is seconds; the patch also refuses to start a second bolus
@@ -463,7 +503,8 @@ public class MedtrumPumpState: RawRepresentable {
             "* reservoirLevel: \(reservoir)",
             "* lowReservoirWarning: \(String(describing: lowReservoirWarning))",
             "* bolusState: \(bolusState.rawValue)",
-            "* recordSequence: \(syncedRecordSequence)/\(currentRecordSequence)"
+            "* recordSequence: \(syncedRecordSequence)/\(currentRecordSequence)",
+            "* pendingBolus: \(String(describing: pendingBolus))"
         ].joined(separator: "\n")
     }
 }
