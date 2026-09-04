@@ -66,11 +66,10 @@ struct PatchPrimingView: View {
                 }
             }
             Spacer()
-            if !viewModel.primingError.isEmpty {
-                Text(viewModel.primingError)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.red)
-            } else if !viewModel.isPriming {
+
+            statusSection
+
+            if !viewModel.isPriming {
                 Text("Do not attach the patch to the body yet", comment: "Label for warning priming")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.red)
@@ -93,13 +92,50 @@ struct PatchPrimingView: View {
                     Text("Start priming", comment: "label for prime start action")
                 }
             }
-            .disabled(viewModel.isPriming)
+            .disabled(!viewModel.canStartPriming)
             .buttonStyle(ActionButtonStyle())
             .padding([.bottom, .horizontal])
         }
+        .onAppear { viewModel.connect() }
         .listStyle(InsetGroupedListStyle())
         .edgesIgnoringSafeArea(.bottom)
         .navigationBarBackButtonHidden(viewModel.isPriming)
+    }
+
+    @ViewBuilder private var statusSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(viewModel.status.title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(viewModel.status.isFailure ? Color.red : Color.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 0)
+
+                if viewModel.status.showsRetry {
+                    Button(action: { viewModel.connect() }) {
+                        Text("Retry", comment: "label for retrying the connection to the pump base")
+                            .font(.footnote)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+
+            if let detail = viewModel.status.detail {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .padding(.horizontal)
     }
 
     @ViewBuilder func supportImage(_ imageName: String) -> some View {

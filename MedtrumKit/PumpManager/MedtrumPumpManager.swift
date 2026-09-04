@@ -701,6 +701,12 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            guard self.state.pumpState == .filled else {
+                self.log.warning("Patch is not filled yet, refusing to prime. State: \(self.state.pumpState)")
+                completion(.failure(error: .patchNotFilled(state: self.state.pumpState)))
+                return
+            }
+
             let primeResult = self.bluetooth.write(PrimePacket())
             if case let .failure(error) = primeResult {
                 self.log.error("Failed to start priming pump: \(error)")

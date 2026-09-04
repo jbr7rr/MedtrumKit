@@ -14,7 +14,9 @@ enum StateSyncer {
 
         StateSyncer.updatePumpState(syncResponse: syncResponse, pumpManager: pumpManager)
 
-        if let reservoir = syncResponse.reservoir {
+        let hasActivatedPatch = syncResponse.state.rawValue >= PatchState.active.rawValue
+
+        if hasActivatedPatch, let reservoir = syncResponse.reservoir {
             if let lowReservoirWarning = state.lowReservoirWarning,
                state.reservoir > lowReservoirWarning,
                reservoir < lowReservoirWarning
