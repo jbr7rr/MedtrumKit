@@ -58,6 +58,20 @@ class PatchPrimingViewModel: ObservableObject {
     @Published var isConnecting = false
     @Published var patchState: PatchState = .none
 
+    @Published var reservoirLevel: Double?
+
+    let reservoirVolumeFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.roundingMode = .floor
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 0
+        return formatter
+    }()
+
+    func reservoirText(for units: Double) -> String {
+        reservoirVolumeFormatter.string(from: units as NSNumber) ?? ""
+    }
+
     var status: PatchPrimingStatus {
         if isPriming {
             return .priming
@@ -193,6 +207,7 @@ class PatchPrimingViewModel: ObservableObject {
         }
 
         isConnected = pumpManager.state.isConnected
+        reservoirLevel = isConnected ? pumpManager.state.reservoir : nil
 
         let newPatchState = pumpManager.state.pumpState
         if newPatchState != patchState {

@@ -113,6 +113,20 @@ struct PatchPrimingView: View {
 
                 Spacer(minLength: 0)
 
+                if !viewModel.isPriming, let reservoirLevel = viewModel.reservoirLevel {
+                    Text(
+                        String(
+                            format: String(
+                                localized: "Reservoir: %@ U",
+                                comment: "Reservoir level on the priming screen"
+                            ),
+                            viewModel.reservoirText(for: reservoirLevel)
+                        )
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                }
+
                 if viewModel.status.showsRetry {
                     Button(action: { viewModel.connect() }) {
                         Text("Retry", comment: "label for retrying the connection to the pump base")

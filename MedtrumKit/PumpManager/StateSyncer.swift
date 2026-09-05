@@ -16,8 +16,9 @@ enum StateSyncer {
 
         let hasActivatedPatch = syncResponse.state.rawValue >= PatchState.active.rawValue
 
-        if hasActivatedPatch, let reservoir = syncResponse.reservoir {
-            if let lowReservoirWarning = state.lowReservoirWarning,
+        if let reservoir = syncResponse.reservoir {
+            if hasActivatedPatch,
+               let lowReservoirWarning = state.lowReservoirWarning,
                state.reservoir > lowReservoirWarning,
                reservoir < lowReservoirWarning
             {
@@ -27,14 +28,15 @@ enum StateSyncer {
 
             if state.reservoir != reservoir {
                 state.reservoir = reservoir
-                if state.initialReservoir == nil {
-                    state.initialReservoir = state.reservoir
-                }
 
-                if fullSync {
+                if fullSync, hasActivatedPatch {
                     // to prevent spaming the OSAID app with reservoir updates
                     pumpManager.emitReservoirLevel()
                 }
+            }
+
+            if hasActivatedPatch, state.initialReservoir == nil {
+                state.initialReservoir = reservoir
             }
         }
 

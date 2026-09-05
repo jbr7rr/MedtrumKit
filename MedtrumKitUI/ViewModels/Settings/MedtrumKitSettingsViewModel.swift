@@ -1,4 +1,3 @@
-import HealthKit
 import LoopKit
 import LoopKitUI
 import SwiftUI
