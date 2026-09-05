@@ -38,6 +38,12 @@ final class ConnectAttempt {
         completions.append(completion)
     }
 
+    func takeCompletions() -> [(MedtrumConnectError?) -> Void] {
+        let waiting = completions
+        completions = []
+        return waiting
+    }
+
     /// True for the first caller only - whoever gets it owns reporting the result.
     func claim() -> Bool {
         guard !reported else {

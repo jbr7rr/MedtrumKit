@@ -20,7 +20,7 @@ public class MedtrumPumpManager: DeviceManager {
         state.rawValue
     }
 
-    let bluetooth: BluetoothManager
+    var bluetooth: BluetoothManager!
     init(state: MedtrumPumpState) {
         self.state = state
         oldState = MedtrumPumpState(rawValue: state.rawValue)
@@ -40,6 +40,17 @@ public class MedtrumPumpManager: DeviceManager {
         )
 
         bluetooth.pumpManager = self
+        MedtrumLogger.pumpManager = self
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        log.info("MedtrumPumpManager deallocated")
+    }
+
+    public func forgetBluetoothManager() {
+        bluetooth?.pumpManager = nil
+        bluetooth = nil
     }
 
     /// background sync, doesn't lock loops

@@ -1,7 +1,7 @@
 import CoreBluetooth
 
 class BluetoothManager: NSObject, CBCentralManagerDelegate {
-    public var pumpManager: MedtrumPumpManager?
+    public weak var pumpManager: MedtrumPumpManager?
 
     let logger = MedtrumLogger(category: "BluetoothManager")
 
@@ -31,6 +31,10 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         }
 
         return false
+    }
+
+    deinit {
+        logger.info("BluetoothManager deallocated")
     }
 
     override init() {
@@ -133,7 +137,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
             scheduleReconnect()
         }
 
-        for completion in attempt.completions {
+        for completion in attempt.takeCompletions() {
             report(error, to: completion)
         }
     }
@@ -573,12 +577,16 @@ extension BluetoothManager {
         self.peripheral = peripheral
 
         peripheralManager?.cleanup()
-        peripheralManager = PeripheralManager(peripheral, self, pumpManager) { [weak self] error in
+        peripheralManager = PeripheralManager(peripheral, self, pumpManager) { [weak self, weak attempt] error in
             // Called from two queues: the CBPeripheralDelegate callbacks report discovery failures
             // on managerQueue, while the auth flow runs on a global worker and reports from there.
             // Land both on managerQueue, since that is where finish reads and clears the attempt.
             self?.managerQueue.async {
-                self?.finish(attempt, error)
+                guard let self, let attempt else {
+                    return
+                }
+
+                self.finish(attempt, error)
             }
         }
 
