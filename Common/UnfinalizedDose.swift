@@ -159,7 +159,10 @@ public class UnfinalizedDose {
             )
 
         case .tempBasal:
-            let actualEndDate = isMutable ? estimatedEndDate : endDate
+            let actualEndDate = isMutable ?
+                estimatedEndDate :
+                min(endDate, estimatedEndDate) // in case this finalization happens late (TBR ended while not connected to the phone, etc)
+                                               // don't report the end date later than the scheduled end date
             let duration = actualEndDate.timeIntervalSince(startDate)
             return DoseEntry(
                 type: .tempBasal,
@@ -197,7 +200,7 @@ public class UnfinalizedDose {
         let startOfDay = Calendar.current.startOfDay(for: now)
         let nowTimeInterval = now.timeIntervalSince(startOfDay)
 
-        let currentRate = basalSchedule.entries.last(where: { $0.startTime < nowTimeInterval })?.rate ?? 0
+        let currentRate = basalSchedule.entries.last(where: { $0.startTime <= nowTimeInterval })?.rate ?? 0
         return UnfinalizedDose(
             basalRate: currentRate,
             insulinType: insulineType,

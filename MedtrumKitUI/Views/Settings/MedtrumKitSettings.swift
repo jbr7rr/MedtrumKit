@@ -472,6 +472,9 @@ struct MedtrumKitSettings: View {
             }
 
             Section {
+                Toggle(isOn: $viewModel.useSilentTones) {
+                    Text("Enable Silent tones", comment: "silent tones label")
+                }
                 Button(action: { self.isSharePresented = true }) {
                     Text("Share Medtrum patch logs", comment: "Share logs")
                 }
@@ -550,6 +553,7 @@ struct MedtrumKitSettings: View {
                         if let tempRemaining = viewModel.tempBasalRemaining {
                             Text(tempRemaining)
                                 .foregroundColor(.secondary)
+                                .font(.caption)
                         }
                     }
                 }

@@ -52,10 +52,12 @@ public class MedtrumPumpState: RawRepresentable {
         isOnboarded = rawValue["isOnboarded"] as? Bool ?? false
         lastSync = rawValue["lastSync"] as? Date ?? Date.distantPast
         pumpSN = rawValue["pumpSN"] as? Data ?? Data()
+        useSilentTones = rawValue["useSilentTones"] as? Bool ?? false
         lowReservoirWarning = rawValue["lowReservoirWarning"] as? Double
         sessionToken = rawValue["sessionToken"] as? Data ?? Data()
         backupSessionToken = rawValue["backupSessionToken"] as? Data ?? Data()
         patchId = rawValue["patchId"] as? Data ?? Data()
+        peripheralIdentifier = (rawValue["peripheralIdentifier"] as? String).flatMap { UUID(uuidString: $0) }
         patchActivatedAt = rawValue["patchActivatedAt"] as? Date ?? nil
         deviceType = rawValue["deviceType"] as? UInt8 ?? 0
         swVersion = rawValue["swVersion"] as? String ?? "0.0.0"
@@ -105,12 +107,6 @@ public class MedtrumPumpState: RawRepresentable {
             basalState = .active
         }
 
-        if let bolusStateRaw = rawValue["bolusState"] as? BolusState.RawValue {
-            bolusState = BolusState(rawValue: bolusStateRaw) ?? .noBolus
-        } else {
-            bolusState = .noBolus
-        }
-
         if let alarmSettingRaw = rawValue["alarmSetting"] as? AlarmSettings.RawValue {
             alarmSetting = AlarmSettings(rawValue: alarmSettingRaw) ?? .BeepOnly
         } else {
@@ -135,11 +131,13 @@ public class MedtrumPumpState: RawRepresentable {
         isOnboarded = false
         lastSync = Date.distantPast
         pumpSN = Data()
+        useSilentTones = false
         lowReservoirWarning = nil
         bolusDose = nil
         sessionToken = Data()
         backupSessionToken = Data()
         patchId = Data()
+        peripheralIdentifier = nil
         patchActivatedAt = nil
         deviceType = 0
         swVersion = "0.0.0"
@@ -152,7 +150,6 @@ public class MedtrumPumpState: RawRepresentable {
         reservoir = 0
         battery = 0
         basalState = .active
-        bolusState = .noBolus
         alarmSetting = .BeepOnly
         expiryMode = .default
         notificationAfterActivation = .hours(72)
@@ -178,6 +175,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["sessionToken"] = sessionToken
         value["backupSessionToken"] = backupSessionToken
         value["patchId"] = patchId
+        value["peripheralIdentifier"] = peripheralIdentifier?.uuidString
         value["patchActivatedAt"] = patchActivatedAt
         value["patchGracePeriodFrom"] = patchGracePeriodFrom
         value["patchExpiresAt"] = patchExpiresAt
@@ -189,7 +187,6 @@ public class MedtrumPumpState: RawRepresentable {
         value["maxHourlyInsulin"] = maxHourlyInsulin
         value["maxDailyInsulin"] = maxDailyInsulin
         value["basalSchedule"] = basalSchedule.rawValue
-        value["bolusState"] = bolusState.rawValue
         value["initialReservoir"] = initialReservoir
         value["bolusDose"] = bolusDose?.rawValue
         value["basalDose"] = basalDose.rawValue
@@ -199,6 +196,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["alarmSetting"] = alarmSetting.rawValue
         value["expiryMode"] = expiryMode.rawValue
         value["notificationAfterActivation"] = notificationAfterActivation
+        value["useSilentTones"] = useSilentTones
 
         if let previousPatch = previousPatch {
             do {
@@ -214,11 +212,20 @@ public class MedtrumPumpState: RawRepresentable {
     public var lastSync: Date
     public var pumpSN: Data
     public var lowReservoirWarning: Double?
+    public var useSilentTones: Bool
 
     // Patch specific data
     public var sessionToken: Data
     public var backupSessionToken: Data
     public var patchId: Data
+
+    /// The CoreBluetooth identifier of the pump base we are paired with - the base carries the
+    /// radio, so this survives a patch change. iOS keeps it stable, which lets us get a
+    /// `CBPeripheral` back with `retrievePeripherals(withIdentifiers:)` instead of scanning. That
+    /// matters because scanning finds nothing while the app is in the background, whereas
+    /// reconnecting to a known peripheral is honoured there.
+    public var peripheralIdentifier: UUID?
+
     public var patchActivatedAt: Date?
     public var patchGracePeriodFrom: Date? {
         guard let activatedAt = patchActivatedAt else {
@@ -256,13 +263,36 @@ public class MedtrumPumpState: RawRepresentable {
     public var expiryMode: ExpiryMode
     public var notificationAfterActivation: TimeInterval
 
+    /// Resetting "cancelingBolusSince" to nil depends on `ensureConnected` calling the callback.
+    /// `ensureConnected` orphans its completion in a few places.
+    /// So instead of a boolean, we use a date, which "auto-expires" after this timeout.
+    /// This timeout is longer than the 30s write timeout plus a reconnect.
+    private static let cancelBolusTimeout: TimeInterval = .minutes(2)
+
     // **** THESE VALUES SHOULD NOT BE PERSISTED ****
     public var primeProgress: UInt8 = 0
     public var isConnected: Bool = false
+    // if it was persisted, and we happen to restore a date - there will be nothing left to reset it to `nil`
+    public var cancelingBolusSince: Date?
     // **** END ****
 
-    public var bolusState: BolusState
     public var bolusDose: UnfinalizedDose?
+
+    private var isCancelingBolus: Bool {
+        guard let since = cancelingBolusSince else {
+            return false
+        }
+
+        return Date.now.timeIntervalSince(since) < MedtrumPumpState.cancelBolusTimeout
+    }
+
+    public var bolusState: BolusState {
+        if isCancelingBolus {
+            return .canceling
+        }
+
+        return bolusDose == nil ? .noBolus : .inProgress
+    }
 
     // basalState is the basalState from the patch itself
     // Preventing acting on an out-dated basalDose
@@ -284,18 +314,15 @@ public class MedtrumPumpState: RawRepresentable {
     }
 
     var bolusDeliveryState: PumpManagerStatus.BolusState {
-        switch bolusState {
-        case .noBolus:
-            return .noBolus
-        case .canceling:
+        if isCancelingBolus {
             return .canceling
-        case .inProgress:
-            if let dose = bolusDose?.toDoseEntry(isMutable: true) {
-                return .inProgress(dose)
-            }
+        }
 
+        guard let dose = bolusDose?.toDoseEntry(isMutable: true) else {
             return .noBolus
         }
+
+        return .inProgress(dose)
     }
 
     public var currentBaseBasalRate: Double {
@@ -303,7 +330,7 @@ public class MedtrumPumpState: RawRepresentable {
         let startOfDay = Calendar.current.startOfDay(for: now)
         let nowTimeInterval = now.timeIntervalSince(startOfDay)
 
-        return basalSchedule.entries.last(where: { $0.startTime < nowTimeInterval })?.rate ?? 0
+        return basalSchedule.entries.last(where: { $0.startTime <= nowTimeInterval })?.rate ?? 0
     }
 
     public var model: String {

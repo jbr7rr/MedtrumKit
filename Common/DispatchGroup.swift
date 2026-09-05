@@ -13,12 +13,14 @@ final class MedtrumKitDispatchGroup {
     func leave() {
         lock.lock()
         count -= 1
-        guard count >= 0 else {
-            // Prevent crash on multiple leave calls
+        let isBalanced = count >= 0
+        lock.unlock()
+
+        // Prevent crash on multiple leave calls
+        guard isBalanced else {
             return
         }
 
-        lock.unlock()
         group.leave()
     }
 
