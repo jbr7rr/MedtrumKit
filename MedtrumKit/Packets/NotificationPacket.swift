@@ -11,6 +11,23 @@ struct SynchronizePacketResponse: Codable {
     var activeAlarms: [AlarmState]
     var patchAge: UInt64?
     var magnetoPlacement: Double?
+
+    var truncated: Bool = false
+    var invalidPayload: Bool = false
+
+    func validated(expectedPatchId: UInt64 = 0) -> SynchronizePacketResponse {
+        let invalidBolus = bolus.map { !(0 ... 50).contains($0.delivered) } ?? false
+        let invalidBasal = basal.map { !(0 ... 40).contains($0.rate) } ?? false
+        let invalidReservoir = reservoir.map { !(0 ... 400).contains($0) } ?? false
+        let wrongBasalPatch = basal.map { expectedPatchId != 0 && $0.patchId != Double(expectedPatchId) } ?? false
+        let wrongStoragePatch = storage.map { expectedPatchId != 0 && $0.patchId != Double(expectedPatchId) } ?? false
+
+        guard !invalidBolus, !invalidBasal, !invalidReservoir, !wrongBasalPatch, !wrongStoragePatch else {
+            MedtrumLogger(category: "NotificationPacket").error("Rejecting mismatched notification payload")
+            return SynchronizePacketResponse(state: state, activeAlarms: [], invalidPayload: true)
+        }
+        return self
+    }
 }
 
 struct BolusData: Codable {
@@ -58,16 +75,29 @@ let MASK_UNUSED_LEGACY: UInt16 = 0x8000
 class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = SynchronizePacketResponse
 
+    private static let log = MedtrumLogger(category: "NotificationPacket")
+
     let commandType: UInt8 = CommandType.SYNCHRONIZE
-    let mimimumDataSize: Int = 3
+    let mimimumDataSize: Int = 1
 
     func getRequestBytes() -> Data {
         Data()
     }
 
     func parseResponse() -> SynchronizePacketResponse {
-        handle(
-            state: PatchState(rawValue: totalData[0]) ?? .none,
+        guard totalData.count >= mimimumDataSize else {
+            NotificationPacket.log.error("Notification too short: \(totalData.hexEncodedString())")
+            return SynchronizePacketResponse(state: .none, activeAlarms: [], truncated: true)
+        }
+
+        let state = PatchState(rawValue: totalData[0]) ?? .none
+        // a single byte is a valid state-only update, if a field mask follows, both of its bytes must be present
+        guard totalData.count >= 3 else {
+            return SynchronizePacketResponse(state: state, activeAlarms: [], truncated: totalData.count == 2)
+        }
+
+        return handle(
+            state: state,
             fieldMask: UInt16(totalData.subdata(in: 1 ..< 3).toUInt64()),
             syncData: Data(totalData.dropFirst(3))
         )
@@ -91,34 +121,53 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
             magnetoPlacement: nil
         )
 
-        // Proces masks
-        for (mask, handler) in maskHandlers.sorted(by: { $0.key < $1.key }) {
-            if fieldMask & mask != 0 {
-                offset = handler(syncData, offset, &output)
-            }
+        let expectedLength = NotificationPacket.fields
+            .filter { fieldMask & $0.mask != 0 }
+            .reduce(0) { $0 + $1.size }
+
+        // validate the entire mask before parsing, short payload -> keep only the state
+        guard syncData.count >= expectedLength else {
+            NotificationPacket.log.error(
+                "Notification payload too short - mask: \(String(fieldMask, radix: 2)) expects " +
+                    "\(expectedLength) bytes, got \(syncData.count): \(syncData.hexEncodedString())"
+            )
+            output.truncated = true
+            return output
         }
 
-        return output
+        for field in NotificationPacket.fields where fieldMask & field.mask != 0 {
+            guard offset + field.size <= syncData.count else {
+                output.truncated = true
+                break
+            }
+
+            field.parse(syncData, offset, &output)
+            offset += field.size
+        }
+
+        return output.validated()
     }
 
-    private let maskHandlers: [UInt16: (Data, Int, inout SynchronizePacketResponse) -> Int] = [
-        MASK_SUSPEND: { data, offset, output in
+    private struct Field {
+        let mask: UInt16
+        let size: Int
+        let parse: (Data, Int, inout SynchronizePacketResponse) -> Void
+    }
+
+    private static let fields: [Field] = [
+        Field(mask: MASK_SUSPEND, size: 4) { data, offset, output in
             output.suspendTime = Date.fromMedtrumSeconds(data.subdata(in: offset ..< offset + 4).toUInt64())
-            return offset + 4
         },
-        MASK_NORMAL_BOLUS: { data, offset, output in
+        Field(mask: MASK_NORMAL_BOLUS, size: 3) { data, offset, output in
             output.bolus = BolusData(
                 type: data[offset] & 0x7F,
                 completed: data[offset] & 0x80 != 0,
                 delivered: data.subdata(in: offset + 1 ..< offset + 3).toDouble() * 0.05
             )
-            return offset + 3
         },
-        MASK_EXTENDED_BOLUS: { _, offset, _ in
-            // Just ignore this flag
-            offset + 3
-        },
-        MASK_BASAL: { data, offset, output in
+        // Just ignore this flag
+        Field(mask: MASK_EXTENDED_BOLUS, size: 3) { _, _, _ in },
+        Field(mask: MASK_BASAL, size: 12) { data, offset, output in
             let rateDelivery = UInt32(data.subdata(in: offset + 9 ..< offset + 12).toDouble())
             let delivery = rateDelivery >> 12
             let rate = rateDelivery & 0x0FFF
@@ -131,38 +180,31 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
                 rate: Double(rate) * 0.05,
                 delivery: Double(delivery) * 0.05
             )
-
-            return offset + 12
         },
-        MASK_SETUP: { data, offset, output in
+        Field(mask: MASK_SETUP, size: 1) { data, offset, output in
             output.primeProgress = data[offset]
-            return offset + 1
         },
-        MASK_RESERVOIR: { data, offset, output in
+        Field(mask: MASK_RESERVOIR, size: 2) { data, offset, output in
             output.reservoir = data.subdata(in: offset ..< offset + 2).toDouble() * 0.05
-            return offset + 2
         },
-        MASK_START_TIME: { data, offset, output in
+        Field(mask: MASK_START_TIME, size: 4) { data, offset, output in
             output.startTime = Date.fromMedtrumSeconds(data.subdata(in: offset ..< offset + 4).toUInt64())
-            return offset + 4
         },
-        MASK_BATTERY: { data, offset, output in
+        Field(mask: MASK_BATTERY, size: 3) { data, offset, output in
             let value = UInt32(data.subdata(in: offset ..< offset + 3).toUInt64())
 
             output.battery = BatteryData(
                 voltageA: Double(value & 0x0FFF) / 512,
                 voltageB: Double(value >> 12) / 512
             )
-            return offset + 3
         },
-        MASK_STORAGE: { data, offset, output in
+        Field(mask: MASK_STORAGE, size: 4) { data, offset, output in
             output.storage = StorageData(
                 sequence: data.subdata(in: offset ..< offset + 2).toDouble(),
                 patchId: data.subdata(in: offset + 2 ..< offset + 4).toDouble()
             )
-            return offset + 4
         },
-        MASK_ALARM: { data, offset, output in
+        Field(mask: MASK_ALARM, size: 4) { data, offset, output in
             let flags = UInt16(data.subdata(in: offset ..< offset + 2).toUInt64())
             if flags != AlarmState.None.rawValue {
                 // Alarms list available, only need to check the first 3
@@ -175,27 +217,16 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
 
             // Unused parameter
             let _parameter = data.subdata(in: offset + 2 ..< offset + 4)
-            return offset + 4
         },
-        MASK_AGE: { data, offset, output in
+        Field(mask: MASK_AGE, size: 4) { data, offset, output in
             output.patchAge = data.subdata(in: offset ..< offset + 4).toUInt64()
-            return offset + 4
         },
-        MASK_MAGNETO_PLACE: { data, offset, output in
+        Field(mask: MASK_MAGNETO_PLACE, size: 2) { data, offset, output in
             output.magnetoPlacement = data.subdata(in: offset ..< offset + 2).toDouble()
-            return offset + 2
         },
-        MASK_UNUSED_CGM: { _, offset, _ in
-            offset + 5
-        },
-        MASK_UNUSED_COMMAND_CONFIRM: { _, offset, _ in
-            offset + 2
-        },
-        MASK_UNUSED_AUTO_STATUS: { _, offset, _ in
-            offset + 2
-        },
-        MASK_UNUSED_LEGACY: { _, offset, _ in
-            offset + 2
-        }
+        Field(mask: MASK_UNUSED_CGM, size: 5) { _, _, _ in },
+        Field(mask: MASK_UNUSED_COMMAND_CONFIRM, size: 2) { _, _, _ in },
+        Field(mask: MASK_UNUSED_AUTO_STATUS, size: 2) { _, _, _ in },
+        Field(mask: MASK_UNUSED_LEGACY, size: 2) { _, _, _ in }
     ]
 }
