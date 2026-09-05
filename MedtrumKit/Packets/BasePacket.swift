@@ -66,6 +66,12 @@ extension MedtrumBasePacketProtocol {
 
     mutating func decode(_ data: Data) {
         if totalData.isEmpty {
+            // header 6 bytes + CRC byte
+            guard data.count >= 7 else {
+                failed = true
+                return
+            }
+
             if data[1] != commandType {
                 failed = true
             }
@@ -80,6 +86,12 @@ extension MedtrumBasePacketProtocol {
             if initialCrc[0] != data[data.count - 1] {
                 failed = true
             }
+            return
+        }
+
+        // fragment header (4 bytes) + CRC byte
+        guard data.count >= 5 else {
+            failed = true
             return
         }
 
