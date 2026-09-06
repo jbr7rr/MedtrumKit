@@ -4,8 +4,8 @@ class PeripheralManager: NSObject {
     private let log = MedtrumLogger(category: "PeripheralManager")
 
     private let peripheral: CBPeripheral
-    private let bluetoothManager: BluetoothManager
-    private let pumpManager: MedtrumPumpManager
+    private weak var bluetoothManager: BluetoothManager?
+    private weak var pumpManager: MedtrumPumpManager?
     private var completion: ((MedtrumConnectError?) -> Void)?
 
     private var readCharacteristic: CBCharacteristic?
@@ -63,7 +63,7 @@ class PeripheralManager: NSObject {
     }
 
     private func disconnectIfActive() {
-        bluetoothManager.disconnect(ifCurrent: self)
+        bluetoothManager?.disconnect(ifCurrent: self)
     }
 
     var isReady: Bool {
@@ -140,6 +140,10 @@ class PeripheralManager: NSObject {
 extension PeripheralManager {
     // Connect step 1
     private func doAuthorize(useBackupToken: Bool = false) {
+        guard let pumpManager else {
+            return
+        }
+
         let token = !useBackupToken ? pumpManager.state.sessionToken : pumpManager.state.backupSessionToken
         let authData = writePacket(
             AuthorizePacket(pumpSN: pumpManager.state.pumpSN, sessionToken: token)
@@ -216,13 +220,17 @@ extension PeripheralManager {
             isReadyStorage = true
             stateLock.unlock()
 
-            pumpManager.state.isConnected = true
-            pumpManager.notifyStateDidChange()
+            pumpManager?.state.isConnected = true
+            pumpManager?.notifyStateDidChange()
             completion?(nil)
         }
     }
 
     private func parseStateUpdate(_ syncResponse: SynchronizePacketResponse, duringReconnect: Bool, fullSync: Bool) {
+        guard let pumpManager else {
+            return
+        }
+
         guard !isInvalidatedLocked else {
             return
         }
@@ -328,7 +336,7 @@ extension PeripheralManager: CBPeripheralDelegate {
             if data[1] != 0x00 {
                 handleHeartbeat(data: data)
             } else {
-                pumpManager.issueHeartbeatIfNeeded()
+                pumpManager?.issueHeartbeatIfNeeded()
             }
 
             considerFullSync()
@@ -430,6 +438,10 @@ extension PeripheralManager: CBPeripheralDelegate {
     }
 
     private func considerFullSync() {
+        guard let pumpManager else {
+            return
+        }
+
         let age = Date.now.timeIntervalSince(pumpManager.state.lastSync)
         guard age > MedtrumPumpManager.heartbeatSyncFreshnessInterval else {
             return
@@ -472,7 +484,10 @@ extension PeripheralManager: CBPeripheralDelegate {
                 }
 
                 self.parseStateUpdate(syncResponse, duringReconnect: false, fullSync: true)
-                StateSyncer.fetchPatchTimeIfStale(pumpManager: self.pumpManager)
+
+                if let pumpManager = self.pumpManager {
+                    StateSyncer.fetchPatchTimeIfStale(pumpManager: pumpManager)
+                }
             }
         }
     }

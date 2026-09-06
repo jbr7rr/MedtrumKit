@@ -1,38 +1,42 @@
 import Combine
+import LoopKit
 import OSLog
 
 class MedtrumLogger {
     private let logger: Logger
     private let writer = MedtrumLogWriter.shared
+    public static var pumpManager: MedtrumPumpManager?
 
     init(category: String) {
         logger = Logger(subsystem: "org.nightscout.MedtrumKit", category: category)
     }
 
     public func debug(_ msg: String, file: String = #file, _ function: String = #function, _ line: Int = #line) {
-        #if MEDTRUM_DEBUG_LOGS
-            let message = "\(file.file) - \(function)#\(line): \(msg)"
-            logger.debug("\(message, privacy: .public)")
-            writeToFile(message, .debug)
-        #endif
+        let message = "\(file.file) - \(function)#\(line): \(msg)"
+        logger.debug("\(message, privacy: .public)")
+        writeToFile(message, .debug)
+        writeToPumpManager(message, .debug)
     }
 
     public func info(_ msg: String, file: String = #file, _ function: String = #function, _ line: Int = #line) {
         let message = "\(file.file) - \(function)#\(line): \(msg)"
         logger.info("\(message, privacy: .public)")
         writeToFile(message, .info)
+        writeToPumpManager(message, .info)
     }
 
     public func warning(_ msg: String, file: String = #file, _ function: String = #function, _ line: Int = #line) {
         let message = "\(file.file) - \(function)#\(line): \(msg)"
         logger.warning("\(message, privacy: .public)")
         writeToFile(message, .notice)
+        writeToPumpManager(message, .notice)
     }
 
     public func error(_ msg: String, file: String = #file, _ function: String = #function, _ line: Int = #line) {
         let message = "\(file.file) - \(function)#\(line): \(msg)"
         logger.error("\(message, privacy: .public)")
         writeToFile(message, .error)
+        writeToPumpManager(message, .error)
     }
 
     func getDebugLogs() -> [URL] {
@@ -41,6 +45,25 @@ class MedtrumLogger {
 
     private func writeToFile(_ msg: String, _ type: OSLogEntryLog.Level) {
         writer.append(msg, level: getLevel(type))
+    }
+    
+    private func writeToPumpManager(_ msg: String, _ type: OSLogEntryLog.Level) {
+        guard let pumpManager = Self.pumpManager else {
+            return
+        }
+        
+        pumpManager.pumpDelegate.notify { delegate in
+            guard let delegate else {
+                return
+            }
+            
+            delegate.deviceManager(
+                pumpManager,
+                logEventForDeviceIdentifier: pumpManager.state.pumpSN.hexEncodedString(),
+                type: .delegate,
+                message: "[\(self.getLevel(type))] \(msg)",
+            ) { _ in }
+        }
     }
 
     private func getLevel(_ type: OSLogEntryLog.Level) -> String {
