@@ -45,6 +45,29 @@ public struct PreviousPatch: Codable {
     public var reservoirLevel: Double?
 }
 
+/// A bolus this driver already emitted. The live path timestamps with the phone clock, a record
+/// with the patch's, and the host de-duplicates on exact `(timestamp, type)` - hence the tolerance.
+public struct EmittedBolus: Codable {
+    public var startDate: Date
+    public var units: Double
+    /// Whether the live path booked it as an SMB. Optional so fingerprints written before this
+    /// field existed still decode.
+    public var automatic: Bool?
+}
+
+/// A bolus command that has been handed to the patch but whose outcome is unknown. Written to
+/// disk *before* `SetBolusPacket` goes out, so a link or app death during the command still
+/// leaves a trace of what was attempted.
+public struct PendingBolus: Codable {
+    public var units: Double
+    public var startDate: Date
+
+    /// True only while the write is genuinely in progress. Forced to `false` on reload from
+    /// disk: if the state is being read back, communication is over by definition and whatever
+    /// happened needs resolving (OmniBLE's `commsFinished` trick).
+    public var isInFlight: Bool
+}
+
 public class MedtrumPumpState: RawRepresentable {
     public typealias RawValue = PumpManager.RawStateValue
 
@@ -119,6 +142,27 @@ public class MedtrumPumpState: RawRepresentable {
             bolusDose = nil
         }
 
+        if let rawPending = rawValue["pendingBolus"] as? Data,
+           let decoded = try? JSONDecoder().decode(PendingBolus.self, from: rawPending)
+        {
+            // Reloading the state means the app was restarted, so no write can still be running.
+            pendingBolus = PendingBolus(units: decoded.units, startDate: decoded.startDate, isInFlight: false)
+        } else {
+            pendingBolus = nil
+        }
+
+        syncedRecordSequence = rawValue["syncedRecordSequence"] as? UInt16 ?? 0
+        currentRecordSequence = rawValue["currentRecordSequence"] as? UInt16 ?? 0
+        recordSyncPatchId = rawValue["recordSyncPatchId"] as? Data ?? Data()
+
+        if let rawEmitted = rawValue["emittedBoluses"] as? Data,
+           let decoded = try? JSONDecoder().decode([EmittedBolus].self, from: rawEmitted)
+        {
+            emittedBoluses = decoded
+        } else {
+            emittedBoluses = []
+        }
+
         if let rawDoseEntry = rawValue["basalDose"] as? UnfinalizedDose.RawValue {
             basalDose = UnfinalizedDose(rawValue: rawDoseEntry) ?? UnfinalizedDose
                 .defaultBasalDose(basalSchedule: basalSchedule, insulineType: insulinType)
@@ -154,6 +198,12 @@ public class MedtrumPumpState: RawRepresentable {
         expiryMode = .default
         notificationAfterActivation = .hours(72)
         previousPatch = nil
+
+        pendingBolus = nil
+        syncedRecordSequence = 0
+        currentRecordSequence = 0
+        recordSyncPatchId = Data()
+        emittedBoluses = []
 
         if let basal = basal {
             basalSchedule = BasalSchedule(entries: basal.items)
@@ -197,6 +247,18 @@ public class MedtrumPumpState: RawRepresentable {
         value["expiryMode"] = expiryMode.rawValue
         value["notificationAfterActivation"] = notificationAfterActivation
         value["useSilentTones"] = useSilentTones
+
+        if let pendingBolus = pendingBolus, let encoded = try? JSONEncoder().encode(pendingBolus) {
+            value["pendingBolus"] = encoded
+        }
+
+        value["syncedRecordSequence"] = syncedRecordSequence
+        value["currentRecordSequence"] = currentRecordSequence
+        value["recordSyncPatchId"] = recordSyncPatchId
+
+        if let encoded = try? JSONEncoder().encode(emittedBoluses) {
+            value["emittedBoluses"] = encoded
+        }
 
         if let previousPatch = previousPatch {
             do {
@@ -277,6 +339,16 @@ public class MedtrumPumpState: RawRepresentable {
     // **** END ****
 
     public var bolusDose: UnfinalizedDose?
+
+    // `currentRecordSequence` is the patch's own record counter, `syncedRecordSequence` how far
+    // this driver has read. Both are per patch, hence the `recordSyncPatchId` guard.
+    /// Set while a bolus command's fate is undecided; blocks further boluses until resolved.
+    public var pendingBolus: PendingBolus?
+
+    public var syncedRecordSequence: UInt16
+    public var currentRecordSequence: UInt16
+    public var recordSyncPatchId: Data
+    public var emittedBoluses: [EmittedBolus]
 
     private var isCancelingBolus: Bool {
         guard let since = cancelingBolusSince else {
@@ -364,6 +436,49 @@ public class MedtrumPumpState: RawRepresentable {
         }
     }
 
+    /// A bolus command is awaiting resolution: its write did not come back, so it is unknown
+    /// whether the patch executed it. No further bolus may be sent until this is settled.
+    public var needsBolusRecovery: Bool {
+        guard let pendingBolus = pendingBolus else {
+            return false
+        }
+
+        return !pendingBolus.isInFlight
+    }
+
+    /// How far apart the phone-clock and patch-clock timestamps of one and the same bolus may be
+    /// before the record reconciliation stops recognising it. The two clocks are re-synced on every
+    /// connection, so the real spread is seconds; the patch also refuses to start a second bolus
+    /// while one is running, so no two boluses can legitimately fall inside this window.
+    static let emittedBolusMatchTolerance: TimeInterval = .minutes(1.5)
+
+    private static let emittedBolusRetention: TimeInterval = .hours(3)
+
+    func rememberEmittedBolus(startDate: Date, units: Double, automatic: Bool) {
+        let cutoff = Date.now.addingTimeInterval(-Self.emittedBolusRetention)
+        emittedBoluses = emittedBoluses.filter { $0.startDate > cutoff }
+        emittedBoluses.append(EmittedBolus(startDate: startDate, units: units, automatic: automatic))
+    }
+
+    /// The bolus this driver already emitted that a record starting at `startDate` (patch clock)
+    /// belongs to. Matched on time alone, deliberately: a bolus cancelled part-way is stored with
+    /// the programmed amount but recorded with the delivered one - comparing amounts would miss it.
+    func emittedBolus(matching startDate: Date) -> EmittedBolus? {
+        emittedBoluses.first { abs($0.startDate.timeIntervalSince(startDate)) <= Self.emittedBolusMatchTolerance }
+    }
+
+    func matchesEmittedBolus(startDate: Date) -> Bool {
+        emittedBolus(matching: startDate) != nil
+    }
+
+    /// Update a fingerprint once the live path knows what was actually delivered.
+    func finalizeEmittedBolus(startDate: Date, deliveredUnits: Double) {
+        guard let index = emittedBoluses.firstIndex(where: { $0.startDate == startDate }) else {
+            return
+        }
+        emittedBoluses[index].units = deliveredUnits
+    }
+
     func shouldShowTimeWarning() -> Bool {
         // Allow a 15 sec diff in time
         abs(pumpTimeSyncedAt.timeIntervalSince1970 - pumpTime.timeIntervalSince1970) > 15
@@ -387,7 +502,9 @@ public class MedtrumPumpState: RawRepresentable {
             "* insulinType: \(String(describing: insulinType))",
             "* reservoirLevel: \(reservoir)",
             "* lowReservoirWarning: \(String(describing: lowReservoirWarning))",
-            "* bolusState: \(bolusState.rawValue)"
+            "* bolusState: \(bolusState.rawValue)",
+            "* recordSequence: \(syncedRecordSequence)/\(currentRecordSequence)",
+            "* pendingBolus: \(String(describing: pendingBolus))"
         ].joined(separator: "\n")
     }
 }

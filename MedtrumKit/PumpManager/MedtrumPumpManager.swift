@@ -241,7 +241,11 @@ public extension MedtrumPumpManager {
     func ensureCurrentPumpData(completion: ((Date?) -> Void)?) {
         let age = Date.now.timeIntervalSince(state.lastSync)
 
+        // An unresolved bolus command is itself staleness: only the record scan can settle it,
+        // and heartbeat events keep `lastSync` fresh precisely while the loop is active - the
+        // more it doses around the blocked bolus, the fresher the state looks.
         guard let activatedAt = state.patchActivatedAt,
+              state.needsBolusRecovery ||
               age > Self.loopSyncFreshnessInterval ||
               Date.now.timeIntervalSince(activatedAt) < .minutes(4)
         else {
@@ -316,6 +320,8 @@ public extension MedtrumPumpManager {
                     fullSync: true
                 )
 
+                self.reconcileRecords()
+
                 completion?(Date.now)
             }
         }
@@ -353,6 +359,15 @@ public extension MedtrumPumpManager {
             return
         }
 
+        // An earlier command whose fate is still unknown must be settled first. Letting a second
+        // one through is how a single lost acknowledgement turns into a double dose: the first
+        // bolus looks failed to the user, so they send it again.
+        guard !state.needsBolusRecovery else {
+            log.error("Refusing bolus: an earlier bolus command is still unresolved")
+            completion(.deviceState(MedtrumConnectError.unacknowledgedBolus))
+            return
+        }
+
         guard state.basalState != .suspended else {
             log.error("Pump is suspended...")
             completion(.deviceState(MedtrumConnectError.isSuspended))
@@ -371,14 +386,31 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            // Write-ahead: record the intent, and get it on disk, before the command can possibly
+            // be executed - `notifyStateDidChange()` is what persists the pump manager state.
+            self.state.pendingBolus = PendingBolus(units: units, startDate: Date.now, isInFlight: true)
+            self.notifyStateDidChange()
+
             let writeResult = self.bluetooth.write(SetBolusPacket(bolusAmount: units))
             if case let .failure(error) = writeResult {
-                self.log.error("Failed to write: \(error.localizedDescription)")
-                self.resetBolusState()
+                // The packet went out over GATT; only the patch's reply is missing. Delivery is
+                // therefore *unknown*, not failed - keep the pending record so the next sync can
+                // settle it against the patch's own log, and block further boluses until it does.
+                self.log.error("Failed to write: \(error.localizedDescription), bolus outcome is unknown")
+                self.state.pendingBolus?.isInFlight = false
+                self.state.bolusDose = nil
+                self.notifyStateDidChange()
+
+                // Ask the patch what happened instead of waiting for the next scheduled sync. The
+                // short delay lets a bolus that did start register: either the state packet still
+                // reports it running, or the patch has written its record by then.
+                self.scheduleBolusResolution()
 
                 completion(.communication(error))
                 return
             }
+
+            self.state.pendingBolus = nil
 
             let doseEntry = UnfinalizedDose(
                 units: units,
@@ -391,6 +423,11 @@ public extension MedtrumPumpManager {
             self.emitPumpEvents(events, replacePendingEvents: false)
 
             self.state.bolusDose = doseEntry
+            self.state.rememberEmittedBolus(
+                startDate: doseEntry.startDate,
+                units: units,
+                automatic: activationType.isAutomatic
+            )
             self.notifyStateDidChange()
 
             completion(nil)
@@ -1001,6 +1038,7 @@ public extension MedtrumPumpManager {
 
         state.bolusDose = nil
         state.lastSync = Date.now
+        state.finalizeEmittedBolus(startDate: doseEntry.startDate, deliveredUnits: delivered)
         notifyStateDidChange()
 
         pumpDelegate.notify { delegate in
@@ -1182,5 +1220,225 @@ public extension MedtrumPumpManager {
                 }
             }
         }
+    }
+
+    /// Most records the reconciliation reads in one sync. Each is a separate round trip holding
+    /// the single BLE command slot (`writePacket`'s semaphore), so a bolus or temp basal issued
+    /// meanwhile waits behind them; ten is ~30 s, a longer backlog drains a page per sync.
+    private static let maxRecordsPerSync = 10
+
+    /// How long to wait after an unacknowledged bolus command before asking the patch what it did.
+    private static let pendingBolusResolveDelay: TimeInterval = .seconds(5)
+
+    /// Spacing and cap for the follow-up attempts. After these, `ensureCurrentPumpData`'s
+    /// staleness bypass keeps resolving on the loop cadence.
+    private static let pendingBolusRetryDelay: TimeInterval = .seconds(30)
+    private static let pendingBolusResolveAttempts = 6
+
+    /// Read back the patch until the pending bolus is settled - the first attempt after
+    /// `pendingBolusResolveDelay`, retries spaced by `pendingBolusRetryDelay`. A single attempt
+    /// is not enough: it can fire into a reconnect still in progress and die with it, and a
+    /// large record backlog drains only `maxRecordsPerSync` per call.
+    private func scheduleBolusResolution(attempt: Int = 0) {
+        let delay = attempt == 0 ? Self.pendingBolusResolveDelay : Self.pendingBolusRetryDelay
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.state.needsBolusRecovery else {
+                return
+            }
+
+            self.syncPumpData { _ in
+                guard self.state.needsBolusRecovery, attempt + 1 < Self.pendingBolusResolveAttempts else {
+                    return
+                }
+                self.scheduleBolusResolution(attempt: attempt + 1)
+            }
+        }
+    }
+
+    /// How long a bolus command may stay unresolved before the block on further boluses is lifted.
+    /// Only reachable when the patch stops answering entirely - in which case no bolus can be sent
+    /// anyway - so this exists purely so the state can never wedge for good.
+    private static let pendingBolusMaxAge: TimeInterval = .hours(2)
+
+    /// Read the records the patch has written since the last sync and enter any bolus among them
+    /// that never reached the therapy history. Safety net: `enactBolus` emits its pump event only
+    /// after the pump acknowledges the write, so a link that dies in that window leaves insulin
+    /// delivered and nothing recorded. It equally covers a bolus given from another controller.
+    func reconcileRecords() {
+        guard !state.patchId.isEmpty, state.recordSyncPatchId == state.patchId else {
+            return
+        }
+
+        let synced = Int(state.syncedRecordSequence)
+        let current = Int(state.currentRecordSequence)
+        guard synced < current else {
+            // Nothing new in the patch's log - and for an unconfirmed bolus command that is itself
+            // the answer: had it been executed, the patch would have written a record.
+            if expirePendingBolusIfCaughtUp() {
+                notifyStateDidChange()
+            }
+            return
+        }
+
+        let last = min(current, synced + Self.maxRecordsPerSync)
+        log.info("Reconciling records \(synced + 1)...\(last) of \(current)")
+
+        var events: [NewPumpEvent] = []
+        var brokenRecords = 0
+
+        for sequence in (synced + 1) ... last {
+            let result = bluetooth.write(GetRecordPacket(recordIndex: UInt16(sequence), patchId: state.patchId))
+
+            guard case let .success(data) = result, let record = data as? GetRecordPacketResponse else {
+                // Communication problem rather than a bad record: stop without advancing, so the
+                // same sequence is retried on the next sync instead of being skipped silently.
+                log.warning("Failed to read record \(sequence), retrying on next sync")
+                break
+            }
+
+            switch record.record {
+            case let .bolus(bolus):
+                resolvePendingBolus(against: bolus)
+
+                if let event = pumpEvent(forRecordedBolus: bolus) {
+                    events.append(event)
+                }
+            case .invalidHeader, .truncated:
+                // A single unreadable record must not wedge the sync forever, but a run of them
+                // means something is wrong - bail out and let the next sync try again. The
+                // two-strike threshold is the one value taken from AAPS (`failureCount >= 2`).
+                brokenRecords += 1
+                log.error("Record \(sequence) is unreadable (\(brokenRecords))")
+            default:
+                // Basal, alarm and TDD records are already covered by the live state packets.
+                break
+            }
+
+            state.syncedRecordSequence = UInt16(sequence)
+
+            if brokenRecords >= 2 {
+                break
+            }
+        }
+
+        expirePendingBolusIfCaughtUp()
+        notifyStateDidChange()
+
+        guard !events.isEmpty else {
+            return
+        }
+
+        log.warning("Recovered \(events.count) unrecorded pump event(s) from patch history")
+        emitPumpEvents(events, replacePendingEvents: false)
+    }
+
+    /// Settle an unconfirmed bolus command against a history record: a bolus the patch logged at
+    /// or after the moment the command was sent means the command did arrive and was executed.
+    /// Cleared here rather than at the end of the scan, because a long backlog drains over several
+    /// syncs and the verdict must not be forgotten in between.
+    private func resolvePendingBolus(against bolus: BolusRecord) {
+        guard let pending = state.pendingBolus, !pending.isInFlight else {
+            return
+        }
+
+        let earliest = pending.startDate.addingTimeInterval(-MedtrumPumpState.emittedBolusMatchTolerance)
+        guard bolus.bolusStartTime >= earliest else {
+            return
+        }
+
+        log.warning(
+            "Unconfirmed bolus of \(pending.units)U was delivered (\(bolus.bolusNormalDelivered)U at \(bolus.bolusStartTime))"
+        )
+        state.pendingBolus = nil
+    }
+
+    /// Close out an unconfirmed bolus command once the patch's log has been read to the end
+    /// without a matching bolus turning up: the command never reached the patch.
+    @discardableResult private func expirePendingBolusIfCaughtUp() -> Bool {
+        guard let pending = state.pendingBolus, !pending.isInFlight else {
+            return false
+        }
+
+        // A bolus that is still running has not been written to the patch's log yet.
+        guard state.bolusState == .noBolus else {
+            return false
+        }
+
+        if state.syncedRecordSequence >= state.currentRecordSequence {
+            log.warning("Unconfirmed bolus of \(pending.units)U was not delivered")
+            state.pendingBolus = nil
+            return true
+        }
+
+        // Escape hatch: never leave the bolus path blocked indefinitely because the patch cannot
+        // be read. Insulin accounting stays uncertain here, hence the loud log.
+        if Date.now.timeIntervalSince(pending.startDate) > Self.pendingBolusMaxAge {
+            log.error("Giving up on unconfirmed bolus of \(pending.units)U — patch history unreadable")
+            state.pendingBolus = nil
+            return true
+        }
+
+        return false
+    }
+
+    /// Turn a bolus history record into a pump event, unless this bolus is already accounted for.
+    private func pumpEvent(forRecordedBolus bolus: BolusRecord) -> NewPumpEvent? {
+        // Extended and combi boluses would be guesswork to reconstruct.
+        guard bolus.bolusType == .NORMAL, bolus.bolusNormalDelivered > 0 else {
+            return nil
+        }
+
+        if let emitted = state.emittedBolus(matching: bolus.bolusStartTime) {
+            // Already booked by the live path - but one that stopped early while the app was
+            // disconnected was closed out by `checkBolusDone()` as the full programmed amount.
+            // Re-emitting with the delivered amount corrects it: the host takes the smaller value.
+            guard bolus.bolusNormalDelivered + 0.025 < emitted.units else {
+                return nil
+            }
+
+            log.warning(
+                "Correcting bolus at \(emitted.startDate) from \(emitted.units)U to \(bolus.bolusNormalDelivered)U (patch record)"
+            )
+
+            let dose = DoseEntry(
+                type: .bolus,
+                startDate: emitted.startDate,
+                endDate: emitted.startDate.addingTimeInterval(estimatedDuration(toBolus: bolus.bolusNormalDelivered)),
+                value: emitted.units,
+                unit: .units,
+                deliveredUnits: bolus.bolusNormalDelivered,
+                insulinType: state.insulinType,
+                automatic: emitted.automatic ?? false,
+                isMutable: false
+            )
+
+            return NewPumpEvent.bolus(dose: dose)
+        }
+
+        // A bolus that is still running belongs to the live path, which finalises it itself.
+        if let running = state.bolusDose,
+           abs(running.startDate.timeIntervalSince(bolus.bolusStartTime)) <= MedtrumPumpState.emittedBolusMatchTolerance
+        {
+            return nil
+        }
+
+        let dose = DoseEntry(
+            type: .bolus,
+            startDate: bolus.bolusStartTime,
+            endDate: bolus.bolusStartTime.addingTimeInterval(estimatedDuration(toBolus: bolus.bolusNormalDelivered)),
+            value: bolus.bolusNormalAmount,
+            unit: .units,
+            deliveredUnits: bolus.bolusNormalDelivered,
+            insulinType: state.insulinType,
+            // The record does not say whether this was an SMB, and claiming "automatic" for a
+            // bolus we cannot attribute would misreport it. Manual is the honest default.
+            automatic: false,
+            isMutable: false
+        )
+
+        log.warning("Recovered unrecorded bolus of \(bolus.bolusNormalDelivered)U at \(bolus.bolusStartTime)")
+        state.rememberEmittedBolus(startDate: bolus.bolusStartTime, units: bolus.bolusNormalDelivered, automatic: false)
+
+        return NewPumpEvent.bolus(dose: dose)
     }
 }
