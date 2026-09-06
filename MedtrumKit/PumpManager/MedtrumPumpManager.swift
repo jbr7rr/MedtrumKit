@@ -241,7 +241,11 @@ public extension MedtrumPumpManager {
     func ensureCurrentPumpData(completion: ((Date?) -> Void)?) {
         let age = Date.now.timeIntervalSince(state.lastSync)
 
+        // An unresolved bolus command is itself staleness: only the record scan can settle it,
+        // and heartbeat events keep `lastSync` fresh precisely while the loop is active - the
+        // more it doses around the blocked bolus, the fresher the state looks.
         guard let activatedAt = state.patchActivatedAt,
+              state.needsBolusRecovery ||
               age > Self.loopSyncFreshnessInterval ||
               Date.now.timeIntervalSince(activatedAt) < .minutes(4)
         else {
@@ -400,10 +404,7 @@ public extension MedtrumPumpManager {
                 // Ask the patch what happened instead of waiting for the next scheduled sync. The
                 // short delay lets a bolus that did start register: either the state packet still
                 // reports it running, or the patch has written its record by then.
-                DispatchQueue.global(qos: .userInitiated)
-                    .asyncAfter(deadline: .now() + Self.pendingBolusResolveDelay) { [weak self] in
-                        self?.syncPumpData(completion: nil)
-                    }
+                self.scheduleBolusResolution()
 
                 completion(.communication(error))
                 return
@@ -1228,6 +1229,31 @@ public extension MedtrumPumpManager {
 
     /// How long to wait after an unacknowledged bolus command before asking the patch what it did.
     private static let pendingBolusResolveDelay: TimeInterval = .seconds(5)
+
+    /// Spacing and cap for the follow-up attempts. After these, `ensureCurrentPumpData`'s
+    /// staleness bypass keeps resolving on the loop cadence.
+    private static let pendingBolusRetryDelay: TimeInterval = .seconds(30)
+    private static let pendingBolusResolveAttempts = 6
+
+    /// Read back the patch until the pending bolus is settled - the first attempt after
+    /// `pendingBolusResolveDelay`, retries spaced by `pendingBolusRetryDelay`. A single attempt
+    /// is not enough: it can fire into a reconnect still in progress and die with it, and a
+    /// large record backlog drains only `maxRecordsPerSync` per call.
+    private func scheduleBolusResolution(attempt: Int = 0) {
+        let delay = attempt == 0 ? Self.pendingBolusResolveDelay : Self.pendingBolusRetryDelay
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.state.needsBolusRecovery else {
+                return
+            }
+
+            self.syncPumpData { _ in
+                guard self.state.needsBolusRecovery, attempt + 1 < Self.pendingBolusResolveAttempts else {
+                    return
+                }
+                self.scheduleBolusResolution(attempt: attempt + 1)
+            }
+        }
+    }
 
     /// How long a bolus command may stay unresolved before the block on further boluses is lifted.
     /// Only reachable when the patch stops answering entirely - in which case no bolus can be sent
