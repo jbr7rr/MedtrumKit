@@ -76,3 +76,93 @@ public enum PatchState: UInt8, Codable {
         }
     }
 }
+
+extension PatchState {
+    enum Phase {
+        case setup
+        case running
+        case terminated
+    }
+
+    var phase: Phase {
+        switch self {
+        case .ejected,
+             .ejecting,
+             .filled,
+             .idle,
+             .none,
+             .primed,
+             .priming:
+            return .setup
+
+        case .active,
+             .active_alt,
+             .autoSuspended,
+             .dailyMaxSuspended,
+             .hourlyMaxSuspended,
+             .lowBgSuspended,
+             .lowBgSuspended2,
+             .paused,
+             .suspended:
+            return .running
+
+        case .baseFault,
+             .batteryOut,
+             .expired,
+             .noCalibration,
+             .occlusion,
+             .patchFault,
+             .patchFaultd2,
+             .reservoirEmpty,
+             .stopped:
+            return .terminated
+        }
+    }
+
+    var isSetup: Bool { phase == .setup }
+
+    var isRunning: Bool { phase == .running }
+
+    var isTerminated: Bool { phase == .terminated }
+
+    var isSuspended: Bool {
+        switch self {
+        case .autoSuspended,
+             .dailyMaxSuspended,
+             .hourlyMaxSuspended,
+             .lowBgSuspended,
+             .lowBgSuspended2,
+             .paused,
+             .suspended:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isBeforePriming: Bool {
+        switch self {
+        case .filled,
+             .idle,
+             .none:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var hasCompletedPriming: Bool {
+        switch self {
+        case .ejected,
+             .ejecting,
+             .primed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isAwaitingActivation: Bool {
+        self != .none && isSetup
+    }
+}

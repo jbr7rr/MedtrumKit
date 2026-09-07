@@ -462,7 +462,7 @@ extension BluetoothManager {
             return
         }
 
-        if !isConnectedOnQueue, pumpManager?.state.pumpState == .active {
+        if !isConnectedOnQueue, pumpManager?.state.pumpState.isRunning == true {
             ensureConnectedOnQueue { error in
                 if let error = error {
                     self.logger.error("Failed to auto reconnect on boot: \(error)")
