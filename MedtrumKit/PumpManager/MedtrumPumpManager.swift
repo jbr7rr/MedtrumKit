@@ -20,11 +20,25 @@ public class MedtrumPumpManager: DeviceManager {
         state.rawValue
     }
 
+    private let logDeviceIdentifierLock = NSLock()
+    private var logDeviceIdentifierStorage = ""
+
+    /// for host-app logging
+    var logDeviceIdentifier: String {
+        logDeviceIdentifierLock.withLock { logDeviceIdentifierStorage }
+    }
+
+    private func refreshLogDeviceIdentifier() {
+        let identifier = state.pumpSN.hexEncodedString()
+        logDeviceIdentifierLock.withLock { logDeviceIdentifierStorage = identifier }
+    }
+
     var bluetooth: BluetoothManager!
     init(state: MedtrumPumpState) {
         self.state = state
         oldState = MedtrumPumpState(rawValue: state.rawValue)
         bluetooth = BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
+        refreshLogDeviceIdentifier()
         
         NotificationCenter.default.addObserver(
             self,
@@ -959,6 +973,8 @@ public extension MedtrumPumpManager {
     }
 
     func notifyStateDidChange() {
+        refreshLogDeviceIdentifier()
+
         DispatchQueue.main.async {
             let status = self.status(self.state)
             let oldStatus = self.status(self.oldState)
@@ -1119,7 +1135,7 @@ public extension MedtrumPumpManager {
         // Not dispatching here; if delegate queue is blocked, timestamps will be delayed
         pumpManagerDelegate?.deviceManager(
             self,
-            logEventForDeviceIdentifier: state.pumpSN.hexEncodedString(),
+            logEventForDeviceIdentifier: logDeviceIdentifier,
             type: type,
             message: message,
             completion: nil
