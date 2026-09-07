@@ -24,7 +24,7 @@ public class MedtrumPumpManager: DeviceManager {
     init(state: MedtrumPumpState) {
         self.state = state
         oldState = MedtrumPumpState(rawValue: state.rawValue)
-        bluetooth = BluetoothManager()
+        bluetooth = BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
         
         NotificationCenter.default.addObserver(
             self,

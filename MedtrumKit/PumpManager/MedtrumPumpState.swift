@@ -210,7 +210,16 @@ public class MedtrumPumpState: RawRepresentable {
     public var isOnboarded: Bool
     public var insulinType: InsulinType?
     public var lastSync: Date
-    public var pumpSN: Data
+    public var pumpSN: Data {
+        didSet {
+            guard pumpSN != oldValue else {
+                return
+            }
+
+            // prevent ensureConnected from reconnecting straight back to the previous base
+            peripheralIdentifier = nil
+        }
+    }
     public var lowReservoirWarning: Double?
     public var useSilentTones: Bool
 
