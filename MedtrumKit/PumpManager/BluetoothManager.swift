@@ -143,6 +143,8 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
             reconnectTask?.cancel()
             reconnectTask = nil
             rememberPeripheral()
+        } else if case .bluetoothUnavailable = error {
+            logger.info("Not scheduling a reconnect: waiting for Bluetooth to come back instead")
         } else {
             scheduleReconnect()
         }
@@ -232,6 +234,12 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
             return
         }
 
+        guard manager.state == .poweredOn else {
+            logger.error("Bluetooth is unavailable: \(manager.state.rawValue)")
+            finish(attempt, .bluetoothUnavailable(state: manager.state))
+            return
+        }
+
         if let peripheral = peripheral, peripheral.state == .connected {
             logger.warning("Connected but the session is not ready, dropping the link to rebuild it")
             startTimeout(attempt, seconds: .seconds(15))
@@ -283,7 +291,12 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
             case let .failure(error):
                 self.logger.error("Error during scanning: \(error.localizedDescription)")
                 self.manager.stopScan()
-                self.finish(attempt, .failedToFindDevice)
+
+                if case let .invalidBluetoothState(state) = error {
+                    self.finish(attempt, .bluetoothUnavailable(state: state))
+                } else {
+                    self.finish(attempt, .failedToFindDevice)
+                }
 
             case let .success(peripheral, pumpSN, _, _):
                 guard pumpSN == pumpSNState else {
@@ -430,15 +443,44 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         reconnectTask = nil
         reconnectAttempts = 0
     }
+
+    /// turning the radio off does not reliably deliver `didDisconnectPeripheral`
+    private func teardownForUnusableRadio() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+
+        if let pumpManager = pumpManager, pumpManager.state.isConnected {
+            pumpManager.state.isConnected = false
+            pumpManager.notifyStateDidChange()
+        }
+
+        if let peripheralManager = peripheralManager {
+            logger.info("Radio is unusable, dropping the session")
+            peripheralManager.cleanup()
+            self.peripheralManager = nil
+        }
+
+        if let attempt = attempt {
+            finish(attempt, .bluetoothUnavailable(state: manager.state))
+        }
+    }
 }
 
 extension BluetoothManager {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         logger.info("\(String(describing: central.state.rawValue))")
 
+        if let pumpManager = pumpManager, pumpManager.state.bluetoothState != central.state {
+            pumpManager.state.bluetoothState = central.state
+            pumpManager.notifyStateDidChange()
+        }
+
         guard central.state == .poweredOn else {
+            teardownForUnusableRadio()
             return
         }
+
+        reconnectAttempts = 0
 
         guard attempt == nil else {
             // Somebody is already connecting and owns the attempt. Installing ours over it would
