@@ -890,7 +890,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ vil ikke automatisk justere insulintilførselen før den midlertidige basale hastigheten er fullført eller avbrutt."
+            "value" : "%@ vil ikke automatisk justere insulintilførselen før den midlertidige basaleraten er fullført eller avbrutt."
           }
         },
         "nl" : {
@@ -1052,7 +1052,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@U"
+            "value" : "%@E"
           }
         },
         "nl" : {
@@ -3626,7 +3626,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Aktiver ny oppdatering"
+            "value" : "Aktiver ny patch"
           }
         },
         "nl" : {
@@ -4922,7 +4922,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Varsel: Daglig insulingrense"
+            "value" : "Varsel: Grense for insulindoering per dag"
           }
         },
         "nl" : {
@@ -5084,7 +5084,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Varsel: Daglig maks insulin"
+            "value" : "Varsel: Maks insulin per dag"
           }
         },
         "nl" : {
@@ -5246,7 +5246,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Varsel: Grensen for insulindosering per time"
+            "value" : "Varsel: Grense for insulindosering per time"
           }
         },
         "nl" : {
@@ -5732,7 +5732,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Varsel: Feil i oppdateringen"
+            "value" : "Varsel: Feil med patch"
           }
         },
         "nl" : {
@@ -5894,7 +5894,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Varsel: Beholderen er tom"
+            "value" : "Varsel: Tomt reservoar"
           }
         },
         "nl" : {
@@ -7514,7 +7514,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Beholdbart"
+            "value" : "Bare lyd"
           }
         },
         "nl" : {
@@ -8000,7 +8000,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bolusproblem. Patchen boluserer allerede"
+            "value" : "Bolusproblem. Patchen leverer allerede en bolus"
           }
         },
         "nl" : {
@@ -8162,7 +8162,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bolusproblem. Lappen er suspendert. Gjenoppta levering"
+            "value" : "Bolusproblem. Patch er pauset. Gjenoppta levering"
           }
         },
         "nl" : {
@@ -8486,7 +8486,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kan ikke deaktiveres mens en bolus pågår"
+            "value" : "Kan ikke deaktivere mens en bolus pågår"
           }
         },
         "nl" : {
@@ -8810,7 +8810,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %@ eller når det ikke er mer insulin igjen."
+            "value" : "Bytt patch nå. Insulintilførselen vil stoppe om %@ eller når det ikke er mer insulin igjen."
           }
         },
         "nl" : {
@@ -8972,7 +8972,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bytt plaster nå. Insulintilførselen vil stoppe om %@ eller når det ikke er mer insulin igjen."
+            "value" : "Bytt patch nå. Insulintilførselen vil stoppe om %@ eller når det ikke er mer insulin igjen."
           }
         },
         "nl" : {
@@ -9780,7 +9780,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Koble pumpebasen din til plasteret."
+            "value" : "Koble pumpebasen din til patch."
           }
         },
         "nl" : {
@@ -10266,7 +10266,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "For tiden bruker du IKKE hjerteslag. Et hjerterytme er nødvendig for å holde %%1$@ kjører i bakgrunnen. Det er anbefalt å holde aktivere denne funksjonen"
+            "value" : "Du bruker for øyeblikket ikke «heartbeat»-modus. Et «heartbeat»-signal er nødvendig for å holde %%1$@ kjørende i bakgrunnen. Det anbefales å aktivere denne funksjonen."
           }
         },
         "nl" : {
@@ -10428,7 +10428,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "For tiden bruker du en hjertefrekvensmodus. Dette er nødvendig for at %%1$@ skal kunne kjøre i bakgrunnen. Dette kan være interessant hvis CGM allerede tilbyr en hjerterytme. Det anbefales å holde denne funksjonen aktivert"
+            "value" : "Du bruker for tiden en «heartbeat»-modus. Dette er nødvendig for å holde %%1$@ kjørende i bakgrunnen. Dette kan være nyttig hvis CGM-en din allerede sender ut et slikt signal. Det anbefales å la denne funksjonen være aktivert."
           }
         },
         "nl" : {
@@ -11076,7 +11076,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Deaktiver programfiks"
+            "value" : "Deaktiver patch"
           }
         },
         "nl" : {
@@ -12048,7 +12048,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Frakoblet"
+            "value" : "Koble fra"
           }
         },
         "nl" : {
@@ -12372,7 +12372,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ikke fest plasteret til kroppen ennå"
+            "value" : "Ikke fest patch til kroppen ennå"
           }
         },
         "nl" : {
@@ -12696,7 +12696,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utkastet"
+            "value" : "Utløst"
           }
         },
         "nl" : {
@@ -12858,7 +12858,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utstøting"
+            "value" : "Løser ut"
           }
         },
         "nl" : {
@@ -13506,7 +13506,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utløper i:"
+            "value" : "Utløper om:"
           }
         },
         "nl" : {
@@ -13668,7 +13668,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utvidet programfiks har gått ut basal."
+            "value" : "Utvidet patch har gått ut. Kun basal."
           }
         },
         "nl" : {
@@ -13830,7 +13830,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kunne ikke koble til oppdateringen"
+            "value" : "Kunne ikke koble til patch"
           }
         },
         "nl" : {
@@ -13992,7 +13992,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kunne ikke koble til patch -> Tidsavbrudd nådd"
+            "value" : "Kunne ikke koble til patch -> Tidsavbrudd"
           }
         },
         "nl" : {
@@ -14316,7 +14316,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fyll depotplasteret med insulin. MERK: Minst 70 E er nødvendig for aktivering."
+            "value" : "Fyll patch med insulin. MERK: Minst 70 E er nødvendig for aktivering."
           }
         },
         "nl" : {
@@ -14964,7 +14964,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gå tilbake til klaring"
+            "value" : "Gå tilbake til priming"
           }
         },
         "nl" : {
@@ -15288,7 +15288,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "h"
+            "value" : "t"
           }
         },
         "nl" : {
@@ -15774,7 +15774,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hvor lenge ønsker du å suspendere lappen maksimalt? Den gjenopptas automatisk etter denne tiden."
+            "value" : "Hvor lenge ønsker du å suspendere patchen maksimalt? Den gjenopptas automatisk etter denne tiden."
           }
         },
         "nl" : {
@@ -17070,7 +17070,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insulin Type"
+            "value" : "Insulintype"
           }
         },
         "nl" : {
@@ -17556,7 +17556,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Det anbefales å deaktivere første gang."
+            "value" : "Det anbefales å deaktivere først"
           }
         },
         "nl" : {
@@ -18042,7 +18042,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Lys og pust"
+            "value" : "Lys og lyd"
           }
         },
         "nl" : {
@@ -18204,7 +18204,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Lys og vibrer"
+            "value" : "Lys og vibrasjon"
           }
         },
         "nl" : {
@@ -18366,7 +18366,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kun lette"
+            "value" : "Kun lys"
           }
         },
         "nl" : {
@@ -18528,7 +18528,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Lett, vibrering og grov"
+            "value" : "Lys, vibrasjon og lyd"
           }
         },
         "nl" : {
@@ -18852,7 +18852,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kontroller at serienummeret er korrekt før du kobler det til depotplasteret."
+            "value" : "Kontroller at serienummeret er korrekt før du kobler det til patchen."
           }
         },
         "nl" : {
@@ -19012,7 +19012,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Manuell basalinnstilling"
+            "value" : "Manuell midlertidig basalrate"
           }
         },
         "nl" : {
@@ -19336,7 +19336,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Max daglig insulin"
+            "value" : "Maksimal insulin per dag"
           }
         },
         "nl" : {
@@ -19498,7 +19498,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Maksimal timelegemiddel insulin"
+            "value" : "Maksimal insulin per time"
           }
         },
         "nl" : {
@@ -19984,7 +19984,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ingen aktive depotplastre"
+            "value" : "Ingen aktiv patch"
           }
         },
         "nl" : {
@@ -21442,7 +21442,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Varsel om utløpende plaster"
+            "value" : "Varsel om utløpende patch"
           }
         },
         "nl" : {
@@ -21766,7 +21766,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Okklusjon"
+            "value" : "Blokkering"
           }
         },
         "nl" : {
@@ -22090,7 +22090,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Aktivering av programfiks"
+            "value" : "Aktivering av patch"
           }
         },
         "nl" : {
@@ -22252,7 +22252,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Aktivering av programfiks"
+            "value" : "Patch-aktivering"
           }
         },
         "nl" : {
@@ -22414,7 +22414,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdater detaljer"
+            "value" : "Patch-detaljer"
           }
         },
         "nl" : {
@@ -22576,7 +22576,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdateringsfeil"
+            "value" : "Patch-feil"
           }
         },
         "nl" : {
@@ -22738,7 +22738,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdatering utløpt"
+            "value" : "Patch utløpt"
           }
         },
         "nl" : {
@@ -22900,7 +22900,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdateringen har gått ut på basal."
+            "value" : "Patch utløpt. Kun basal."
           }
         },
         "nl" : {
@@ -23062,7 +23062,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fiks ID"
+            "value" : "Patch ID"
           }
         },
         "nl" : {
@@ -23224,7 +23224,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdateringen er suspendert. Grensen på %lld U overskredet. Hvis du øker grensen, kan du fjerne varselet nå. Hvis du venter, vil patchen gjenopptas når det har gått nok tid."
+            "value" : "Patch er suspendert. Grensen på %lld E overskredet. Hvis du øker grensen, kan du fjerne varselet nå. Hvis du venter, vil patchen gjenopptas når det har gått nok tid."
           }
         },
         "nl" : {
@@ -23386,7 +23386,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Korrigerens levetid"
+            "value" : "Patch levetid"
           }
         },
         "nl" : {
@@ -23548,7 +23548,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Korrigerens levetid"
+            "value" : "Patch levetid"
           }
         },
         "nl" : {
@@ -23710,7 +23710,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Lappet klargjøring"
+            "value" : "Patch priming"
           }
         },
         "nl" : {
@@ -23872,7 +23872,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Lappet klargjøring"
+            "value" : "Patch priming"
           }
         },
         "nl" : {
@@ -24034,7 +24034,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Skift ut lappen"
+            "value" : "Bytt patch"
           }
         },
         "nl" : {
@@ -24196,7 +24196,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdatere innstillinger"
+            "value" : "Patch innstillinger"
           }
         },
         "nl" : {
@@ -24358,7 +24358,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdatere innstillinger"
+            "value" : "Patch innstillinger"
           }
         },
         "nl" : {
@@ -24520,7 +24520,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdatert tilstand"
+            "value" : "Patch status"
           }
         },
         "nl" : {
@@ -24682,7 +24682,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdatert tilstand"
+            "value" : "Patch status"
           }
         },
         "nl" : {
@@ -24844,7 +24844,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdaterings^dato"
+            "value" : "Patch tid"
           }
         },
         "nl" : {
@@ -25006,7 +25006,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oppdaterings^dato"
+            "value" : "Patch-tid"
           }
         },
         "nl" : {
@@ -25330,7 +25330,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sett sprøyten på plasteret og trekk ut 1 til 2 bindestreker med luft."
+            "value" : "Sett sprøyten i patchen og trekk ut 1 til 2 luftbobler."
           }
         },
         "nl" : {
@@ -25492,7 +25492,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Press på nålesnappen og begynn på sykkelprosessen."
+            "value" : "Trykk på kanyleknappen for å starte primingprosessen."
           }
         },
         "nl" : {
@@ -25654,7 +25654,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Trykk på kanylen for å sette inn kanylen. Klikk på \"Aktiver\" for å fullføre aktiveringsprosessen."
+            "value" : "Trykk på kanylen for å sette den inn. Klikk på \"Aktiver\" for å fullføre aktiveringsprosessen."
           }
         },
         "nl" : {
@@ -25816,7 +25816,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Forrige programfiks detaljer"
+            "value" : "Detaljer for forrige patch"
           }
         },
         "nl" : {
@@ -26140,7 +26140,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Priming"
+            "value" : "Primer"
           }
         },
         "nl" : {
@@ -26464,7 +26464,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Basismodell for pumpen"
+            "value" : "Pumpebasens modell"
           }
         },
         "nl" : {
@@ -26626,7 +26626,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Innstillinger for pumpe"
+            "value" : "Innstillinger for pumpebase"
           }
         },
         "nl" : {
@@ -26788,7 +26788,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pumpens base SN"
+            "value" : "Pumpebasens SN"
           }
         },
         "nl" : {
@@ -26948,7 +26948,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vurdering"
+            "value" : "Rate"
           }
         },
         "nl" : {
@@ -27110,7 +27110,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gjenoppkoble"
+            "value" : "Koble til på nytt"
           }
         },
         "nl" : {
@@ -27272,7 +27272,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gjenopprettes..."
+            "value" : "Kobler til igjen..."
           }
         },
         "nl" : {
@@ -27596,7 +27596,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fjern sikkerhetsdekslet fra plasteret."
+            "value" : "Fjern sikkerhetsdekslet fra patchen."
           }
         },
         "nl" : {
@@ -27758,7 +27758,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Erstatt depotplasteret ditt nå!"
+            "value" : "Bytt patch nå!"
           }
         },
         "nl" : {
@@ -28244,7 +28244,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoar lavt (%lld U)"
+            "value" : "Reservoar lavt (%lld E)"
           }
         },
         "nl" : {
@@ -28406,7 +28406,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "CV"
+            "value" : "Gjenoppta"
           }
         },
         "nl" : {
@@ -28568,7 +28568,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "CV-levering"
+            "value" : "Gjenoppta tilførsel"
           }
         },
         "nl" : {
@@ -28730,7 +28730,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "CV-levering"
+            "value" : "Gjenoppta insulintilførsel"
           }
         },
         "nl" : {
@@ -28892,7 +28892,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Spar"
+            "value" : "Lagre"
           }
         },
         "nl" : {
@@ -30026,7 +30026,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Del «Medtrum feilloggene»"
+            "value" : "Del logger fra Medtrum patch"
           }
         },
         "nl" : {
@@ -30350,7 +30350,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Forstummet"
+            "value" : "Stille"
           }
         },
         "nl" : {
@@ -30512,7 +30512,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Start klaring"
+            "value" : "Start priming"
           }
         },
         "nl" : {
@@ -30674,7 +30674,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Status:"
+            "value" : "Status"
           }
         },
         "nl" : {
@@ -31484,7 +31484,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Suspend patch"
+            "value" : "Pause patch"
           }
         },
         "nl" : {
@@ -32780,7 +32780,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plasteret skal kun brukes i 3 dager og 8 timer. Det kan føre til at plasteret ikke blir sikkert når det ikke overskrides. Vurder å bruke normal levetid. Vær oppmerksom på at ny fastvare ved nyeste generering av pumpeskjold kan blokkere boluskommandoer etter 5 dager (120 timer)."
+            "value" : "Patch er kun beregnet på bruk i 3 døgn og 8 timer. Hvis denne tiden overskrides, kan patchens funksjon bli upålitelig. Dette anbefales IKKE. Vurder å bruke patchen i den vanlige brukstiden. Vær oppmerksom på at ny fastvare i den nyeste generasjonen pumpeenheter kan blokkere boluskommandoer etter 5 døgn (120 timer)."
           }
         },
         "nl" : {
@@ -32942,7 +32942,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tiden det tar på pumpen er forskjellig fra nåværende tidspunkt. Ønsker du å oppdatere tidspunktet på pumpen til nåværende tidspunkt?"
+            "value" : "Klokkeslettet på pumpen er forskjellig fra nåværende klokkeslett. Pumpen styrer dosering basert på tid. Vil du oppdatere klokkeslettet på pumpen?"
           }
         },
         "nl" : {
@@ -33104,7 +33104,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tiden det tar på pumpen er forskjellig fra tiden pumpen din når du kontrollerer innstillingene i den planlagte behandlingen. Bla ned for å pumpe tidsraden for å se på tidsdifferansene og konfigurere pumpen."
+            "value" : "Klokkeslettet på pumpen er forskjellig fra nåværende klokkeslett. Pumpen styrer dosering basert på tidspunkt. Bla nedover for å se på tidsforskjellen og konfigurere pumpen."
           }
         },
         "nl" : {
@@ -33590,7 +33590,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "U"
+            "value" : "E"
           }
         },
         "nl" : {
@@ -33752,7 +33752,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "U/time"
+            "value" : "E/t"
           }
         },
         "nl" : {
@@ -34400,7 +34400,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vibrer og pipende"
+            "value" : "Vibrasjon og lyd"
           }
         },
         "nl" : {
@@ -34562,7 +34562,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kun Vibrasjon"
+            "value" : "Kun vibrasjon"
           }
         },
         "nl" : {
@@ -34886,7 +34886,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Når du klikker på knappen, vil du få en biometrisk ledetekst. Når depotplasteret er ferdig, vil det bli deaktivert og du vil bli bedt om å pare et nytt depotplaster"
+            "value" : "Når du trykkert på knappen vil du bli bedt om å bekrefte med biometri. Når det er klart, vil patchen bli deaktivert og du blir bedt om å aktivere ny patch."
           }
         },
         "nl" : {
@@ -35048,7 +35048,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ja, deaktiver hjerteslagmodus"
+            "value" : "Ja, deaktiver hjerteslag-modus"
           }
         },
         "nl" : {
@@ -35534,7 +35534,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Du starter med å sette opp insulin type & grunnleggende plasterinnstillinger før du aktiverer depotplasteret."
+            "value" : "Du starter med å sette opp insulintype og grunnleggende patch-innstillinger før du aktiverer patchen."
           }
         },
         "nl" : {
@@ -35696,7 +35696,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your patch has %lld hours left"
+            "value" : "Din patch har %lld timer igjen"
           }
         },
         "nl" : {
@@ -35858,7 +35858,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patchen har oppdaget en okklusjon!"
+            "value" : "Patchen har oppdaget en blokkering!"
           }
         },
         "nl" : {
@@ -36020,7 +36020,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plasteret ditt har nådd maksimum!"
+            "value" : "Patch har nådd grensen per dag!"
           }
         },
         "nl" : {
@@ -36182,7 +36182,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Depotplasteret ditt har nådd maksimum timeliss!"
+            "value" : "Patch har nådd grensen per time!"
           }
         },
         "nl" : {
@@ -36344,7 +36344,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patchen er i gjeldende status!"
+            "value" : "Patchen har en feiltilstand!"
           }
         },
         "nl" : {
@@ -36506,7 +36506,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plasteret ditt er tom for insulin!"
+            "value" : "Patch er tomt for insulin!"
           }
         },
         "nl" : {
@@ -36668,7 +36668,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plasteret ditt renner ut av insulin!"
+            "value" : "Patch er snart tomt for insulin!"
           }
         },
         "nl" : {
@@ -36830,7 +36830,7 @@
         "nb" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Depotplasteret ditt vil utløpe snart!"
+            "value" : "Patch utløper snart!"
           }
         },
         "nl" : {
