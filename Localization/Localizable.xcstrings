@@ -4184,7 +4184,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "储药器激活于"
+            "value" : "补丁激活于"
           }
         }
       }
@@ -5510,7 +5510,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Warnung: Okklusion"
+            "value" : "Warnung: Verstopfung"
           }
         },
         "en" : {
@@ -5672,7 +5672,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Warnung: Fehler beim Patch"
+            "value" : "Warnung: Patch-Fehler"
           }
         },
         "en" : {
@@ -5834,7 +5834,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Warnung: Behälter leer"
+            "value" : "Warnung: Reservoir leer"
           }
         },
         "en" : {
@@ -7748,7 +7748,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "大剂量"
+            "value" : "玻流体"
           }
         }
       }
@@ -8426,7 +8426,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kann nicht deaktiviert werden, solange ein Bolus läuft"
+            "value" : "Deaktivierung während einer Bolusgabe nicht möglich"
           }
         },
         "en" : {
@@ -13254,7 +13254,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "储药器过期于"
+            "value" : "补丁过期于"
           }
         }
       }
@@ -14550,7 +14550,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "用注射器注入胰岛素"
+            "value" : "用隔热填充注射器"
           }
         }
       }
@@ -16332,7 +16332,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "胰岛素\n暂停"
+            "value" : "防硫\n暂停"
           }
         }
       }
@@ -16494,7 +16494,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "胰岛素输注"
+            "value" : "硫化物交付"
           }
         }
       }
@@ -16818,7 +16818,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "剩余胰岛素"
+            "value" : "剩余硫化物"
           }
         }
       }
@@ -17142,7 +17142,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "胰岛素类型"
+            "value" : "硫磺类型"
           }
         }
       }
@@ -18114,7 +18114,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "灯光和响铃"
+            "value" : "光和蜂鸣声"
           }
         }
       }
@@ -18276,7 +18276,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "灯光和振动"
+            "value" : "光和振动"
           }
         }
       }
@@ -19036,7 +19036,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Temperatură bazală setată manual"
+            "value" : "Bazală temporară manuală"
           }
         },
         "ru" : {
@@ -19408,7 +19408,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每日最大胰岛素量"
+            "value" : "每日最大绝缘量"
           }
         }
       }
@@ -19570,7 +19570,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每小时最大胰岛素量"
+            "value" : "最大每小时绝缘数"
           }
         }
       }
@@ -20542,7 +20542,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有输注"
+            "value" : "不送货"
           }
         }
       }
@@ -21676,7 +21676,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "蓄药池低位通知"
+            "value" : "水库水位低时的通知"
           }
         }
       }
@@ -26050,7 +26050,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "启动的"
+            "value" : "引线"
           }
         }
       }
@@ -26212,7 +26212,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "启动"
+            "value" : "打底"
           }
         }
       }
@@ -26698,7 +26698,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "泵基础设置"
+            "value" : "泵站基准设置"
           }
         }
       }
@@ -27506,7 +27506,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "移除泵"
+            "value" : "移除输出"
           }
         }
       }
@@ -27992,7 +27992,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "蓄药池空"
+            "value" : "蓄水池空"
           }
         }
       }
@@ -28316,7 +28316,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "蓄药池低位（%lld U）"
+            "value" : "水库低位（%lld U）"
           }
         }
       }
@@ -28478,7 +28478,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "恢复"
+            "value" : "简历"
           }
         }
       }
@@ -28640,7 +28640,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "恢复输注"
+            "value" : "简历交付"
           }
         }
       }
@@ -28802,7 +28802,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "恢复输注"
+            "value" : "简历交付"
           }
         }
       }
@@ -28964,7 +28964,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存"
+            "value" : "节省"
           }
         }
       }
@@ -29288,7 +29288,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预设的基础率"
+            "value" : "预定的Basal"
           }
         }
       }
@@ -29450,7 +29450,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择胰岛素类型"
+            "value" : "选择绝缘类型"
           }
         }
       }
@@ -29612,7 +29612,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择您将使用的胰岛素类型"
+            "value" : "选择您将使用的绝缘类型"
           }
         }
       }
@@ -30860,7 +30860,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oprire bazal temporar"
+            "value" : "Oprire bazală temporară"
           }
         },
         "ru" : {
@@ -31232,7 +31232,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暂停输注"
+            "value" : "暂停交付"
           }
         }
       }
@@ -32366,7 +32366,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暂停 - 低血糖"
+            "value" : "暂停 - 低 BG"
           }
         }
       }
@@ -32480,7 +32480,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sincronizare date patch"
+            "value" : "Sincronizare date pompă"
           }
         },
         "ru" : {
@@ -32690,7 +32690,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "临时基础率"
+            "value" : "临时篮子"
           }
         }
       }
@@ -33500,7 +33500,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "切换心跳模式（后台刷新）"
+            "value" : "切换心跳动模式"
           }
         }
       }
@@ -34310,7 +34310,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用正常有效期(3天8小时)"
+            "value" : "使用正常生存时间(3d 8h)"
           }
         }
       }
@@ -34472,7 +34472,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "震动并响铃"
+            "value" : "振动和睡眠"
           }
         }
       }
@@ -35120,7 +35120,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "是，禁用心跳模式（后台刷新）"
+            "value" : "是，禁用心跳动模式"
           }
         }
       }
@@ -35282,7 +35282,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "是，启用心跳模式（后台刷新）"
+            "value" : "是，启用心跳模式"
           }
         }
       }
@@ -35798,7 +35798,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ihr Patch hat eine Störung entdeckt!"
+            "value" : "Ihr Patch hat eine Verstopfung!"
           }
         },
         "en" : {
