@@ -186,6 +186,9 @@ public class MedtrumPumpManager: DeviceManager {
         )
     }
 
+    /// While the patch is being stopped on request, the states it reports are not a base reset
+    private(set) var isDeactivatingPatch = false
+
     private var mustProvideBLEHeartbeat = false
     private var lastHeartbeat: Date = .distantPast
 
@@ -836,6 +839,9 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            self.isDeactivatingPatch = true
+            defer { self.isDeactivatingPatch = false }
+
             let result = self.bluetooth.write(StopPatchPacket())
             if case let .failure(error) = result {
                 self.log.error("Failed to deactivate pump: \(error)")
@@ -880,10 +886,30 @@ public extension MedtrumPumpManager {
 
     func forceDeactivatePatch() {
         log.info("Force deactivating patch...")
+        endPatchSession(deliveryStoppedAt: Date.now)
+    }
 
-        let suspendDose = UnfinalizedDose(suspendStartTime: Date.now)
+    /// The base rebooted underneath an activated patch: it came back as a blank, never activated
+    /// patch and is not delivering anything. The session cannot be resumed, so it ends here.
+    func handleBaseReset(deliveryStoppedAt: Date) {
+        log.error("Pump base has reset, patch session is lost - delivery stopped at \(deliveryStoppedAt)")
 
-        var events = finalizedTempBasal(endedAt: Date.now)
+        // A terminated patch has already raised its own alert, and was not delivering anyway
+        let wasRunning = state.pumpState.isRunning
+
+        endPatchSession(deliveryStoppedAt: deliveryStoppedAt)
+
+        if wasRunning {
+            emitAlert(alertType: .baseResetNotification)
+        }
+    }
+
+    private func endPatchSession(deliveryStoppedAt: Date) {
+        // Delivery cannot have stopped before the running dose began
+        let suspendStart = max(deliveryStoppedAt, state.basalDose.startDate)
+        let suspendDose = UnfinalizedDose(suspendStartTime: suspendStart)
+
+        var events = finalizedTempBasal(endedAt: suspendStart)
         events.append(contentsOf: finalizeInterruptedBolus())
         events.append(NewPumpEvent.suspend(dose: suspendDose.toDoseEntry()))
 
@@ -893,7 +919,7 @@ public extension MedtrumPumpManager {
             lastSyncAt: state.lastSync,
             battery: state.battery,
             activatedAt: state.patchActivatedAt ?? Date.distantPast,
-            deactivatedAt: Date.now,
+            deactivatedAt: suspendStart,
             initialReservoirLevel: state.initialReservoir,
             reservoirLevel: state.reservoir
         )
