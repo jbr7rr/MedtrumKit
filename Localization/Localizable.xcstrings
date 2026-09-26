@@ -252,7 +252,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "(%lld u %lld min)"
+            "value" : "(%lld uur %lld min)"
           }
         },
         "pl" : {
@@ -4184,7 +4184,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "补丁激活于"
+            "value" : "激活"
           }
         }
       }
@@ -5048,7 +5048,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Alerte : Insuline maximale quotidienne"
+            "value" : "Alerte : Maximum Insuline Journalière"
           }
         },
         "he" : {
@@ -5372,7 +5372,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Alerte : Insuline maximale horaire"
+            "value" : "Alerte : Maximum Insuline par Heure"
           }
         },
         "he" : {
@@ -6344,7 +6344,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Attachez la pompe au corps."
+            "value" : "Collez le Patch sur vous."
           }
         },
         "he" : {
@@ -8168,7 +8168,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bolusprobleem. Patch is opgeschort. Hervat levering"
+            "value" : "Bolusprobleem. Patch is onderbroken. Hervat toediening"
           }
         },
         "pl" : {
@@ -8492,7 +8492,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kan niet worden uitgeschakeld terwijl een bolus wordt toegediend"
+            "value" : "Deactiveren kan niet zolang er een bolus wordt toegediend."
           }
         },
         "pl" : {
@@ -8612,7 +8612,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Âge de la canule"
+            "value" : "Durée Utilsation de la canule"
           }
         },
         "he" : {
@@ -8774,7 +8774,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Remplacez le patch maintenant. La distribution d'insuline s'arrête dans %@ ou lorsqu'il n'y a plus d'insuline."
+            "value" : "Remplacez le patch maintenant. La distribution d'insuline s'arrête dans %@ ou lorsqu'il n'y aura plus d'insuline."
           }
         },
         "he" : {
@@ -8816,7 +8816,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vervang Patch nu. De insulinetoediening stopt over %@ of wanneer er geen insuline meer is."
+            "value" : "Vervang de patch nu. De insulinetoediening stopt over %@ of wanneer er geen insuline meer is."
           }
         },
         "pl" : {
@@ -8936,7 +8936,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Remplacez le patch maintenant. La distribution d'insuline s'arrête dans %@ ou lorsqu'il n'y a plus d'insuline."
+            "value" : "Remplacez le patch maintenant. La distribution d'insuline s'arrête dans %@ ou lorsqu'il n'y aura plus d'insuline."
           }
         },
         "he" : {
@@ -8978,7 +8978,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vervang Patch nu. De insulinetoediening stopt over %@ of wanneer er geen insuline meer is."
+            "value" : "Vervang de patch nu. De insulinetoediening stopt over %@ of wanneer er geen insuline meer is."
           }
         },
         "pl" : {
@@ -9258,7 +9258,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Alerte claire"
+            "value" : "Effacer Alerte"
           }
         },
         "he" : {
@@ -11040,7 +11040,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Désactiver le correctif"
+            "value" : "Patch Désactivé"
           }
         },
         "he" : {
@@ -11850,7 +11850,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Disabled"
+            "value" : "Désactivé"
           }
         },
         "he" : {
@@ -12336,7 +12336,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ne pas encore attacher le patch au corps"
+            "value" : "Ne pas poser le patch sur vous immédiatement"
           }
         },
         "he" : {
@@ -13026,7 +13026,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Stille tonen inschakelen"
+            "value" : "Stille geluiden inschakelen"
           }
         },
         "pl" : {
@@ -13254,7 +13254,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "补丁过期于"
+            "value" : "到期"
           }
         }
       }
@@ -13632,7 +13632,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Le patch étendu a expiré. Basal uniquement."
+            "value" : "La durée de vie étendue du patch a expiré. Basal uniquement."
           }
         },
         "he" : {
@@ -13674,7 +13674,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Extended Patch is verlopen. Alleen basaal."
+            "value" : "Verlengde patchperiode verlopen. Alleen basaal."
           }
         },
         "pl" : {
@@ -15738,7 +15738,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Combien de temps souhaitez-vous suspendre votre patch maximum ? Il reprendra automatiquement après ce délai."
+            "value" : "Durée maximale de suspension du patch ? Il reprendra automatiquement après ce délai."
           }
         },
         "he" : {
@@ -15780,7 +15780,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hoe lang wil je je patch maximaal opschorten? Na deze tijd wordt hij automatisch hervat."
+            "value" : "Hoe lang wil je je patch maximaal onderbreken? Na deze tijd wordt hij automatisch hervat."
           }
         },
         "pl" : {
@@ -15900,7 +15900,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Au repos"
+            "value" : "A l'arrêt"
           }
         },
         "he" : {
@@ -16266,7 +16266,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insuline\nopgeschort"
+            "value" : "Insuline\nonderbroken"
           }
         },
         "pl" : {
@@ -16416,7 +16416,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "인슐린 배달"
+            "value" : "인슐린 주입"
           }
         },
         "nb" : {
@@ -16590,7 +16590,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insuline is opgeschort!"
+            "value" : "Insuline is onderbroken!"
           }
         },
         "pl" : {
@@ -16914,7 +16914,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insuline Opgeschort"
+            "value" : "Insuline onderbroken"
           }
         },
         "pl" : {
@@ -18976,7 +18976,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Réglage manuel de la température basale"
+            "value" : "Réglage manuel du débit basal temporaire"
           }
         },
         "he" : {
@@ -19018,7 +19018,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Handmatige basale temperatuurinstelling"
+            "value" : "Handmatige tijdelijke basaalstand"
           }
         },
         "pl" : {
@@ -19300,7 +19300,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insuline quotidienne max"
+            "value" : "Dose Insuline quotidienne max"
           }
         },
         "he" : {
@@ -19462,7 +19462,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insuline horaire max"
+            "value" : "Dose Insuline horaire max"
           }
         },
         "he" : {
@@ -21406,7 +21406,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Notification pour le patch d'expiration"
+            "value" : "Notification d'expiration pour le patch"
           }
         },
         "he" : {
@@ -21772,7 +21772,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Occlusie"
+            "value" : "Verstopping"
           }
         },
         "pl" : {
@@ -21934,7 +21934,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Oké"
+            "value" : "OK"
           }
         },
         "pl" : {
@@ -22054,7 +22054,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Activation du correctif"
+            "value" : "Activation du Patch"
           }
         },
         "he" : {
@@ -22216,7 +22216,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Activation du correctif"
+            "value" : "Activation du Patch"
           }
         },
         "he" : {
@@ -22702,7 +22702,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Le correctif a expiré"
+            "value" : "Le Patch a expiré"
           }
         },
         "he" : {
@@ -23026,7 +23026,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ID du correctif"
+            "value" : "ID du patch"
           }
         },
         "he" : {
@@ -23230,7 +23230,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch is opgeschort. Limiet van %lld U overschreden. Als u de limiet verhoogt, kunt u de waarschuwing nu wissen. Als je wacht, wordt de patch hervat als er genoeg tijd verstreken is."
+            "value" : "Patch is onderbroken. Limiet van %lld E overschreden. Als je de limiet verhoogt, kun je de waarschuwing nu wissen. Als je wacht, wordt de patch hervat als er genoeg tijd verstreken is."
           }
         },
         "pl" : {
@@ -23350,7 +23350,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Durée de mise à jour"
+            "value" : "Durée de vie du Patch"
           }
         },
         "he" : {
@@ -23512,7 +23512,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Durée de mise à jour"
+            "value" : "Durée de Vie du Patch"
           }
         },
         "he" : {
@@ -23878,7 +23878,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch primmen"
+            "value" : "Patch primen"
           }
         },
         "pl" : {
@@ -24160,7 +24160,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Paramètres du correctif"
+            "value" : "Paramètres du Patch"
           }
         },
         "he" : {
@@ -24322,7 +24322,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Paramètres du correctif"
+            "value" : "Paramètres du Patch"
           }
         },
         "he" : {
@@ -24484,7 +24484,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Statut du correctif"
+            "value" : "Statut du Patch"
           }
         },
         "he" : {
@@ -24646,7 +24646,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Statut du correctif"
+            "value" : "Statut du Patch"
           }
         },
         "he" : {
@@ -24688,7 +24688,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch state"
+            "value" : "Patch status"
           }
         },
         "pl" : {
@@ -24808,7 +24808,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Le temps de l'écusson"
+            "value" : "Heure du Patch"
           }
         },
         "he" : {
@@ -24970,7 +24970,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Le temps de l'écusson"
+            "value" : "Temps Utilisation Patch"
           }
         },
         "he" : {
@@ -25294,7 +25294,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Placez la seringue dans le patch et tirez 1 à 2 tirets d'air."
+            "value" : "Placez la seringue dans le patch et aspirez 1 à 2 bulles d'air."
           }
         },
         "he" : {
@@ -25618,7 +25618,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Appuyez sur le bouton de l'aiguille pour insérer l'aiguille. Cliquez sur \"Activer\" pour terminer le processus d'activation."
+            "value" : "Appuyez sur le bouton de l'aiguille pour l'insérer. Cliquez sur \"Activer\" pour terminer le processus d'activation."
           }
         },
         "he" : {
@@ -25822,7 +25822,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vorige Patch Details"
+            "value" : "Vorige patch details"
           }
         },
         "pl" : {
@@ -25984,7 +25984,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gegrond"
+            "value" : "Geprimed"
           }
         },
         "pl" : {
@@ -26308,7 +26308,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pomp basis Firmware"
+            "value" : "Pomp basis firmware"
           }
         },
         "pl" : {
@@ -26954,7 +26954,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tarief"
+            "value" : "Dosis"
           }
         },
         "pl" : {
@@ -27398,7 +27398,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Enlever la pompe"
+            "value" : "Retirer le Patch"
           }
         },
         "he" : {
@@ -28370,7 +28370,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Curriculum vitae"
+            "value" : "Historique"
           }
         },
         "he" : {
@@ -28412,7 +28412,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "CV"
+            "value" : "Hervat"
           }
         },
         "pl" : {
@@ -28532,7 +28532,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Remise de curriculum vitae"
+            "value" : "Historique délivrance"
           }
         },
         "he" : {
@@ -28694,7 +28694,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Remise de curriculum vitae"
+            "value" : "Historique Insuline Délivrée"
           }
         },
         "he" : {
@@ -28724,7 +28724,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "인슐린 배달 재개"
+            "value" : "인슐린 주입 재개"
           }
         },
         "nb" : {
@@ -28856,7 +28856,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Économiser"
+            "value" : "Enregistrer"
           }
         },
         "he" : {
@@ -28898,7 +28898,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sla"
+            "value" : "Bewaar"
           }
         },
         "pl" : {
@@ -29222,7 +29222,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Geplande Basaal"
+            "value" : "Geplande basaal"
           }
         },
         "pl" : {
@@ -29828,7 +29828,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Définir le débit basal temporaire manuel"
+            "value" : "Définir le débit basal temporaire manuellement"
           }
         },
         "he" : {
@@ -29990,7 +29990,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Partager les rustines de Medtrum"
+            "value" : "Partager les logs du Patch Medtrum"
           }
         },
         "he" : {
@@ -30842,7 +30842,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Basale temp. stoppen"
+            "value" : "Tijdelijke basaalstand stoppen"
           }
         },
         "pl" : {
@@ -31124,7 +31124,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Suspendre la livraison"
+            "value" : "Suspendre l'administration"
           }
         },
         "he" : {
@@ -31166,7 +31166,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Levering opschorten"
+            "value" : "Toediening onderbreken"
           }
         },
         "pl" : {
@@ -31316,7 +31316,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "인슐린 배달 일시 중단"
+            "value" : "인슐린 주입 일시 중단"
           }
         },
         "nb" : {
@@ -31328,7 +31328,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insulinetoediening opschorten"
+            "value" : "Insulinetoediening onderbreken"
           }
         },
         "pl" : {
@@ -31490,7 +31490,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch opschorten"
+            "value" : "Patch onderbreken"
           }
         },
         "pl" : {
@@ -31652,7 +31652,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Geschorst"
+            "value" : "Onderbroken"
           }
         },
         "pl" : {
@@ -31814,7 +31814,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Opgeschort - Auto"
+            "value" : "Onderbroken - auto"
           }
         },
         "pl" : {
@@ -31976,7 +31976,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Geschorst - Dagelijks Max"
+            "value" : "Onderbroken - dagmaximum"
           }
         },
         "pl" : {
@@ -32138,7 +32138,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Opgeschort - Uurmaximum"
+            "value" : "Onderbroken - uurmaximum"
           }
         },
         "pl" : {
@@ -32300,7 +32300,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Geschorst - Laag BG"
+            "value" : "Onderbroken - lage glucose"
           }
         },
         "pl" : {
@@ -32420,7 +32420,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Synchroniser les données de patch"
+            "value" : "Synchroniser les données du patch"
           }
         },
         "he" : {
@@ -32462,7 +32462,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Synchronisatie data"
+            "value" : "Data synchronisatie patch"
           }
         },
         "pl" : {
@@ -32906,7 +32906,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "L'heure de votre pompe est différente de l'heure actuelle. Voulez-vous mettre à jour l'heure de votre pompe pour qu'elle corresponde à l'heure actuelle ?"
+            "value" : "L'heure de votre pompe est différente de l'heure locale. Voulez-vous mettre à jour l'heure de votre pompe pour qu'elle corresponde à l'heure locale ?"
           }
         },
         "he" : {
@@ -33068,7 +33068,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "L'heure de votre pompe est différente de l'heure actuelle. L'heure de votre pompe contrôle les paramètres de votre thérapie programmée. Faites défiler vers le bas jusqu'à la ligne Heure de la pompe pour consulter le décalage horaire et configurer votre pompe."
+            "value" : "L'heure de votre pompe est différente de l'heure locale. L'heure de votre pompe contrôle les paramètres de votre thérapie programmée. Faites défiler vers le bas jusqu'à la ligne Heure de la pompe pour consulter le décalage horaire et configurer votre pompe."
           }
         },
         "he" : {
@@ -33758,7 +33758,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "U/u"
+            "value" : "E/uur"
           }
         },
         "pl" : {
@@ -34850,7 +34850,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "En cliquant sur le bouton, vous obtiendrez une invite biométrique. Une fois terminé, le patch sera désactivé et vous serez invité à associer un nouveau patch."
+            "value" : "En cliquant sur le bouton, vous vous authentifierez biométriquement. Une fois fait, le patch sera désactivé et vous serez invité à associer un nouveau patch."
           }
         },
         "he" : {
@@ -34892,7 +34892,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Wanneer je op de knop klikt, krijg je een Biometrie prompt. Zodra klaar is wordt de patch gedeactiveerd en wordt je gevraagd om een nieuwe patch te koppelen."
+            "value" : "Wanneer je op de knop klikt, krijg je een biometrische controle. Zodra klaar is wordt de patch gedeactiveerd en wordt je gevraagd om een nieuwe patch te koppelen."
           }
         },
         "pl" : {
@@ -35054,7 +35054,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ja, Schakel hartbeet modus uit"
+            "value" : "Ja, schakel heartbeat-modus uit"
           }
         },
         "pl" : {
@@ -35498,7 +35498,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vous commencerez par configurer votre type d'insuline et vos paramètres de correctifs de base avant d'activer votre patch."
+            "value" : "Commencez par configurer votre type d'insuline et vos paramètres de base avant d'activer le Patch."
           }
         },
         "he" : {
@@ -35864,7 +35864,7 @@
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Je patch heeft een occlusie gedetecteerd!"
+            "value" : "Je patch heeft een verstopping gedetecteerd!"
           }
         },
         "pl" : {
@@ -35984,7 +35984,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Votre patch a atteint son maximum journalier !"
+            "value" : "Dose Maximale Journalière du Patch Atteinte !"
           }
         },
         "he" : {
@@ -36146,7 +36146,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Votre patch a atteint son maximum horaire !"
+            "value" : "Débit Horaire Maximal du Patch Atteint !"
           }
         },
         "he" : {
@@ -36308,7 +36308,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Votre patch est en état de défaut !"
+            "value" : "Patch en Erreur !"
           }
         },
         "he" : {
@@ -36470,7 +36470,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Votre patch est en panne d'insuline !"
+            "value" : "Reservoir Patch Vide !"
           }
         },
         "he" : {
@@ -36632,7 +36632,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your patch is running out of insulin!"
+            "value" : "Reservoir Patch bientôt vide !"
           }
         },
         "he" : {
@@ -36794,7 +36794,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Votre patch va bientôt expirer !"
+            "value" : "Le Patch va bientôt expirer !"
           }
         },
         "he" : {
