@@ -25,6 +25,39 @@ public enum PatchState: UInt8, Codable {
     case noCalibration = 103
     case stopped = 128
 
+    var isDeliveryHalted: Bool {
+        switch self {
+        case .active,
+             .active_alt,
+             .ejected,
+             .ejecting,
+             .filled,
+             .idle,
+             .none,
+             .primed,
+             .priming:
+            return false
+
+        case .autoSuspended,
+             .baseFault,
+             .batteryOut,
+             .dailyMaxSuspended,
+             .expired,
+             .hourlyMaxSuspended,
+             .lowBgSuspended,
+             .lowBgSuspended2,
+             .noCalibration,
+             .occlusion,
+             .paused,
+             .patchFault,
+             .patchFaultd2,
+             .reservoirEmpty,
+             .stopped,
+             .suspended:
+            return true
+        }
+    }
+
     var description: String {
         switch self {
         case .none:
