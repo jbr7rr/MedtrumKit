@@ -16416,7 +16416,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "인슐린 배달"
+            "value" : "인슐린 주입"
           }
         },
         "nb" : {
@@ -28724,7 +28724,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "인슐린 배달 재개"
+            "value" : "인슐린 주입 재개"
           }
         },
         "nb" : {
@@ -31316,7 +31316,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "인슐린 배달 일시 중단"
+            "value" : "인슐린 주입 일시 중단"
           }
         },
         "nb" : {
