@@ -81,6 +81,15 @@ extension MedtrumPumpManager: PumpManagerUI {
                 imageName: "exclamationmark.circle.fill",
                 state: .critical
             )
+        } else if state.needsBolusRecovery {
+            return PumpStatusHighlight(
+                localizedMessage: String(
+                    localized: "Bolus Unconfirmed",
+                    comment: "Status highlight while it is unknown whether a bolus command reached the patch."
+                ),
+                imageName: "exclamationmark.circle.fill",
+                state: .critical
+            )
         } else if state.reservoir < 1 || state.pumpState == .reservoirEmpty {
             return PumpStatusHighlight(
                 localizedMessage: String(localized: "No Insulin", comment: "Status highlight that a pump is out of insulin."),
