@@ -8,7 +8,7 @@ class MedtrumLogger {
     private let writer = MedtrumLogWriter.shared
     private static let pumpManagerLock = NSLock()
 
-    private static weak var pumpManagerStorage: MedtrumPumpManager?
+    private weak static var pumpManagerStorage: MedtrumPumpManager?
 
     public static var pumpManager: MedtrumPumpManager? {
         get { pumpManagerLock.withLock { pumpManagerStorage } }
@@ -54,7 +54,7 @@ class MedtrumLogger {
     private func writeToFile(_ msg: String, _ type: OSLogEntryLog.Level) {
         writer.append(msg, level: getLevel(type))
     }
-    
+
     private func writeToPumpManager(_ msg: String, _ type: OSLogEntryLog.Level) {
         guard type != .debug else {
             return

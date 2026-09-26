@@ -87,6 +87,15 @@ extension MedtrumPumpManager: PumpManagerUI {
                 imageName: "exclamationmark.circle.fill",
                 state: .critical
             )
+        } else if state.pumpState.isSuspended || state.pumpState.isTerminated {
+            return PumpStatusHighlight(
+                localizedMessage: String(
+                    localized: "Patch Error",
+                    comment: "Status highlight message for other alarm."
+                ),
+                imageName: "exclamationmark.circle.fill",
+                state: .critical
+            )
         } else if state.basalDose.type == .suspend {
             return PumpStatusHighlight(
                 localizedMessage: String(
@@ -110,15 +119,6 @@ extension MedtrumPumpManager: PumpManagerUI {
                 localizedMessage: String(
                     localized: "Signal Loss",
                     comment: "Status highlight when communications with the patch haven't happened recently."
-                ),
-                imageName: "exclamationmark.circle.fill",
-                state: .critical
-            )
-        } else if state.pumpState.isSuspended || state.pumpState.isTerminated {
-            return PumpStatusHighlight(
-                localizedMessage: String(
-                    localized: "Patch Error",
-                    comment: "Status highlight message for other alarm."
                 ),
                 imageName: "exclamationmark.circle.fill",
                 state: .critical

@@ -105,18 +105,15 @@ class PatchPrimingViewModel: ObservableObject {
     }
 
     private let nextStep: () -> Void
-    let previousStep: () -> Void
     private let done: () -> Void
     private let pumpManager: MedtrumPumpManager?
     init(
         _ pumpManager: MedtrumPumpManager?,
         _ nextStep: @escaping () -> Void,
-        _ previousStep: @escaping () -> Void,
         _ done: @escaping () -> Void
     ) {
         self.pumpManager = pumpManager
         self.nextStep = nextStep
-        self.previousStep = previousStep
         self.done = done
 
         guard let pumpManager = self.pumpManager else {
