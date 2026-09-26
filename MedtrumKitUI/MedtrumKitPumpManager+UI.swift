@@ -114,7 +114,7 @@ extension MedtrumPumpManager: PumpManagerUI {
                 imageName: "exclamationmark.circle.fill",
                 state: .critical
             )
-        } else if state.pumpState.rawValue > PatchState.active_alt.rawValue {
+        } else if state.pumpState.isSuspended || state.pumpState.isTerminated {
             return PumpStatusHighlight(
                 localizedMessage: String(
                     localized: "Patch Error",

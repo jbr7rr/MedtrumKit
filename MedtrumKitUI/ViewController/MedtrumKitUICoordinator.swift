@@ -91,18 +91,21 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return [.welcomeScreen]
         }
 
-        if pumpManager.state.pumpState.rawValue < PatchState.priming.rawValue {
+        let pumpState = pumpManager.state.pumpState
+
+        if pumpState.isBeforePriming {
             return [.settingsScreen, .pumpBaseSettingsScreen]
         }
 
-        if pumpManager.state.pumpState.rawValue < PatchState.primed.rawValue {
+        if pumpState == .priming {
             return [.patchPrimingScreen]
         }
 
-        if pumpManager.state.pumpState.rawValue < PatchState.active.rawValue {
+        if pumpState.hasCompletedPriming {
             return [.patchActivationScreen]
         }
 
+        // running or terminated
         return [.settingsScreen]
     }
 

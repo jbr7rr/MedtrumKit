@@ -220,7 +220,7 @@ struct MedtrumKitSettings: View {
                         }
                     }
 
-                    if viewModel.patchState.rawValue < PatchState.active.rawValue && viewModel.patchState != .none {
+                    if viewModel.patchState.isAwaitingActivation {
                         Button(action: { viewModel.toPumpActivation() }) {
                             HStack {
                                 Text("Activate Patch", comment: "label for activate patch")

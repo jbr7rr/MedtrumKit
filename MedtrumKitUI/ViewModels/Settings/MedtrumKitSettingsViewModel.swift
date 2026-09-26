@@ -268,8 +268,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
             return
         }
 
-        let alreadyPrimed = pumpManager.state.pumpState.rawValue >= PatchState.primed.rawValue
-        pumpActivationAction(alreadyPrimed)
+        pumpActivationAction(pumpManager.state.pumpState.hasCompletedPriming)
     }
 
     func suspendDelivery(duration: TimeInterval) {

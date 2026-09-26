@@ -7,6 +7,7 @@ public enum MedtrumPrimePatchError: LocalizedError {
     case needToDeactivateFirst
     case connectionFailure(reason: String)
     case noKnownPumpBase
+    case patchNotPrimeable(state: PatchState)
     case patchNotFilled(state: PatchState)
     case unknownError(reason: LocalizedError)
 
@@ -18,6 +19,8 @@ public enum MedtrumPrimePatchError: LocalizedError {
             return "Pump base is currently active. Please deactivate it first."
         case .noKnownPumpBase:
             return "No known pump base found."
+        case let .patchNotPrimeable(state: state):
+            return "This patch can no longer be primed (\(state.description)). Please replace it with a new patch."
         case let .patchNotFilled(state: state):
             return "The patch is not filled yet (\(state.description)). "
                 + "Attach the patch to the pump base, fill the reservoir, and try again."

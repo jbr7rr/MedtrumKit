@@ -189,7 +189,7 @@ class PatchPrimingViewModel: ObservableObject {
                     return
                 }
 
-                if pumpManager.state.pumpState.rawValue >= PatchState.primed.rawValue {
+                if pumpManager.state.pumpState.hasCompletedPriming || pumpManager.state.pumpState.isRunning {
                     DispatchQueue.main.async {
                         self.nextStep()
                     }
@@ -236,15 +236,20 @@ extension PatchPrimingViewModel: PumpManagerStatusObserver {
                 self.updateState()
                 self.primeProgress = Double(pumpManager.state.primeProgress) / 240
 
-                if pumpManager.state.pumpState.rawValue > PatchState.priming.rawValue,
-                   pumpManager.state.pumpState.rawValue < PatchState.active.rawValue
-                {
+                let pumpState = pumpManager.state.pumpState
+
+                if pumpState.hasCompletedPriming {
                     pumpManager.removeStatusObserver(self)
                     self.nextStep()
-                } else if pumpManager.state.pumpState.rawValue >= PatchState.active.rawValue {
+                } else if pumpState.isRunning {
                     // Patch already activated, ready to jump to settings
                     pumpManager.removeStatusObserver(self)
                     self.done()
+                } else if pumpState.isTerminated {
+                    self.isPriming = false
+                    self.primingError = MedtrumPrimePatchError
+                        .patchNotPrimeable(state: pumpState)
+                        .description
                 }
             }
         #endif
