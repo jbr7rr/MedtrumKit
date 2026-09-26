@@ -9,6 +9,7 @@ enum PatchLifecycleState {
     case gracePeriod
     case expired
     case expiredBasalOnly
+    case fault
 }
 
 class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, PumpManagerStatusObserver {
@@ -47,7 +48,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
     @Published var showingSuspendPicker = false
     @Published var hasPreviousPatch = false
     @Published var isClearingAlert = false
-    
+
     @Published var useSilentTones = false {
         didSet {
             // prevent infinite loop: notifyStateDidChange() -> notify observers -> notify this view model -> set useSilentTones -> notifyStateDidChange() -> ...
@@ -439,6 +440,10 @@ extension MedtrumKitSettingsViewModel {
     }
 
     private func getLifecycleState(state: MedtrumPumpState) -> PatchLifecycleState {
+        if state.pumpState.isFault {
+            return .fault
+        }
+
         if patchLifecycleProgress < 1 {
             if let patchGracePeriodFrom = state.patchGracePeriodFrom,
                patchGracePeriodFrom.addingTimeInterval(.days(-1)) <= Date.now

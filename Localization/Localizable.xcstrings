@@ -10019,6 +10019,16 @@
         }
       }
     },
+    "Connecting to the pump base..." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting to the pump base..."
+          }
+        }
+      }
+    },
     "Continue" : {
       "comment" : "Continue",
       "extractionState" : "manual",
@@ -20385,6 +20395,16 @@
         }
       }
     },
+    "No connection to the pump base" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No connection to the pump base"
+          }
+        }
+      }
+    },
     "No Delivery" : {
       "comment" : "label no delivery",
       "extractionState" : "manual",
@@ -22977,6 +22997,9 @@
         }
       }
     },
+    "Patch fault: %@" : {
+
+    },
     "Patch ID" : {
       "comment" : "Text for patchId",
       "extractionState" : "manual",
@@ -23135,6 +23158,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "贴泵ID"
+          }
+        }
+      }
+    },
+    "Patch is filled and ready" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch is filled and ready"
+          }
+        }
+      }
+    },
+    "Patch is not filled yet" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Patch is not filled yet"
           }
         }
       }
@@ -26217,6 +26260,26 @@
         }
       }
     },
+    "Priming could not be started" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Priming could not be started"
+          }
+        }
+      }
+    },
+    "Priming..." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Priming..."
+          }
+        }
+      }
+    },
     "Pump base Firmware" : {
       "comment" : "Text for firmware version",
       "extractionState" : "manual",
@@ -28321,6 +28384,16 @@
         }
       }
     },
+    "Reservoir: %@ U" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reservoir: %@ U"
+          }
+        }
+      }
+    },
     "Resume" : {
       "comment" : "Pump Event title for UnfinalizedDose with doseType of .resume",
       "extractionState" : "manual",
@@ -28803,6 +28876,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "简历交付"
+          }
+        }
+      }
+    },
+    "Retry" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
           }
         }
       }

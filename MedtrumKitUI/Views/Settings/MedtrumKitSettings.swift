@@ -153,27 +153,29 @@ struct MedtrumKitSettings: View {
 
             Section {
                 if viewModel.patchLifecycleState != .noPatch {
-                    Button(action: {
-                        viewModel.suspendResumeButtonPressed()
-                    }) {
-                        HStack {
-                            if viewModel.basalType == .suspend {
-                                Text("Resume Insulin Delivery", comment: "Resume patch")
-                            } else {
-                                Text("Suspend Insulin Delivery", comment: "Suspend patch")
-                            }
-                            Spacer()
-                            if viewModel.isUpdatingSuspend {
-                                ActivityIndicator()
+                    if viewModel.patchLifecycleState != .fault {
+                        Button(action: {
+                            viewModel.suspendResumeButtonPressed()
+                        }) {
+                            HStack {
+                                if viewModel.basalType == .suspend {
+                                    Text("Resume Insulin Delivery", comment: "Resume patch")
+                                } else {
+                                    Text("Suspend Insulin Delivery", comment: "Suspend patch")
+                                }
+                                Spacer()
+                                if viewModel.isUpdatingSuspend {
+                                    ActivityIndicator()
+                                }
                             }
                         }
-                    }
-                    .disabled(
-                        viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel
-                            .isUpdatingSuspend || viewModel.isClearingAlert
-                    )
-                    .actionSheet(isPresented: $viewModel.showingSuspendPicker) {
-                        suspendSheet
+                        .disabled(
+                            viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel
+                                .isUpdatingSuspend || viewModel.isClearingAlert
+                        )
+                        .actionSheet(isPresented: $viewModel.showingSuspendPicker) {
+                            suspendSheet
+                        }
                     }
 
                     if viewModel.basalType == .tempBasal {
@@ -208,7 +210,7 @@ struct MedtrumKitSettings: View {
                             .isUpdatingSuspend || viewModel.isClearingAlert
                     )
 
-                    if !viewModel.tempBasalManual {
+                    if !viewModel.tempBasalManual, viewModel.patchLifecycleState != .fault {
                         Button(action: { viewModel.toTempBasal() }) {
                             HStack {
                                 Text("Manual Temp Basal", comment: "sync pump")
@@ -619,6 +621,22 @@ struct MedtrumKitSettings: View {
                     .foregroundStyle(.red)
                     Spacer()
                 }
+            case .fault:
+                HStack {
+                    Text(
+                        String(
+                            format: String(
+                                localized: "Patch fault: %@",
+                                comment: "Text shown when patch fault"
+                            ),
+                            viewModel.patchStateString
+                        )
+                    )
+                    .foregroundStyle(.red)
+                    .fontWeight(.bold)
+
+                    Spacer()
+                }
             }
 
             ProgressView(value: viewModel.patchLifecycleProgress)
@@ -665,6 +683,7 @@ struct MedtrumKitSettings: View {
             return guidanceColors.warning
         case .expired,
              .expiredBasalOnly,
+             .fault,
              .gracePeriod,
              .noPatch:
             return guidanceColors.critical

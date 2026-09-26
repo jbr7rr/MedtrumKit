@@ -220,6 +220,7 @@ public class MedtrumPumpState: RawRepresentable {
             peripheralIdentifier = nil
         }
     }
+
     public var lowReservoirWarning: Double?
     public var useSilentTones: Bool
 

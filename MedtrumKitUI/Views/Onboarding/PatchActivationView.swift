@@ -54,13 +54,6 @@ struct PatchActivationView: View {
                     .foregroundStyle(.red)
             }
 
-            Button(action: { viewModel.previousStep() }) {
-                Text("Go back to priming", comment: "label for go to prime patch")
-            }
-            .buttonStyle(ActionButtonStyle(.secondary))
-            .disabled(viewModel.isActivating)
-            .padding(.horizontal)
-
             Button(action: { viewModel.activate() }) {
                 if viewModel.isActivating {
                     ActivityIndicator()

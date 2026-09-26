@@ -78,13 +78,6 @@ struct PatchPrimingView: View {
                     .padding(.horizontal)
             }
 
-            Button(action: { viewModel.previousStep() }) {
-                Text("Go back to pump base", comment: "label for go to pump base patch")
-            }
-            .buttonStyle(ActionButtonStyle(.secondary))
-            .disabled(viewModel.isPriming)
-            .padding(.horizontal)
-
             Button(action: { viewModel.startPrime() }) {
                 if viewModel.isPriming {
                     ActivityIndicator()
@@ -99,7 +92,6 @@ struct PatchPrimingView: View {
         .onAppear { viewModel.connect() }
         .listStyle(InsetGroupedListStyle())
         .edgesIgnoringSafeArea(.bottom)
-        .navigationBarBackButtonHidden(viewModel.isPriming)
     }
 
     @ViewBuilder private var statusSection: some View {

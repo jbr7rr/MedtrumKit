@@ -1,7 +1,7 @@
 import CoreBluetooth
-import UIKit
 import HealthKit
 import LoopKit
+import UIKit
 
 public class MedtrumPumpManager: DeviceManager {
     public static let pluginIdentifier = "Medtrum"
@@ -39,7 +39,7 @@ public class MedtrumPumpManager: DeviceManager {
         oldState = MedtrumPumpState(rawValue: state.rawValue)
         bluetooth = BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
         refreshLogDeviceIdentifier()
-        
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appMovedToBackground),
@@ -185,7 +185,7 @@ public class MedtrumPumpManager: DeviceManager {
             udiDeviceIdentifier: nil
         )
     }
-    
+
     private var mustProvideBLEHeartbeat = false
     private var lastHeartbeat: Date = .distantPast
 

@@ -203,7 +203,6 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             let viewModel = PatchPrimingViewModel(
                 pumpManager,
                 { [weak self] in self?.resetNavigationTo([.patchActivationScreen]) },
-                { [weak self] in self?.navigateTo(.pumpBaseSettingsScreen) },
                 { [weak self] in self?.resetNavigationTo([.settingsScreen]) }
             )
             return hostingController(
@@ -215,8 +214,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
         case .patchActivationScreen:
             let viewModel = PatchActivationViewModel(
                 pumpManager,
-                { [weak self] in self?.resetNavigationTo([.settingsScreen]) },
-                { [weak self] in self?.navigateTo(.patchPrimingScreen) }
+                { [weak self] in self?.resetNavigationTo([.settingsScreen]) }
             )
             return hostingController(
                 rootView: PatchActivationView(viewModel: viewModel)

@@ -25,19 +25,22 @@ public enum PatchState: UInt8, Codable {
     case noCalibration = 103
     case stopped = 128
 
+    var isFault: Bool {
+        switch self {
+        case .batteryOut,
+             .occlusion,
+             .patchFault,
+             .patchFaultd2,
+             .reservoirEmpty:
+            return true
+
+        default:
+            return false
+        }
+    }
+
     var isDeliveryHalted: Bool {
         switch self {
-        case .active,
-             .active_alt,
-             .ejected,
-             .ejecting,
-             .filled,
-             .idle,
-             .none,
-             .primed,
-             .priming:
-            return false
-
         case .autoSuspended,
              .baseFault,
              .batteryOut,
@@ -48,13 +51,16 @@ public enum PatchState: UInt8, Codable {
              .lowBgSuspended2,
              .noCalibration,
              .occlusion,
-             .paused,
              .patchFault,
              .patchFaultd2,
+             .paused,
              .reservoirEmpty,
              .stopped,
              .suspended:
             return true
+
+        default:
+            return false
         }
     }
 
