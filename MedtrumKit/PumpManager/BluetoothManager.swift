@@ -435,15 +435,12 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
 
         if force {
             clearPeripheralOnQueue()
-            return
         }
 
-        // The forced path finishes the attempt inside clearPeripheralOnQueue. Here nothing else
-        // would: cancelling a pending connect does not reliably produce a didDisconnect, and the
-        // deadline no longer ends an attempt on its own, so it would hold a connect that is gone.
-        if let attempt = attempt {
-            finish(attempt, .failedToConnectToDevice)
-        }
+        // No finish here on the non-forced path. Its only caller is a PeripheralManager whose flow
+        // failed: that one has already reported its attempt with the real cause, and did so over a
+        // live link, so any newer attempt is resolved by the didDisconnect this produces. Finishing
+        // here would get in first and replace that cause with a generic connect failure.
     }
 
     /// Forgets the device entirely - used when the patch is deactivated and when the pump base is
