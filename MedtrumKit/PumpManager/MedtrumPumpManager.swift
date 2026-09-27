@@ -832,7 +832,19 @@ public extension MedtrumPumpManager {
     func deactivatePatch(_ completion: @escaping (MedtrumDeactivatePatchResult) -> Void) {
         log.info("Deactivate patch pump...")
 
+        // The sync that runs as part of connecting can find that the base has reset, and end the
+        // session before we get to stop it - see `handleBaseReset`. It also drops the link, which
+        // usually fails the connect. Either way the patch is no longer active.
+        let hadActivePatch = !state.pumpState.isSetup
+        let sessionEndedWhileConnecting = { hadActivePatch && self.state.pumpState.isSetup }
+
         bluetooth.ensureConnected { error in
+            if sessionEndedWhileConnecting() {
+                self.log.info("Patch session already ended while connecting, nothing left to deactivate")
+                completion(.success)
+                return
+            }
+
             if let error = error {
                 self.log.error("Failed to connect to pump: \(error)")
                 completion(.failure(error: .connectionFailure))
