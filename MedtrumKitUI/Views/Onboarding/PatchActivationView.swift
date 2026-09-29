@@ -5,86 +5,70 @@ struct PatchActivationView: View {
     @Environment(\.dismissAction) private var dismiss
     @ObservedObject var viewModel: PatchActivationViewModel
 
+    @State private var showingSteps = false
+
     var body: some View {
-        VStack {
-            List {
-                Section {
-                    supportImage("remove_cover")
-                    HStack(alignment: .top) {
-                        Text("6.")
-                            .foregroundStyle(.primary)
-                        Text(
-                            "Remove the safety cover from the patch.",
-                            comment: "Label for inserting needle step 1"
-                        )
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
+        VStack(spacing: 0) {
+            PatchOverviewContent(assetName: "step_insert_needle") {
+                Text("Attach and Activate the Patch", comment: "Title of the patch activation screen")
+                    .font(.title2)
+                    .fontWeight(.semibold)
 
-                Section {
-                    supportImage("attach_body")
-                    HStack(alignment: .top) {
-                        Text("7.")
-                            .foregroundStyle(.primary)
-                        Text("Attach the pump to the body.", comment: "Label for inserting needle step 2")
-                            .foregroundStyle(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
+                Text(
+                    "Priming is complete. Remove the safety lock, attach the patch to your body and press the needle button to insert the needle. Then activate the patch.",
+                    comment: "Patch activation screen: overview of the steps"
+                )
+                .fixedSize(horizontal: false, vertical: true)
 
-                Section {
-                    supportImage("needle_insert")
-                    HStack(alignment: .top) {
-                        Text("8.")
-                            .foregroundStyle(.primary)
-                        Text(
-                            "Press the needle button to insert the needle. Click on \"Activate\" to complete the activation process.",
-                            comment: "Label for inserting needle step 3"
-                        )
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                Button(action: { showingSteps = true }) {
+                    Label(
+                        String(
+                            localized: "How to Attach the Patch",
+                            comment: "Title of the step-by-step activation guide, and of the button opening it"
+                        ),
+                        systemImage: "questionmark.circle.fill"
+                    )
+                    .frame(maxWidth: .infinity)
                 }
-            }
-            Spacer()
-            if !viewModel.activationError.isEmpty {
-                Text(viewModel.activationError)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.red)
+                .buttonStyle(.bordered)
             }
 
-            Button(action: { viewModel.activate() }) {
-                if viewModel.isActivating {
-                    ActivityIndicator()
-                } else {
-                    Text("Activate Patch", comment: "label for activate patch")
+            VStack(spacing: 12) {
+                if !viewModel.activationError.isEmpty {
+                    Text(viewModel.activationError)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+
+                Button(action: { viewModel.activate() }) {
+                    if viewModel.isActivating {
+                        ActivityIndicator()
+                    } else {
+                        Text("Activate Patch", comment: "label for activate patch")
+                    }
+                }
+                .disabled(viewModel.isActivating)
+                .buttonStyle(ActionButtonStyle())
             }
-            .disabled(viewModel.isActivating)
-            .buttonStyle(ActionButtonStyle())
-            .padding([.bottom, .horizontal])
+            .padding()
         }
-        .listStyle(InsetGroupedListStyle())
-        .edgesIgnoringSafeArea(.bottom)
+        .sheet(isPresented: $showingSteps) {
+            PatchStepsPagerView(
+                title: String(
+                    localized: "How to Attach the Patch",
+                    comment: "Title of the step-by-step activation guide, and of the button opening it"
+                ),
+                steps: PatchInstructionSteps.activation,
+                didFinish: { showingSteps = false }
+            )
+        }
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 Button(String(localized: "Cancel", comment: "Cancel button title"), action: {
                     self.dismiss()
                 })
             }
-        }
-    }
-
-    @ViewBuilder func supportImage(_ imageName: String) -> some View {
-        HStack {
-            Spacer()
-            Image(uiImage: UIImage(named: imageName, in: Bundle(for: MedtrumKitHUDProvider.self), compatibleWith: nil)!)
-                .resizable()
-                .scaledToFit()
-                .padding(.horizontal)
-                .frame(height: 100)
-            Spacer()
         }
     }
 }
