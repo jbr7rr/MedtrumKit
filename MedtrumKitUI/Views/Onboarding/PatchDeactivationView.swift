@@ -5,6 +5,7 @@ struct PatchDeactivationView: View {
     @ObservedObject var viewModel: DeactivatePatchViewModel
 
     @State var showingConfirmationPrompt = false
+    @State private var showingSteps = false
 
     var body: some View {
         VStack {
@@ -15,6 +16,18 @@ struct PatchDeactivationView: View {
                         "When clicking on the button, you will get a Biometrics prompt. Once completed, the patch will be deactivated and you will be prompted to pair a new patch.",
                         comment: "Instructions for deactivate patch"
                     )
+                }
+
+                Section {
+                    Button(action: { showingSteps = true }) {
+                        Label(
+                            String(
+                                localized: "How to Remove the Patch",
+                                comment: "Title of the step-by-step patch removal guide, and of the button opening it"
+                            ),
+                            systemImage: "questionmark.circle.fill"
+                        )
+                    }
                 }
             }
             Spacer()
@@ -51,6 +64,16 @@ struct PatchDeactivationView: View {
             }
         } message: {
             Text("It is recommended to deactivate first", comment: "body force remove")
+        }
+        .sheet(isPresented: $showingSteps) {
+            PatchStepsPagerView(
+                title: String(
+                    localized: "How to Remove the Patch",
+                    comment: "Title of the step-by-step patch removal guide, and of the button opening it"
+                ),
+                steps: PatchInstructionSteps.removal,
+                didFinish: { showingSteps = false }
+            )
         }
         .listStyle(InsetGroupedListStyle())
         .edgesIgnoringSafeArea(.bottom)
