@@ -13,6 +13,7 @@ public class MedtrumPumpManager: DeviceManager {
 
     public let pumpDelegate = WeakSynchronizedDelegate<PumpManagerDelegate>()
     private let statusObservers = WeakSynchronizedSet<PumpManagerStatusObserver>()
+    private let bolusProgressReporters = Locked(WeakSet<MedtrumDoseProgressReporter>())
 
     public var state: MedtrumPumpState
     var oldState: MedtrumPumpState
@@ -343,15 +344,16 @@ public extension MedtrumPumpManager {
     }
 
     func createBolusProgressReporter(reportingOn: DispatchQueue) -> (any LoopKit.DoseProgressReporter)? {
-        if let doseEntry = state.bolusDose {
-            return MedtrumDoseProgressReporter(
-                pumpManager: self,
-                dose: doseEntry,
-                reportingQueue: reportingOn
-            )
+        guard let doseEntry = state.bolusDose else {
+            return nil
         }
 
-        return nil
+        let reporter = MedtrumDoseProgressReporter(dose: doseEntry, reportingQueue: reportingOn)
+        bolusProgressReporters.mutate { reporters in
+            reporters.cleanupDeallocatedElements()
+            _ = reporters.insert(reporter)
+        }
+        return reporter
     }
 
     func estimatedDuration(toBolus units: Double) -> TimeInterval {
@@ -1084,6 +1086,12 @@ public extension MedtrumPumpManager {
 
     func notifyStateDidChange() {
         refreshLogDeviceIdentifier()
+
+        // synchronously, on the path that mutated the bolus dose
+        let activeBolusDose = state.bolusDose
+        for reporter in bolusProgressReporters.value {
+            reporter.update(activeDose: activeBolusDose)
+        }
 
         DispatchQueue.main.async {
             let status = self.status(self.state)
