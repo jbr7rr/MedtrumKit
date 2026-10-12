@@ -15,6 +15,12 @@ struct SynchronizePacketResponse: Codable {
     var truncated: Bool = false
     var invalidPayload: Bool = false
 
+    /// When it came in, taken as it is parsed: a command written after it can't be in it, whenever it is applied -
+    /// see `MedtrumPumpManager.statusPredatesCommand`
+    var receivedAt = Date.now
+    /// `receivedAt` on the monotonic clock, which a change of the wall clock does not move
+    var receivedUptime = ProcessInfo.processInfo.systemUptime
+
     func validated(expectedPatchId: UInt64 = 0) -> SynchronizePacketResponse {
         let invalidBolus = bolus.map { !(0 ... 50).contains($0.delivered) } ?? false
         let invalidBasal = basal.map { !(0 ... 40).contains($0.rate) } ?? false
@@ -24,7 +30,9 @@ struct SynchronizePacketResponse: Codable {
 
         guard !invalidBolus, !invalidBasal, !invalidReservoir, !wrongBasalPatch, !wrongStoragePatch else {
             MedtrumLogger(category: "NotificationPacket").error("Rejecting mismatched notification payload")
-            return SynchronizePacketResponse(state: state, activeAlarms: [], invalidPayload: true)
+            return SynchronizePacketResponse(
+                state: state, activeAlarms: [], invalidPayload: true, receivedAt: receivedAt, receivedUptime: receivedUptime
+            )
         }
         return self
     }

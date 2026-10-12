@@ -16,6 +16,7 @@ enum MedtrumUIScreen {
     case manualTempBasalScreen
     case patchDetailsScreen
     case patchPreviousDetailsScreen
+    case pumpRecordsScreen
 }
 
 class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, CompletionNotifying,
@@ -243,6 +244,9 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             let toPreviousPatchDetails: () -> Void = { [weak self] in
                 self?.navigateTo(.patchPreviousDetailsScreen)
             }
+            let toPumpRecords: () -> Void = { [weak self] in
+                self?.navigateTo(.pumpRecordsScreen)
+            }
             let toInsulinType: () -> Void = { [weak self] in
                 self?.navigateTo(.insulinTypeScreen)
             }
@@ -258,6 +262,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                 toTempBasal,
                 toPatchDetails,
                 toPreviousPatchDetails,
+                toPumpRecords,
                 toInsulinType,
                 { [weak self] in self?.pumpRemoval() },
                 toActivatePatch
@@ -292,6 +297,17 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return hostingController(
                 rootView: PreviousPatchDetailsView(viewModel: viewModel),
                 title: String(localized: "Previous Patch Details", comment: "header patch details")
+            )
+
+        case .pumpRecordsScreen:
+            let viewModel = PumpRecordsViewModel(pumpManager: pumpManager)
+            return hostingController(
+                rootView: PumpRecordsView(
+                    viewModel: viewModel,
+                    // The store is observed directly - a nested ObservableObject would not republish
+                    store: pumpManager?.recordStore ?? PumpRecordStore()
+                ),
+                title: "Patch Records"
             )
         }
     }

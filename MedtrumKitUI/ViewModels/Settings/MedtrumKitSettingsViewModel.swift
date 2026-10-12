@@ -46,6 +46,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
     @Published var showingHeartbeatWarning = false
     @Published var showingDeleteConfirmation = false
     @Published var showingSuspendPicker = false
+    @Published var showingStopTempBasalConfirmation = false
     @Published var hasPreviousPatch = false
     @Published var isClearingAlert = false
 
@@ -108,6 +109,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
     let toTempBasal: () -> Void
     let toPatchDetails: () -> Void
     let toPreviousPatchDetails: () -> Void
+    let toPumpRecords: () -> Void
     let toInsulinType: () -> Void
     let pumpActivationAction: (Bool) -> Void
     let activatePatchAction: () -> Void
@@ -121,6 +123,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
         _ toTempBasal: @escaping () -> Void,
         _ toPatchDetails: @escaping () -> Void,
         _ toPreviousPatchDetails: @escaping () -> Void,
+        _ toPumpRecords: @escaping () -> Void,
         _ toInsulinType: @escaping () -> Void,
         _ pumpRemovalAction: @escaping () -> Void,
         _ activatePatchAction: @escaping () -> Void
@@ -132,6 +135,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
         self.toInsulinType = toInsulinType
         self.toPatchDetails = toPatchDetails
         self.toPreviousPatchDetails = toPreviousPatchDetails
+        self.toPumpRecords = toPumpRecords
         self.toSettings = toSettings
         self.toTempBasal = toTempBasal
         self.activatePatchAction = activatePatchAction
@@ -277,6 +281,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
             return
         }
 
+        isUpdatingSuspend = true
         pumpManager.suspendPatch(duration: duration) { error in
             DispatchQueue.main.async {
                 self.isUpdatingSuspend = false
@@ -315,6 +320,9 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
             return
         }
 
+        // This goes straight to the pump manager, so the host never sees it and never logs it. Say so
+        // here, or a temp basal cancelled from this screen looks like it came out of nowhere.
+        log.info("Stop temp basal (from settings)")
         isUpdatingTempBasal = true
         pumpManager.enactTempBasal(unitsPerHour: 0, for: 0) { error in
             DispatchQueue.main.async {

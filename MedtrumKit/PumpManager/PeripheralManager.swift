@@ -91,6 +91,13 @@ class PeripheralManager: NSObject {
             semaphore.signal()
         }
 
+        // The link may be gone before CoreBluetooth has told us, and a write onto it is swallowed: it would wait out its
+        // timeout as a command that may have gone out. Down already as far as CoreBluetooth knows, it is not written.
+        guard peripheral.state == .connected else {
+            log.error("The peripheral is not connected (state \(peripheral.state.rawValue)), not writing")
+            return .failure(error: .notConnected)
+        }
+
         let writeQ = MedtrumKitDispatchGroup()
         writeQ.enter()
 
@@ -220,6 +227,9 @@ extension PeripheralManager {
             pumpManager?.state.isConnected = true
             pumpManager?.notifyStateDidChange()
             completion?(nil)
+
+            // No record sync here: the caller is about to send its command over this link. Records are read with
+            // the next full sync, or the next heartbeat while doses wait on them.
         }
     }
 
@@ -239,15 +249,7 @@ extension PeripheralManager {
             log.warning("State update: Failed to encode JSON - \(error)")
         }
 
-        StateSyncer.sync(
-            syncResponse: syncResponse,
-            state: pumpManager.state,
-            pumpManager: pumpManager,
-            duringReconnect: duringReconnect,
-            fullSync: fullSync
-        )
-
-        pumpManager.issueHeartbeatIfNeeded()
+        pumpManager.handleStatus(syncResponse, duringReconnect: duringReconnect, fullSync: fullSync)
     }
 }
 
@@ -382,15 +384,17 @@ extension PeripheralManager: CBPeripheralDelegate {
         }
 
         let response: MedtrumWriteResult<Any>
-        if packet.responseCode != 0 {
+        if packet.failed {
+            // Before the response code: in a frame that fails its checks the code is as garbled as the rest, and an
+            // error code reads as the patch turning the command down when it may well have taken it
+            log.error("Failed to parse message, either wrong command type or CRC check failed...")
+            response = .failure(error: .invalidData)
+        } else if packet.responseCode != 0 {
             // Examples for invalid codes:
             // 7 -> Invalid authorization: propably wrong session token used
             // 8 -> Invalid state: The patch is not in state 32 (active), which is required for that command
             log.error("Invalid responseCode: \(packet.responseCode)")
             response = .failure(error: .invalidResponse(code: packet.responseCode))
-        } else if packet.failed {
-            log.error("Failed to parse message, either wrong command type or CRC check failed...")
-            response = .failure(error: .invalidData)
         } else if !packet.hasEnoughData {
             let message =
                 "Packet has too little data - expected: \(packet.mimimumDataSize), data: \(packet.totalData.hexEncodedString())"
@@ -432,19 +436,11 @@ extension PeripheralManager: CBPeripheralDelegate {
     }
 
     private func considerFullSync() {
-        guard let pumpManager else {
+        // Between full syncs, read the records doses are waiting on as soon as the patch has written them
+        guard let pumpManager, let sync = pumpManager.heartbeatSync() else {
             return
         }
-
-        let age = Date.now.timeIntervalSince(pumpManager.state.lastSync)
-        guard age > MedtrumPumpManager.heartbeatSyncFreshnessInterval else {
-            return
-        }
-
-        guard pumpManager.state.bolusState == .noBolus else {
-            log.debug("Skipping sync, pump is currently bolusing")
-            return
-        }
+        let isFullSyncDue = sync == .full
 
         stateLock.lock()
         guard !isFullSyncInFlight else {
@@ -465,24 +461,32 @@ extension PeripheralManager: CBPeripheralDelegate {
                 self.stateLock.unlock()
             }
 
-            let response = self.writePacket(SynchronizePacket())
-            switch response {
-            case let .failure(error):
-                self.log.error("Failed to get synchronize: \(error.localizedDescription)")
-                return
-
-            case let .success(data):
-                guard let syncResponse = data as? SynchronizePacketResponse else {
-                    self.log.error("Failed to Synchronize packet: invalid response")
+            if isFullSyncDue {
+                let response = self.writePacket(SynchronizePacket())
+                switch response {
+                case let .failure(error):
+                    self.log.error("Failed to get synchronize: \(error.localizedDescription)")
                     return
-                }
 
-                self.parseStateUpdate(syncResponse, duringReconnect: false, fullSync: true)
+                case let .success(data):
+                    guard let syncResponse = data as? SynchronizePacketResponse else {
+                        self.log.error("Failed to Synchronize packet: invalid response")
+                        return
+                    }
 
-                if let pumpManager = self.pumpManager {
-                    StateSyncer.fetchPatchTimeIfStale(pumpManager: pumpManager)
+                    self.parseStateUpdate(syncResponse, duringReconnect: false, fullSync: true)
                 }
             }
+
+            guard let pumpManager = self.pumpManager, !self.isInvalidatedLocked else {
+                return
+            }
+
+            if isFullSyncDue {
+                StateSyncer.fetchPatchTimeIfStale(pumpManager: pumpManager)
+            }
+
+            RecordSyncer.syncRecords(pumpManager: pumpManager, trigger: isFullSyncDue ? .fullSync : .awaitingDoses)
         }
     }
 }

@@ -15,8 +15,41 @@ public class MedtrumPumpManager: DeviceManager {
     private let statusObservers = WeakSynchronizedSet<PumpManagerStatusObserver>()
     private let bolusProgressReporters = Locked(WeakSet<MedtrumDoseProgressReporter>())
 
+    /// Orders what the host is told about the doses. Held while a dose is registered or ended and reported, while a
+    /// batch is put together and handed to the delegate queue (`emitPumpEvents`), from the moment a dose is finalized
+    /// until its final has been handed over, and while a confirmation takes finals off `awaitingRecord`. So no batch
+    /// carries a dose as mutable after its final, nor leaves out one still running or waiting.
+    ///
+    /// Recursive: the ending paths emit while holding it. Never held across a BLE write. A dose's own lock is a leaf
+    /// taken under it, never the other way around.
+    private let doseReportLock = NSRecursiveLock()
+
+    /// The identities of doses finalized lately: a mutable report of one built before its final can still be on its
+    /// way after the host confirmed the final. Only under `doseReportLock`.
+    private var finalizedIdentities: [Data: Date] = [:]
+    private static let finalizedIdentityRetention: TimeInterval = .hours(1)
+
+    /// When a batch last carried the finals the host has yet to confirm. Only under `doseReportLock`.
+    private var lastFinalsSentAt = Date.distantPast
+    /// Without a batch for a while - no patch, or the host could not store the last one - the unconfirmed finals are
+    /// sent on their own, this often at most
+    private static let unconfirmedFinalsResendInterval: TimeInterval = .minutes(1)
+    /// A host that never confirms would have the finals pile up for good: one fixed this long ago is given up on
+    static let unconfirmedFinalMaximumAge: TimeInterval = .hours(24)
+
+    /// Commands in flight, by when they started: the record sync yields to them - see `isCommandActive`
+    private let activeCommands = Locked([UUID: Date]())
+    /// `ensureConnected` can orphan its completion; a command not finished this long after it connected no longer counts
+    private static let commandActivityTimeout: TimeInterval = .minutes(3)
+
+    /// The clock the record fallbacks and a bolus's deadline go by. Only tests move it.
+    var now: () -> Date = { Date.now }
+
     public var state: MedtrumPumpState
     var oldState: MedtrumPumpState
+
+    /// Records read off the patch, for the debug screen. Not part of `state` - see `PumpRecordStore`.
+    public let recordStore = PumpRecordStore()
     public var rawState: PumpManager.RawStateValue {
         state.rawValue
     }
@@ -34,11 +67,18 @@ public class MedtrumPumpManager: DeviceManager {
         logDeviceIdentifierLock.withLock { logDeviceIdentifierStorage = identifier }
     }
 
-    var bluetooth: BluetoothManager!
+    /// What every command goes over - the `BluetoothManager`, unless a test injected its own
+    var link: MedtrumLink!
+
+    /// For the UI, which scans, pairs and shows the connection state. Nil when a test injected the link.
+    var bluetooth: BluetoothManager! {
+        link as? BluetoothManager
+    }
+
     init(state: MedtrumPumpState) {
         self.state = state
         oldState = MedtrumPumpState(rawValue: state.rawValue)
-        bluetooth = BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
+        link = BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
         refreshLogDeviceIdentifier()
 
         NotificationCenter.default.addObserver(
@@ -54,8 +94,19 @@ public class MedtrumPumpManager: DeviceManager {
             object: nil
         )
 
-        bluetooth.pumpManager = self
+        link.pumpManager = self
         MedtrumLogger.pumpManager = self
+    }
+
+    /// Drives the manager over `link` instead of CoreBluetooth - for tests. Creates no central manager
+    /// and registers nothing global: no app lifecycle observers, and `MedtrumLogger` keeps no reference.
+    init(state: MedtrumPumpState, link: MedtrumLink) {
+        self.state = state
+        oldState = MedtrumPumpState(rawValue: state.rawValue)
+        self.link = link
+        refreshLogDeviceIdentifier()
+
+        link.pumpManager = self
     }
 
     deinit {
@@ -64,8 +115,8 @@ public class MedtrumPumpManager: DeviceManager {
     }
 
     public func forgetBluetoothManager() {
-        bluetooth?.pumpManager = nil
-        bluetooth = nil
+        link?.pumpManager = nil
+        link = nil
     }
 
     /// background sync, doesn't lock loops
@@ -73,6 +124,10 @@ public class MedtrumPumpManager: DeviceManager {
 
     /// start of the loop, try to avoid syncs
     static let loopSyncFreshnessInterval: TimeInterval = .minutes(4.5)
+
+    /// background sync for a bolus past its deadline: sooner than the freshness interval, but not on every heartbeat -
+    /// a full status may still show it delivering
+    static let overdueBolusSyncInterval: TimeInterval = .minutes(1)
 
     static let patchTimeRefreshInterval: TimeInterval = .minutes(30)
 
@@ -215,6 +270,20 @@ public class MedtrumPumpManager: DeviceManager {
         }
     }
 
+    /// A status from the patch: a notification it pushed, or the answer to a Synchronize the link sent
+    /// while connecting or to keep the session fresh
+    func handleStatus(_ syncResponse: SynchronizePacketResponse, duringReconnect: Bool, fullSync: Bool) {
+        StateSyncer.sync(
+            syncResponse: syncResponse,
+            state: state,
+            pumpManager: self,
+            duringReconnect: duringReconnect,
+            fullSync: fullSync
+        )
+
+        issueHeartbeatIfNeeded()
+    }
+
     private let backgroundTask = BackgroundTask()
     @objc func appMovedToBackground() {
         if state.useSilentTones {
@@ -252,16 +321,22 @@ public extension MedtrumPumpManager {
             pumpBatteryChargeRemaining: nil, // Patch pumps do not need to report back battery status
             basalDeliveryState: state.basalDeliveryState,
             bolusState: state.bolusDeliveryState,
-            insulinType: state.insulinType
+            insulinType: state.insulinType,
+            deliveryIsUncertain: state.deliveryIsUncertain
         )
     }
 
     func ensureCurrentPumpData(completion: ((Date?) -> Void)?) {
+        // Needs neither the link nor a patch
+        resendUnacknowledgedFinalsIfDue()
+
         let age = Date.now.timeIntervalSince(state.lastSync)
 
+        // Fresh or not, a bolus past its deadline is settled by a full status
         guard let activatedAt = state.patchActivatedAt,
               age > Self.loopSyncFreshnessInterval ||
-              Date.now.timeIntervalSince(activatedAt) < .minutes(4)
+              Date.now.timeIntervalSince(activatedAt) < .minutes(4) ||
+              isRunningBolusOverdue
         else {
             log.info("Skipping status update -> data is fresh or not active: \(Int(age)) sec")
             completion?(nil)
@@ -274,7 +349,13 @@ public extension MedtrumPumpManager {
             return
         }
 
-        syncPumpData(completion: completion)
+        syncPumpData { syncedAt in
+            // The patch out of reach: the doses waiting on its records must not wait for good
+            if syncedAt == nil {
+                RecordSyncer.finalizeOverdueDosesUnread(pumpManager: self)
+            }
+            completion?(syncedAt)
+        }
     }
 
     func syncPumpData(completion: ((Date?) -> Void)?) {
@@ -297,14 +378,15 @@ public extension MedtrumPumpManager {
             return
         #endif
 
-        ensureConnectedAndActive { error in
+        // Not counted as a command: the record sync below runs inside it, and would otherwise yield to it
+        ensureConnectedAndActive(isCommand: false) { error in
             if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
                 completion?(nil)
                 return
             }
 
-            let syncResult = self.bluetooth.write(SynchronizePacket())
+            let syncResult = self.link.write(SynchronizePacket())
             StateSyncer.fetchPatchTimeIfStale(pumpManager: self)
 
             switch syncResult {
@@ -334,7 +416,14 @@ public extension MedtrumPumpManager {
                     fullSync: true
                 )
 
+                // A few records before the loop hears back, so it sees the doses they finalize; the rest after
+                RecordSyncer.syncRecords(pumpManager: self, trigger: .loopSync)
+
                 completion?(Date.now)
+
+                if self.state.syncedSequenceNumber < self.state.currentSequenceNumber {
+                    RecordSyncer.syncRecords(pumpManager: self, trigger: .fullSync)
+                }
             }
         }
     }
@@ -353,6 +442,9 @@ public extension MedtrumPumpManager {
             reporters.cleanupDeallocatedElements()
             _ = reporters.insert(reporter)
         }
+
+        // An update pushed between creating it and registering it would not reach it until the next one
+        reporter.update()
         return reporter
     }
 
@@ -390,31 +482,98 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let writeResult = self.bluetooth.write(SetBolusPacket(bolusAmount: units))
+            let sentAt = Date.now
+            let sentUptime = ProcessInfo.processInfo.systemUptime
+            let sequenceAtSend = self.state.currentSequenceNumber
+            let writeResult = self.link.write(SetBolusPacket(bolusAmount: units))
+            let outcome = MedtrumCommandOutcome(writeResult)
+
+            var writeError: MedtrumWriteError?
             if case let .failure(error) = writeResult {
-                self.log.error("Failed to write: \(error.localizedDescription)")
+                writeError = error
+            }
+
+            // Never left the phone, or turned down: nothing to report
+            guard outcome == .accepted || outcome == .unknown else {
+                self.log.error("Failed to write (\(outcome)): \(writeError?.localizedDescription ?? "-")")
                 self.resetBolusState()
 
-                completion(.communication(error))
+                completion(.communication(writeError))
                 return
             }
 
+            // Unanswered, the patch may be delivering it: running and counted in full until a notification shows it
+            // delivering or its deadline passes, and never sent again
             let doseEntry = UnfinalizedDose(
                 units: units,
                 duration: duration,
                 activationType: activationType,
-                insulinType: self.state.insulinType
+                insulinType: self.state.insulinType,
+                confirmation: outcome == .unknown ? .uncertain : .confirmed
             )
+            doseEntry.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend)
 
-            let events = [NewPumpEvent.bolus(unfinalizedDose: doseEntry)]
-            self.emitPumpEvents(events, replacePendingEvents: false)
+            if case let .success(data) = writeResult, let response = data as? SetBolusResponse {
+                self.noteBolusAnswer(response, of: doseEntry)
+            }
 
-            self.state.bolusDose = doseEntry
+            // Running and reported in one step - see `doseReportLock`
+            self.doseReportLock.withLock {
+                self.state.bolusDose = doseEntry
+                self.emitPumpEvents([NewPumpEvent.bolus(unfinalizedDose: doseEntry)], replacePendingEvents: false)
+            }
             self.notifyStateDidChange()
+
+            guard outcome == .accepted else {
+                self.log.error(
+                    "Bolus of \(units) U went out unanswered (\(writeError?.localizedDescription ?? "-")): it may be " +
+                        "delivering. Counted in full until the patch shows it, or its record says otherwise - not sent again"
+                )
+                self.warnOfUncertainBolus(doseEntry)
+                completion(.uncertainDelivery)
+                return
+            }
 
             completion(nil)
         }
     }
+
+    /// The answer to SetBolus names the record the patch allocated for the bolus, and when it started it - unless it
+    /// is another patch's answer, which says nothing of ours: its record is then looked for near when it went out
+    private func noteBolusAnswer(_ response: SetBolusResponse, of dose: UnfinalizedDose) {
+        guard let recordSequence = response.recordSequence, let patchId = response.patchId,
+              let startTime = response.startTime
+        else {
+            log.warning("Set bolus answer carries no record, its record is looked for near when it went out")
+            return
+        }
+
+        guard patchId == state.patchId.toUInt64() & 0xFFFF else {
+            log.error(
+                "Set bolus answered for patch \(patchId), this is \(state.patchId.toUInt64()) - " +
+                    "its record is looked for near when it went out"
+            )
+            return
+        }
+
+        dose.noteAnswer(recordSequence: recordSequence, pumpStartTime: startTime)
+        noteAnsweredBolusRecord(AnsweredBolusRecord(sequence: recordSequence, pumpStartTime: startTime))
+        log.info("Bolus is record #\(recordSequence), patch start \(startTime)")
+    }
+
+    /// See `MedtrumPumpState.answeredBolusRecords`. Kept while its record may still be read: past the cursor, or within
+    /// a run behind it - a restart reads again from the cursor as saved.
+    private func noteAnsweredBolusRecord(_ answered: AnsweredBolusRecord) {
+        doseReportLock.withLock {
+            let oldest = state.syncedSequenceNumber - RecordSyncer.Trigger.beforeStop.maxRecords
+            state.answeredBolusRecords = Array(
+                (state.answeredBolusRecords.filter { $0.sequence > oldest } + [answered]).suffix(Self.answeredBolusRecordsKept)
+            )
+        }
+    }
+
+    /// Records that cannot be read for long pile them up: past this many, the oldest go
+    private static let answeredBolusRecordsKept = 50
 
     private func resetBolusState() {
         state.bolusDose = nil
@@ -438,7 +597,7 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let result = self.bluetooth.write(CancelBolusPacket())
+            let result = self.link.write(CancelBolusPacket())
             if case let .failure(error) = result {
                 self.log.error("Failed to cancel bolus: \(error.localizedDescription)")
                 self.state.cancelingBolusSince = nil
@@ -450,24 +609,27 @@ public extension MedtrumPumpManager {
 
             self.log.info("Bolus cancelled!")
 
-            guard let doseEntry = self.state.bolusDose else {
-                self.state.cancelingBolusSince = nil
-                self.notifyStateDidChange()
+            // Ended at the last amount the patch reported, and off the running bolus in one step - only if it still is
+            // the running one: a completion seen meanwhile ended it already. The completion the patch sends after the
+            // cancel raises the amount (`raiseCancelledBolus`), its record fixes it.
+            let ended = self.doseReportLock.withLock { () -> Bool in
+                guard let doseEntry = self.state.bolusDose, !doseEntry.isFinished else {
+                    return false
+                }
 
-                completion(.success(nil))
-                return
+                var events = self.runningTempBasal()
+                events.append(contentsOf: self.awaitRecord(doseEntry, .cancelled, endedAt: Date.now))
+                self.state.bolusDose = nil
+                self.state.cancelingBolusSince = nil
+                self.state.lastSync = Date.now
+                self.emitPumpEvents(events)
+                return true
             }
 
-            let dose = doseEntry.toDoseEntry()
-            var events = self.runningTempBasal()
-            events.append(NewPumpEvent.bolus(dose: dose))
-
-            self.state.bolusDose = nil
-            self.state.cancelingBolusSince = nil
-            self.state.lastSync = Date.now
+            if !ended {
+                self.state.cancelingBolusSince = nil
+            }
             self.notifyStateDidChange()
-
-            self.emitPumpEvents(events)
 
             completion(.success(nil))
         }
@@ -495,6 +657,13 @@ public extension MedtrumPumpManager {
             return
         }
 
+        // A suspended patch runs no temp basal
+        guard state.basalState != .suspended else {
+            log.error("Pump is suspended...")
+            completion(.deviceState(MedtrumConnectError.isSuspended))
+            return
+        }
+
         ensureConnectedAndActive { error in
             if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
@@ -502,13 +671,39 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            // The status of the reconnect may have found it suspended
+            guard self.state.basalState != .suspended else {
+                self.log.error("Pump is suspended...")
+                completion(.deviceState(MedtrumConnectError.isSuspended))
+                return
+            }
+
+            // When the temp basal so far ended, if a cancel ended it
+            var cancelledAt: Date?
+
             if self.state.basalState == .tempBasal {
                 // Need to cancel temp basal first before setting temp basal
-                let cancelResult = self.bluetooth.write(CancelTempBasalPacket())
+                let cancelSentAt = Date.now
+                let cancelResult = self.link.write(CancelTempBasalPacket())
                 if case let .failure(error) = cancelResult {
-                    self.log.error("Failed to cancel temp basal: \(error.localizedDescription)")
-                    completion(.communication(error))
+                    // Unanswered, the patch may have stopped it: it stays running, counted, until a status says
+                    let outcome = MedtrumCommandOutcome(error)
+                    self.log.error("Failed to cancel temp basal (\(outcome)): \(error.localizedDescription)")
+                    if outcome == .unknown {
+                        self.noteUnansweredCancel(sentAt: cancelSentAt)
+                        completion(.uncertainDelivery)
+                    } else {
+                        completion(.communication(error))
+                    }
                     return
+                }
+                cancelledAt = Date.now
+
+                // Cancelling ends the temp basal, which is exactly when the patch writes its record -
+                // so this response carries the number of the record it just wrote for it
+                if case let .success(data) = cancelResult, let response = data as? CancelTempBasalPacketResponse {
+                    self.adoptRecordSequence(response.basalSequence, from: "Cancel temp basal")
+                    self.noteAnsweredSegment(startingAt: response.basalStartTime)
                 }
 
                 self.state.basalState = .active
@@ -524,16 +719,69 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let packet = SetTempBasalPacket(rate: unitsPerHour, duration: duration)
-            let tempBasalResult = self.bluetooth.write(packet)
+            let sentAt = Date.now
+            let sentUptime = ProcessInfo.processInfo.systemUptime
+            let sequenceAtSend = self.state.currentSequenceNumber
+            let priorSegmentStart = self.doseReportLock.withLock { self.state.lastSegmentStart }
 
-            if case let .failure(error) = tempBasalResult {
-                self.log.error("Failed to set temp basal: \(error.localizedDescription)")
+            let packet = SetTempBasalPacket(rate: unitsPerHour, duration: duration)
+            let tempBasalResult = self.link.write(packet)
+            let outcome = MedtrumCommandOutcome(tempBasalResult)
+
+            if case let .failure(error) = tempBasalResult, outcome != .unknown {
+                self.log.error("Failed to set temp basal (\(outcome)): \(error.localizedDescription)")
 
                 // the cancel already succeeded, but new TBR failed - the patch is running the scheduled basal now
                 self.reportScheduledBasal()
 
                 completion(.communication(error))
+                return
+            }
+
+            // The response describes the segment that just started. The sequence in it belongs to the segment this
+            // one replaced, not to this one.
+            var response: SetTempBasalResponse?
+            if case let .success(data) = tempBasalResult {
+                response = data as? SetTempBasalResponse
+            }
+            if let response {
+                self.adoptRecordSequence(response.basalSequence, from: "Set temp basal")
+                self.noteAnsweredSegment(startingAt: response.basalStartTime)
+            }
+
+            // Only the segment we asked for is ours: anything else, or no answer at all, and the patch may or may not
+            // be running it
+            guard let response, RecordSyncer.isCommandedTempBasal(response, rate: unitsPerHour) else {
+                if let response {
+                    self.log.error(
+                        "Set temp basal answered with a \(response.basalType) segment at \(response.basalValue) U/h " +
+                            "from \(response.basalStartTime), not the temp basal of \(unitsPerHour) U/h we set"
+                    )
+                }
+
+                // Kept before the batch below goes out, so the state saved with it has it
+                self.keepUnconfirmedTempBasal(
+                    UnfinalizedDose(
+                        tempRate: unitsPerHour,
+                        duration: duration,
+                        insulinType: self.state.insulinType,
+                        automatic: automatic,
+                        confirmation: .uncertain,
+                        startDate: sentAt
+                    ),
+                    sentAt: sentAt,
+                    sentUptime: sentUptime,
+                    sequenceAtSend: sequenceAtSend,
+                    priorSegmentStart: priorSegmentStart
+                )
+
+                // What the host was told stands: the temp basal before ended at the cancel, then the schedule -
+                // unless a status showing the cancel's segment ended it there already
+                if let cancelledAt, self.state.basalDose.type == .tempBasal {
+                    self.reportScheduledBasal(tempBasalEndedAt: cancelledAt)
+                }
+
+                completion(.uncertainDelivery)
                 return
             }
 
@@ -545,37 +793,50 @@ public extension MedtrumPumpManager {
                 insulinType: self.state.insulinType,
                 automatic: automatic
             )
-            var events = self.finalizedTempBasal(endedAt: Date.now)
-            events.append(NewPumpEvent.tempBasal(dose: tempBasalDose.toDoseEntry(isMutable: true)))
+            tempBasalDose.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend)
 
-            self.state.basalDose = tempBasalDose
-            self.state.basalState = .tempBasal
-            self.state.lastSync = Date.now
+            // The patch's own clock, what its record is matched on
+            tempBasalDose.setPumpStartTime(response.basalStartTime)
+            let skew = response.basalStartTime.timeIntervalSince(tempBasalDose.startDate)
+            self.log.info("Temp basal patch start \(response.basalStartTime) (skew \(String(format: "%+.1f", skew))s)")
+
+            // The old one ends, the new one runs and both are reported in one step - see `doseReportLock`
+            self.doseReportLock.withLock {
+                var events = self.endTempBasal(endedAt: Date.now)
+                events.append(NewPumpEvent.tempBasal(dose: tempBasalDose.toDoseEntry(isMutable: true)))
+
+                self.state.basalDose = tempBasalDose
+                self.state.basalState = .tempBasal
+                self.state.lastSync = Date.now
+
+                self.emitPumpEvents(events)
+            }
             self.notifyStateDidChange()
-
-            self.emitPumpEvents(events)
 
             completion(nil)
         }
     }
 
-    private func reportScheduledBasal() {
-        let now = Date.now
-        var events = finalizedTempBasal(endedAt: now)
+    /// `tempBasalEndedAt`: when the temp basal running so far stopped
+    private func reportScheduledBasal(tempBasalEndedAt: Date = Date.now) {
+        // The temp basal ends and the running basal changes in one step - see `doseReportLock`
+        doseReportLock.withLock {
+            var events = endTempBasal(endedAt: tempBasalEndedAt)
 
-        let basalDose = UnfinalizedDose(
-            basalRate: state.currentBaseBasalRate,
-            insulinType: state.insulinType,
-            startDate: now
-        )
+            let basalDose = UnfinalizedDose(
+                basalRate: state.currentBaseBasalRate,
+                insulinType: state.insulinType,
+                startDate: tempBasalEndedAt
+            )
 
-        events.append(NewPumpEvent.basal(dose: basalDose.toDoseEntry()))
+            events.append(NewPumpEvent.basal(dose: basalDose.toDoseEntry()))
 
-        state.basalDose = basalDose
-        state.lastSync = Date.now
+            state.basalDose = basalDose
+            state.lastSync = Date.now
+
+            emitPumpEvents(events)
+        }
         notifyStateDidChange()
-
-        emitPumpEvents(events)
     }
 
     func suspendDelivery(completion: @escaping ((any Error)?) -> Void) {
@@ -592,25 +853,33 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let result = self.bluetooth.write(SuspendPumpPacket(duration: duration))
+            let result = self.link.write(SuspendPumpPacket(duration: duration))
             if case let .failure(error) = result {
                 self.log.error("Failed to suspend delivery: \(error.localizedDescription)")
                 completion(error)
                 return
             }
 
+            // The patch announces the suspend right away, with its exact time, and that status usually beats this:
+            // it dated the suspend and ended the temp basal there already. Otherwise now, as near as we know.
             let start = Date.now
-            let basalDose = UnfinalizedDose(suspendStartTime: start)
+            self.doseReportLock.withLock {
+                // Before the batch: the state saved with it is suspended
+                self.state.basalState = .suspended
+                self.state.lastSync = Date.now
 
-            var events = self.finalizedTempBasal(endedAt: start)
-            events.append(NewPumpEvent.suspend(dose: basalDose.toDoseEntry()))
+                guard self.state.basalDose.type != .suspend else {
+                    return
+                }
 
-            self.state.basalDose = basalDose
-            self.state.basalState = .suspended
-            self.state.lastSync = Date.now
+                let basalDose = UnfinalizedDose(suspendStartTime: start)
+                var events = self.endTempBasal(endedAt: start)
+                events.append(NewPumpEvent.suspend(dose: basalDose.toDoseEntry()))
+
+                self.state.basalDose = basalDose
+                self.emitPumpEvents(events)
+            }
             self.notifyStateDidChange()
-
-            self.emitPumpEvents(events)
 
             self.log.info("Delivery suspended for \(duration.minutes) min!")
             completion(nil)
@@ -627,7 +896,7 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let response = self.bluetooth.write(ResumePumpPacket())
+            let response = self.link.write(ResumePumpPacket())
             if case let .failure(error) = response {
                 self.log.error("Failed to resume delivery: \(error.localizedDescription)")
                 completion(error)
@@ -636,20 +905,43 @@ public extension MedtrumPumpManager {
 
             self.log.info("Resumed delivery!")
 
-            let resumeDose = UnfinalizedDose(
-                resumeStartTime: Date.now,
-                insulinType: self.state.insulinType
-            )
+            // The answer carries the segment the patch resumed with, started at the resume on its clock
+            var segmentStart: Date?
+            if case let .success(data) = response, let answer = data as? ResumePumpPacketResponse,
+               let start = answer.basalStartTime
+            {
+                segmentStart = start
+                if let sequence = answer.basalSequence {
+                    self.adoptRecordSequence(sequence, from: "Resume")
+                }
+                self.noteAnsweredSegment(startingAt: start)
+            }
 
-            var events = self.runningTempBasal()
-            events.append(NewPumpEvent.resume(dose: resumeDose.toDoseEntry()))
+            // Read and replaced in one step - see `doseReportLock`. A status showing the scheduled basal may have
+            // reported the resume already.
+            self.doseReportLock.withLock {
+                // Before the batch: the state saved with it is resumed
+                self.state.basalState = .active
+                self.state.lastSync = Date.now
 
-            self.state.basalDose = resumeDose
-            self.state.basalState = .active
-            self.state.lastSync = Date.now
+                guard self.state.basalDose.type == .suspend || self.state.basalDose.type == .tempBasal else {
+                    return
+                }
+
+                let resumedAt = segmentStart.map {
+                    self.patchTimeOnOurClock($0, notBefore: self.state.basalDose.startDate, notAfter: Date.now)
+                } ?? Date.now
+                let resumeDose = UnfinalizedDose(resumeStartTime: resumedAt, insulinType: self.state.insulinType)
+
+                // A temp basal still taken to run stopped at the suspend for good (the patch resumes the schedule):
+                // ended at the resume at the latest, it waits for its record
+                var events = self.endTempBasal(endedAt: resumedAt)
+                events.append(NewPumpEvent.resume(dose: resumeDose.toDoseEntry()))
+
+                self.state.basalDose = resumeDose
+                self.emitPumpEvents(events)
+            }
             self.notifyStateDidChange()
-
-            self.emitPumpEvents(events)
 
             completion(nil)
         }
@@ -674,13 +966,19 @@ public extension MedtrumPumpManager {
 
             let schedule = BasalSchedule(entries: items)
             let packet = SetBasalProfilePacket(basalProfile: schedule.toData())
-            let result = self.bluetooth.write(packet)
+            let result = self.link.write(packet)
 
             if case let .failure(error) = result {
                 self.log.error("Failed to sync basal schedule: \(error.localizedDescription)")
+                // Unanswered, the patch may have set it all the same - and split the temp basal running
+                if MedtrumCommandOutcome(error) == .unknown, self.disableRecordMatchOfRunningTempBasal(unanswered: true) {
+                    self.notifyStateDidChange()
+                }
                 completion(.failure(error))
                 return
             }
+
+            self.disableRecordMatchOfRunningTempBasal()
 
             self.state.basalSchedule = schedule
             self.state.lastSync = Date.now
@@ -689,6 +987,29 @@ public extension MedtrumPumpManager {
             self.log.info("Basal schedule sync complete!")
 
             completion(.success(basalSchedule))
+        }
+    }
+
+    /// The patch restarts a running temp basal in a new segment on a profile change, so it ends up with a record per
+    /// segment - and the first one read would finalize it with only part of its delivery. It falls back to our estimate.
+    /// The same for the unconfirmed temp basal, which the patch may be running. `unanswered`: the profile command went
+    /// out and no answer came back. Returns whether it applied.
+    @discardableResult private func disableRecordMatchOfRunningTempBasal(unanswered: Bool = false) -> Bool {
+        doseReportLock.withLock { () -> Bool in
+            let candidates = [state.basalDose, state.unconfirmedTempBasal].compactMap { $0 }
+            var applied = false
+
+            for tempBasal in candidates where tempBasal.type == .tempBasal && tempBasal.disableRecordMatch() {
+                applied = true
+                log.warning(
+                    "Basal profile \(unanswered ? "sent unanswered" : "set") during the temp basal of " +
+                        "\(tempBasal.startDate)\(tempBasal === state.unconfirmedTempBasal ? ", whose command went unanswered" : ""), " +
+                        "the patch \(unanswered ? "may have split" : "split") it into segments: it will be finalized " +
+                        "from our estimate, not from its records"
+                )
+            }
+
+            return applied
         }
     }
 
@@ -718,7 +1039,7 @@ public extension MedtrumPumpManager {
             notifyStateDidChange()
         }
 
-        bluetooth.ensureConnected { error in
+        link.ensureConnected { error in
             if let error = error {
                 self.log.error("Failed to connect to pump: \(error)")
                 completion(.failure(error: .connectionFailure(reason: error.errorDescription ?? "EMPTY")))
@@ -743,7 +1064,7 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let primeResult = self.bluetooth.write(PrimePacket())
+            let primeResult = self.link.write(PrimePacket())
             if case let .failure(error) = primeResult {
                 self.log.error("Failed to start priming pump: \(error)")
                 completion(.failure(error: .unknownError(reason: error)))
@@ -758,7 +1079,7 @@ public extension MedtrumPumpManager {
     func activatePatch(_ completion: @escaping (MedtrumActivatePatchResult) -> Void) {
         log.info("Activate patch pump...")
 
-        bluetooth.ensureConnected { error in
+        link.ensureConnected { error in
             if let error = error {
                 self.log.error("Failed to connect to pump: \(error)")
                 completion(.failure(error: .connectionFailure(reason: error.errorDescription ?? "EMPTY")))
@@ -813,7 +1134,7 @@ public extension MedtrumPumpManager {
                 currentTDD: 0,
                 basalProfile: self.state.basalSchedule.toData()
             )
-            let result = self.bluetooth.write(packet)
+            let result = self.link.write(packet)
             switch result {
             case let .failure(error):
                 self.log.error("Failed to activate pump: \(error)")
@@ -846,7 +1167,7 @@ public extension MedtrumPumpManager {
         let hadActivePatch = !state.pumpState.isSetup
         let sessionEndedWhileConnecting = { hadActivePatch && self.state.pumpState.isSetup }
 
-        bluetooth.ensureConnected { error in
+        link.ensureConnected { error in
             if sessionEndedWhileConnecting() {
                 self.log.info("Patch session already ended while connecting, nothing left to deactivate")
                 completion(.success)
@@ -862,7 +1183,10 @@ public extension MedtrumPumpManager {
             self.isDeactivatingPatch = true
             defer { self.isDeactivatingPatch = false }
 
-            let result = self.bluetooth.write(StopPatchPacket())
+            // The last chance to read this session's records: what is not read now is finalized from our estimate
+            RecordSyncer.syncRecords(pumpManager: self, trigger: .beforeStop)
+
+            let result = self.link.write(StopPatchPacket())
             if case let .failure(error) = result {
                 self.log.error("Failed to deactivate pump: \(error)")
                 completion(.failure(error: .unknownError(reason: error.localizedDescription)))
@@ -870,21 +1194,18 @@ public extension MedtrumPumpManager {
             }
 
             // Connected: the connect synced the patch's status, and its notifications have kept it current since
-            self.endPatchSession(at: Date.now, statusIsCurrent: true)
+            self.endPatchSession(at: Date.now, statusIsCurrent: true, disconnect: false)
 
             self.log.info("Patch deactivated")
             completion(.success)
 
-            self.bluetooth.disconnect(force: true)
+            self.link.disconnect(force: true)
         }
     }
 
     func forceDeactivatePatch() {
         log.info("Force deactivating patch...")
-
         endPatchSession(at: Date.now, statusIsCurrent: false)
-
-        bluetooth.disconnect(force: true)
     }
 
     /// The base rebooted underneath an activated patch: it came back as a blank, never activated
@@ -897,8 +1218,6 @@ public extension MedtrumPumpManager {
 
         // What the patch did last is as of the last status of it, before the base went down
         endPatchSession(at: deliveryStoppedAt, statusIsCurrent: false)
-
-        bluetooth.disconnect(force: true)
 
         if wasRunning {
             emitAlert(alertType: .baseResetNotification)
@@ -914,58 +1233,75 @@ public extension MedtrumPumpManager {
             emitAlert(alertType: .patchExpiredNotification(after: delay))
         }
 
-        var events: [NewPumpEvent] = []
-        if !state.patchSessionEnded {
-            // The previous patch was replaced without deactivating it - it fell off, or was swapped outside the app. When it
-            // stopped is unknown, so it is taken to have delivered until `start`: a temp basal or a bolus in flight ends
-            // there, and the schedule runs from there. No suspend: a host can take one with a resume at the same time as
-            // never ending.
-            log.warning("Previous patch session was not ended, ending its delivery at activation")
-            events.append(contentsOf: finalizedTempBasal(endedAt: start))
-            events.append(contentsOf: finalizeInterruptedBolus())
-        }
+        // From the finals until they are handed over - see `doseReportLock`
+        doseReportLock.withLock {
+            var events: [NewPumpEvent] = []
+            if !state.patchSessionEnded {
+                // The previous patch was replaced without deactivating it - it fell off, or was swapped outside the app.
+                // When it stopped is unknown, so it is taken to have delivered until `start`: a temp basal or a bolus in
+                // flight ends there, and the schedule runs from there. No suspend: a host can take one with a resume at
+                // the same time as never ending.
+                log.warning("Previous patch session was not ended, ending its delivery at activation")
+                events.append(contentsOf: finalizedTempBasal(endedAt: start))
+                events.append(contentsOf: finalizeInterruptedBolus())
+            }
+            // Normally none left: the previous session finalized its doses when it ended
+            events.append(contentsOf: finalizeAllAwaitingDoses(because: "a new patch was activated"))
+            dropUnconfirmedTempBasal(because: "a new patch was activated")
 
-        events.append(NewPumpEvent.replacedPump(date: start))
-        if isDelivering {
-            let resumeDose = UnfinalizedDose(
-                resumeStartTime: start,
-                insulinType: state.insulinType
-            )
-            if state.basalDose.type == .suspend {
-                // Only a suspend that was reported gets a resume: a host can take one without it as suspended before it
-                events.append(NewPumpEvent.resume(dose: resumeDose.toDoseEntry()))
-            } else if !state.patchSessionEnded {
-                let basalDose = UnfinalizedDose(
-                    basalRate: state.currentBaseBasalRate,
-                    insulinType: state.insulinType,
-                    startDate: start
+            events.append(NewPumpEvent.replacedPump(date: start))
+            if isDelivering {
+                let resumeDose = UnfinalizedDose(
+                    resumeStartTime: start,
+                    insulinType: state.insulinType
                 )
-                events.append(NewPumpEvent.basal(dose: basalDose.toDoseEntry()))
+                if state.basalDose.type == .suspend {
+                    // Only a suspend that was reported gets a resume: a host can take one without it as suspended before it
+                    events.append(NewPumpEvent.resume(dose: resumeDose.toDoseEntry()))
+                } else if !state.patchSessionEnded {
+                    let basalDose = UnfinalizedDose(
+                        basalRate: state.currentBaseBasalRate,
+                        insulinType: state.insulinType,
+                        startDate: start
+                    )
+                    events.append(NewPumpEvent.basal(dose: basalDose.toDoseEntry()))
+                }
+
+                state.basalDose = resumeDose
+                // What commands check: the old patch may have left it suspended or running a temp basal, and it would
+                // stay so until the first status that shows the new patch's basal
+                state.basalState = .active
+            } else {
+                // A resume now would count the time until the patch resumes as delivered. The suspend outstanding - the
+                // old session's, or one the status that showed it suspended recorded - stays, for the first status that
+                // shows it delivering to resume.
+                state.basalState = .suspended
             }
 
-            state.basalDose = resumeDose
-            // What commands check: the old patch may have left it suspended or running a temp basal, and it would
-            // stay so until the first status that shows the new patch's basal
-            state.basalState = .active
-        } else {
-            // A resume now would count the time until the patch resumes as delivered. The suspend outstanding - the old
-            // session's, or one the status that showed it suspended recorded - stays, for the first status
-            // that shows it delivering to resume.
-            state.basalState = .suspended
+            state.patchSessionEnded = false
+            state.initialReservoir = nil
+            state.patchId = patchId
+            // Record numbers restart with the patch
+            state.resetRecordSequence()
+            state.lastSegmentStart = nil
+            recordStore.clear()
+            state.patchActivatedAt = activatedAt
+            state.lastSync = Date.now
+            notifyStateDidChange()
+
+            emitPumpEvents(events)
         }
-
-        state.patchSessionEnded = false
-        state.initialReservoir = nil
-        state.patchId = patchId
-        state.patchActivatedAt = activatedAt
-        state.lastSync = Date.now
-        notifyStateDidChange()
-
-        emitPumpEvents(events)
     }
 
-    /// The patch session is over: delivery stopped at `stoppedAt`, unless it is known to have stopped already
-    private func endPatchSession(at deliveryStoppedAt: Date, statusIsCurrent: Bool) {
+    /// The one place a patch session ends: deactivation, a forced deactivation, and a base reset. Its records are out
+    /// of reach from here on, so everything still running or waiting on a record is finalized now, from our estimate.
+    /// Delivery stopped at `deliveryStoppedAt`, unless it is known to have stopped already - `statusIsCurrent`: the
+    /// patch's state as last reported is its state now.
+    private func endPatchSession(at deliveryStoppedAt: Date, statusIsCurrent: Bool, disconnect: Bool = true) {
+        // From the finals until they are handed over - see `doseReportLock`
+        doseReportLock.lock()
+        defer { doseReportLock.unlock() }
+
         // Delivery cannot have stopped before the running dose began
         let stoppedAt = max(deliveryStoppedAt, state.basalDose.startDate)
 
@@ -990,9 +1326,21 @@ public extension MedtrumPumpManager {
         // Otherwise the suspend is reported now.
         let hasStopped = state.basalDose.type == .suspend &&
             (state.pumpState.isTerminated || state.pumpState.isSetup || (statusIsCurrent && !state.pumpState.isDelivering))
-        let events = hasStopped ? finalizeInterruptedBolus() : stoppedDelivery(at: stoppedAt)
+
+        var events = finalizedTempBasal(endedAt: stoppedAt)
+        events.append(contentsOf: finalizeInterruptedBolus())
+        events.append(contentsOf: finalizeAllAwaitingDoses(because: "the patch session ended"))
+        if !hasStopped {
+            let suspendDose = UnfinalizedDose(suspendStartTime: stoppedAt)
+            events.append(NewPumpEvent.suspend(dose: suspendDose.toDoseEntry()))
+            state.basalDose = suspendDose
+        }
+        dropUnconfirmedTempBasal(because: "the patch session ended")
 
         state.patchId = Data()
+        state.resetRecordSequence()
+        state.lastSegmentStart = nil
+        recordStore.clear()
         state.pumpState = .none
         state.backupSessionToken = state.sessionToken
         state.sessionToken = Data()
@@ -1003,18 +1351,10 @@ public extension MedtrumPumpManager {
         notifyStateDidChange()
 
         emitPumpEvents(events)
-    }
 
-    /// Delivery stopped at `stoppedAt`: a temp basal or a bolus in flight ends there, and the suspend starts
-    private func stoppedDelivery(at stoppedAt: Date) -> [NewPumpEvent] {
-        var events = finalizedTempBasal(endedAt: stoppedAt)
-        events.append(contentsOf: finalizeInterruptedBolus())
-
-        let suspendDose = UnfinalizedDose(suspendStartTime: stoppedAt)
-        events.append(NewPumpEvent.suspend(dose: suspendDose.toDoseEntry()))
-        state.basalDose = suspendDose
-
-        return events
+        if disconnect {
+            link.disconnect(force: true)
+        }
     }
 
     func clearAlert(alertType: AlertType, completion: @escaping (Bool) -> Void) {
@@ -1027,14 +1367,14 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let clearAlertResult = self.bluetooth.write(ClearAlertPacket(alertType: alertType))
+            let clearAlertResult = self.link.write(ClearAlertPacket(alertType: alertType))
             if case let .failure(error) = clearAlertResult {
                 self.log.error("Failed to clear alert: \(error)")
                 completion(false)
                 return
             }
 
-            let resumeResult = self.bluetooth.write(ResumePumpPacket())
+            let resumeResult = self.link.write(ResumePumpPacket())
             if case let .failure(error) = resumeResult {
                 self.log.error("Failed to resume patch: \(error)")
                 completion(false)
@@ -1064,7 +1404,7 @@ public extension MedtrumPumpManager {
                 dailyMaxInsulin: self.state.maxDailyInsulin,
                 expirationTimer: self.state.expiryMode.timer
             )
-            let result = self.bluetooth.write(package)
+            let result = self.link.write(package)
             if case let .failure(error) = result {
                 self.log.error("Failed to update settings: \(error)")
                 completion(.failure(error: .unknownError(reason: error.localizedDescription)))
@@ -1088,9 +1428,8 @@ public extension MedtrumPumpManager {
         refreshLogDeviceIdentifier()
 
         // synchronously, on the path that mutated the bolus dose
-        let activeBolusDose = state.bolusDose
         for reporter in bolusProgressReporters.value {
-            reporter.update(activeDose: activeBolusDose)
+            reporter.update()
         }
 
         DispatchQueue.main.async {
@@ -1130,23 +1469,65 @@ public extension MedtrumPumpManager {
         }
     }
 
-    func updateBolusProgress(delivered: Double, completed: Bool, useEstimatedEndDate: Bool) {
-        guard let doseEntry = state.bolusDose else {
-            return
+    /// `completed: false` in a status received at `receivedAt`: the running bolus has delivered this much so far.
+    /// Never from a status received before its command went out, nor from a full status for one whose command went
+    /// unanswered - a full status never confirms that one. A notification's does: the patch is delivering it.
+    func updateBolusProgress(delivered: Double, fullSync: Bool, receivedAt: Date, receivedUptime: TimeInterval) {
+        let outcome = doseReportLock.withLock { () -> (dose: UnfinalizedDose, confirmed: Bool)? in
+            guard let doseEntry = state.bolusDose else {
+                return nil
+            }
+
+            let running = doseEntry.snapshot
+            guard !running.isFinished,
+                  !Self.statusPredatesCommand(of: running, receivedAt: receivedAt, receivedUptime: receivedUptime),
+                  !(fullSync && running.confirmation == .uncertain)
+            else {
+                return nil
+            }
+
+            let progress = doseEntry.updateProgress(delivered: delivered)
+            return progress.taken ? (doseEntry, progress.confirmed) : nil
         }
 
-        doseEntry.deliveredUnits = delivered
+        if let outcome, outcome.confirmed {
+            log.info("The patch reports delivering the bolus of \(outcome.dose.startDate) whose command went unanswered: confirmed")
+        }
+    }
 
-        if !completed {
-            return
+    /// A completion notification received at `receivedAt`: a notification carries the field only while a bolus runs,
+    /// so it is the running bolus's own, with what it delivered - a tiny one included, which completes before any
+    /// progress. A full status's completion is not this: it repeats the last bolus's for hours. Returns whether the
+    /// running bolus took it.
+    @discardableResult func completeBolus(delivered: Double, receivedAt: Date, receivedUptime: TimeInterval) -> Bool {
+        let completed = doseReportLock.withLock { () -> Bool in
+            guard let doseEntry = state.bolusDose else {
+                return false
+            }
+
+            let running = doseEntry.snapshot
+            guard !running.isFinished,
+                  !Self.statusPredatesCommand(of: running, receivedAt: receivedAt, receivedUptime: receivedUptime)
+            else {
+                return false
+            }
+
+            if running.confirmation == .uncertain {
+                log.info("The patch reports completing the bolus of \(doseEntry.startDate) whose command went unanswered")
+            }
+
+            var events = runningTempBasal()
+            events.append(contentsOf: awaitRecord(doseEntry, .completed, deliveredUnits: delivered, endedAt: Date.now))
+            state.bolusDose = nil
+            state.lastSync = Date.now
+            emitPumpEvents(events)
+            return true
         }
 
-        let dose = doseEntry.toDoseEntry(useEstimatedEndDate: useEstimatedEndDate)
-        var events = runningTempBasal()
-        events.append(NewPumpEvent.bolus(dose: dose))
+        guard completed else {
+            return false
+        }
 
-        state.bolusDose = nil
-        state.lastSync = Date.now
         notifyStateDidChange()
 
         pumpDelegate.notify { delegate in
@@ -1168,27 +1549,76 @@ public extension MedtrumPumpManager {
             }
         }
 
-        emitPumpEvents(events)
+        return true
     }
 
-    func checkBolusDone() {
-        guard let doseEntry = state.bolusDose else {
-            // No bolus was in progress during disconnect
+    /// A completion notification with no bolus running to take it: the patch's completion of the bolus a cancel just
+    /// ended, with what it really delivered. Raises the amount the cancel kept, never lowers it.
+    func raiseCancelledBolus(delivered: Double) {
+        doseReportLock.withLock {
+            let cutoff = Date.now.addingTimeInterval(-Self.cancelledBolusCompletionWindow)
+            guard let cancelled = state.awaitingRecord.last(where: { dose in
+                let snapshot = dose.snapshot
+                return dose.type == .bolus && snapshot.finishReason == .cancelled && !snapshot.isFinalized &&
+                    (snapshot.finishedAt ?? .distantPast) > cutoff
+            }) else {
+                return
+            }
+
+            guard cancelled.raiseAfterEnd(to: delivered) else {
+                return
+            }
+
+            log.info("Completion of \(delivered) U after the cancel of the bolus of \(cancelled.startDate), raising its amount")
+            emitPumpEvents([])
+        }
+    }
+
+    /// The completion the patch sends after a cancel comes within a second or so
+    private static let cancelledBolusCompletionWindow: TimeInterval = .minutes(2)
+
+    /// A full status received at `receivedAt`, past the running bolus's deadline: it is over, and we never saw how it
+    /// ended - the link was lost. Counted in full until its record says otherwise.
+    func checkBolusDone(receivedAt: Date, receivedUptime: TimeInterval) {
+        let ended = doseReportLock.withLock { () -> UnfinalizedDose.State? in
+            guard let doseEntry = state.bolusDose else {
+                return nil
+            }
+
+            let running = doseEntry.snapshot
+            guard !running.isFinished, now() >= doseEntry.deliveryDeadline(of: running),
+                  !Self.statusPredatesCommand(of: running, receivedAt: receivedAt, receivedUptime: receivedUptime)
+            else {
+                return nil
+            }
+
+            var events = runningTempBasal()
+            events.append(contentsOf: awaitRecord(doseEntry, .completionNotSeen, endedAt: nil))
+            state.bolusDose = nil
+            state.lastSync = Date.now
+            emitPumpEvents(events)
+            return running
+        }
+
+        guard let ended else {
             return
         }
 
-        log.warning("Bolus was not completed... \(doseEntry.deliveredUnits) U of the \(doseEntry.value) U")
+        if ended.confirmation == .uncertain {
+            log.warning(
+                "The bolus whose command went unanswered is past its deadline, last reported \(ended.deliveredUnits) U: " +
+                    "counted in full until its record says otherwise"
+            )
+        } else {
+            log.warning("Bolus ended unseen... last reported \(ended.deliveredUnits) U, counted in full until its record")
+        }
 
-        // We assume the bolus has completed, but did not receive completed event
-        // due to being disconnected for too long
-        doseEntry.deliveredUnits = doseEntry.value
-        let dose = doseEntry.toDoseEntry(useEstimatedEndDate: true)
-        var events = runningTempBasal()
-        events.append(NewPumpEvent.bolus(dose: dose))
-
-        state.lastSync = Date.now
-        state.bolusDose = nil
         notifyStateDidChange()
+
+        // One whose command went unanswered was warned of then
+        guard ended.confirmation == .confirmed else {
+            return
+        }
 
         pumpDelegate.notify { delegate in
             guard let delegate = delegate else {
@@ -1198,8 +1628,160 @@ public extension MedtrumPumpManager {
 
             delegate.pumpManager(self, didError: .uncertainDelivery)
         }
+    }
 
-        emitPumpEvents(events)
+    enum HeartbeatSync {
+        /// A full status, then the records
+        case full
+        /// The records doses are waiting on only
+        case records
+    }
+
+    /// What a heartbeat syncs, if anything: a full status when the last one is stale, or when a running bolus is past
+    /// its deadline - only a full status settles it, and dosing is refused until then, so it does not wait for the
+    /// loop. Otherwise the records doses wait on, once the patch has written them - not while a bolus runs.
+    internal func heartbeatSync() -> HeartbeatSync? {
+        let age = Date.now.timeIntervalSince(state.lastSync)
+        let isBolusOverdue = isRunningBolusOverdue
+        let isFullSyncDue = age > Self.heartbeatSyncFreshnessInterval ||
+            (isBolusOverdue && age > Self.overdueBolusSyncInterval)
+
+        guard isFullSyncDue || hasPendingRecordWork else {
+            return nil
+        }
+
+        guard state.bolusState == .noBolus || (isBolusOverdue && isFullSyncDue) else {
+            log.debug("Skipping sync, pump is currently bolusing")
+            return nil
+        }
+
+        return isFullSyncDue ? .full : .records
+    }
+
+    /// A running bolus past its deadline - a full status settles it
+    internal var isRunningBolusOverdue: Bool {
+        guard let doseEntry = state.bolusDose else {
+            return false
+        }
+        let running = doseEntry.snapshot
+        return !running.isFinished && now() >= doseEntry.deliveryDeadline(of: running)
+    }
+
+    /// Tells the host that `dose` may or may not have been delivered - once, and saved with the state
+    private func warnOfUncertainBolus(_ dose: UnfinalizedDose) {
+        pumpDelegate.notify { delegate in
+            guard let delegate = delegate else {
+                self.log.warning("No pump delegate, not notifying...")
+                return
+            }
+
+            guard dose.noteUncertaintyReported() else {
+                return
+            }
+
+            delegate.pumpManager(self, didError: .uncertainDelivery)
+            self.notifyStateDidChange()
+        }
+    }
+
+    /// Takes the record number out of a command response.
+    ///
+    /// Every command that ends a basal segment answers with the record the patch wrote for it. Adopting
+    /// it keeps the counter current between syncs - otherwise it only moves when a status notification
+    /// happens to arrive, and the record view sits behind the patch until then.
+    private func adoptRecordSequence(_ sequence: Double, from command: String) {
+        let sequence = Int(sequence)
+
+        guard sequence >= state.currentSequenceNumber else {
+            return
+        }
+
+        if sequence > state.currentSequenceNumber {
+            log.debug("\(command) wrote record #\(sequence)")
+            state.currentSequenceNumber = sequence
+        }
+
+        // Written just now, as the command ended a segment: the newest record the patch has
+        state.sequenceConfirmedAt = now()
+    }
+
+    /// A status received at `receivedAt` says `currentSequenceNumber` is the newest record the patch has written
+    internal func noteRecordSequenceConfirmed(receivedAt: Date) {
+        let confirmedAt = now().addingTimeInterval(receivedAt.timeIntervalSinceNow)
+        state.sequenceConfirmedAt = max(state.sequenceConfirmedAt ?? confirmedAt, confirmedAt)
+    }
+
+    enum RecordFetchDirection {
+        case newer
+        case older
+        /// Just the record the patch is currently writing - which reads back as whatever was in the slot
+        /// before, until the segment closes. Worth being able to look at deliberately.
+        /// Just the newest record, to pick it up without walking a whole batch
+        case current
+    }
+
+    /// Reads records either side of what the debug screen already holds.
+    ///
+    /// Nothing in the driver needs this: it reads forward from `syncedSequenceNumber` on connect and
+    /// never revisits. This exists so the record view can be filled in on demand - the driver's cursor
+    /// may be well past records that were never held in memory, for instance after an app restart.
+    func fetchRecords(
+        _ direction: RecordFetchDirection,
+        count: Int = 10,
+        completion: @escaping ((any Error)?) -> Void
+    ) {
+        let current = state.currentSequenceNumber
+
+        guard current > 0 else {
+            log.info("No record sequence known yet, nothing to fetch")
+            completion(nil)
+            return
+        }
+
+        let range: ClosedRange<Int>
+
+        switch direction {
+        case .newer:
+            // With nothing held, "newer" means the most recent ones rather than nothing at all
+            let from = recordStore.newestRecordSequence.map { $0 + 1 } ?? max(1, current - count + 1)
+
+            guard from <= current else {
+                log.info("Already at record \(current), nothing newer to fetch")
+                completion(nil)
+                return
+            }
+
+            range = from ... min(current, from + count - 1)
+
+        case .current:
+            range = current ... current
+
+        case .older:
+            let to = recordStore.oldestRecordSequence.map { $0 - 1 } ?? current
+
+            guard to >= 1 else {
+                log.info("Already at record 1, nothing earlier to fetch")
+                completion(nil)
+                return
+            }
+
+            range = max(1, to - count + 1) ... to
+        }
+
+        // Not counted as a command: the reads below yield to commands themselves
+        ensureConnectedAndActive(isCommand: false) { error in
+            if let error = error {
+                self.log.error("Failed to connect: \(error.localizedDescription)")
+                completion(error)
+                return
+            }
+
+            // writePacket blocks for up to 30s per record, so never on the caller's thread
+            DispatchQueue.global(qos: .userInitiated).async {
+                RecordSyncer.fetchRecords(pumpManager: self, range)
+                completion(nil)
+            }
+        }
     }
 
     private func finalizeInterruptedBolus() -> [NewPumpEvent] {
@@ -1211,27 +1793,40 @@ public extension MedtrumPumpManager {
             "Patch session ended during a bolus... \(doseEntry.deliveredUnits) U of the \(doseEntry.value) U"
         )
 
-        let dose = doseEntry.toDoseEntry()
         state.bolusDose = nil
 
-        pumpDelegate.notify { delegate in
-            guard let delegate = delegate else {
-                self.log.warning("No pump delegate, not notifying...")
-                return
-            }
-
-            delegate.pumpManager(self, didError: .uncertainDelivery)
+        // Final at once: its record can no longer be read. At the last amount reported - one the patch never
+        // confirmed counts in full.
+        guard doseEntry.finish(.interrupted, endedAt: nil, at: now()), let event = finalize(doseEntry, deliveredUnits: nil)
+        else {
+            return []
         }
 
-        return [NewPumpEvent.bolus(dose: dose)]
+        // One whose command went unanswered was warned of then
+        if doseEntry.confirmation == .confirmed {
+            pumpDelegate.notify { delegate in
+                guard let delegate = delegate else {
+                    self.log.warning("No pump delegate, not notifying...")
+                    return
+                }
+
+                delegate.pumpManager(self, didError: .uncertainDelivery)
+            }
+        }
+
+        return [event]
     }
 
-    private func ensureConnectedAndActive(_ completion: @escaping (MedtrumConnectError?) -> Void) {
+    /// `isCommand`: counted as a command from here until `completion` returns, so a record sync neither starts nor
+    /// carries on while it runs - see `isCommandActive`
+    private func ensureConnectedAndActive(isCommand: Bool = true, _ completion: @escaping (MedtrumConnectError?) -> Void) {
         guard !state.pumpState.isSetup else {
             log.warning("No active patch, failing immediately")
             completion(.failedToFindDevice)
             return
         }
+
+        let command = isCommand ? beginCommand() : nil
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else {
@@ -1239,8 +1834,52 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            self.bluetooth.ensureConnected(completion)
+            self.link.ensureConnected { error in
+                if let command {
+                    self.commandConnected(command)
+                }
+
+                // Command bodies run synchronously inside the completion (their writes block)
+                defer {
+                    if let command {
+                        self.endCommand(command)
+                    }
+                }
+
+                completion(error)
+            }
         }
+    }
+
+    private func beginCommand() -> UUID {
+        let command = UUID()
+        let startedAt = Date.now
+        activeCommands.mutate { commands in
+            commands = commands.filter { startedAt.timeIntervalSince($0.value) < Self.commandActivityTimeout }
+            commands[command] = startedAt
+        }
+        return command
+    }
+
+    /// The activity timeout counts from here: a slow reconnect must not use up the time of the command waiting on it
+    private func commandConnected(_ command: UUID) {
+        let connectedAt = Date.now
+        activeCommands.mutate { commands in
+            commands[command] = connectedAt
+        }
+    }
+
+    private func endCommand(_ command: UUID) {
+        activeCommands.mutate { commands in
+            commands[command] = nil
+        }
+    }
+
+    /// A command is between asking to connect and its last response. The record sync yields to it: its reads share
+    /// the link, and would hold up a bolus or temp basal for as long as they take.
+    internal var isCommandActive: Bool {
+        let checkedAt = Date.now
+        return activeCommands.value.contains { checkedAt.timeIntervalSince($0.value) < Self.commandActivityTimeout }
     }
 
     private func handlePumpDelegateError(method: String, _ error: Error, _ function: String = #function, _ line: Int = #line) {
@@ -1262,20 +1901,38 @@ public extension MedtrumPumpManager {
 
     /// The current temp basal (if any), reported as still running
     private func runningTempBasal() -> [NewPumpEvent] {
-        guard state.basalDose.type == .tempBasal else {
+        let dose = state.basalDose
+        let running = dose.snapshot
+        guard dose.type == .tempBasal, !running.isFinished else {
             return []
         }
 
-        return [NewPumpEvent.tempBasal(dose: state.basalDose.toDoseEntry(isMutable: true))]
+        return [NewPumpEvent.tempBasal(dose: dose.doseEntry(of: running, isMutable: true))]
     }
 
-    /// The current temp basal (if any), finalized as having stopped at `endedAt`
+    /// The current temp basal (if any), finalized at once as having stopped at `endedAt` - only for the end of a patch
+    /// session, when its record can no longer be read. Only under `doseReportLock`; the caller emits it.
     private func finalizedTempBasal(endedAt: Date) -> [NewPumpEvent] {
-        guard state.basalDose.type == .tempBasal else {
+        let dose = state.basalDose
+        // One that ended before waits on its record already, and is finalized with the rest of those
+        guard dose.type == .tempBasal, dose.finish(.interrupted, endedAt: endedAt, at: now()) else {
             return []
         }
 
-        return [NewPumpEvent.tempBasal(dose: state.basalDose.toDoseEntry(isMutable: false, endDate: endedAt))]
+        return finalize(dose, deliveredUnits: nil).map { [$0] } ?? []
+    }
+
+    /// The current temp basal (if any) stopped at `endedAt`: it waits for its record, reported as mutable until then.
+    /// The caller replaces `state.basalDose`. Only under `doseReportLock`.
+    internal func endTempBasal(endedAt: Date) -> [NewPumpEvent] {
+        doseReportLock.withLock { () -> [NewPumpEvent] in
+            let dose = state.basalDose
+            guard dose.type == .tempBasal else {
+                return []
+            }
+
+            return awaitRecord(dose, endedAt >= dose.estimatedEndDate ? .completed : .cancelled, endedAt: endedAt)
+        }
     }
 
     func emitReservoirLevel() {
@@ -1295,27 +1952,78 @@ public extension MedtrumPumpManager {
         }
     }
 
+    /// Hands `events` to the host, with every final it has yet to confirm and - with `replacePendingEvents` - every dose
+    /// still mutable: the host drops every mutable dose it holds that a replacing batch leaves out.
+    ///
+    /// Every batch has the state saved first, in the same delegate call: otherwise the host could store it and the app
+    /// be killed before the state is saved - a final would come back unfinalized, and a dose the host holds mutable
+    /// would be unknown to the restored state and purged by its next replacing batch.
     func emitPumpEvents(_ events: [NewPumpEvent], replacePendingEvents: Bool = true) {
-        var events = events
+        // The batch is built off `awaitingRecord` and handed to the delegate queue in one go - see `doseReportLock`
+        doseReportLock.lock()
+        defer { doseReportLock.unlock() }
 
-        // With `replacePendingEvents` the host drops every mutable dose it holds.
-        // Anything still in flight has to be in here, otherwise it disappears from
-        // the host's history until we report it again later.
-        if replacePendingEvents {
-            if let bolusDose = state.bolusDose, !events.contains(where: { $0.type == .bolus }) {
-                events.append(NewPumpEvent.bolus(unfinalizedDose: bolusDose))
+        dropExpiredFinals()
+        // Each dose read once, and with it whether it has a final - which can't appear meanwhile, see `finalize`
+        let snapshots = state.awaitingRecord.map { (dose: $0, snapshot: $0.snapshot) }
+        let finals = snapshots.filter(\.snapshot.isFinalized).map(\.dose)
+        let finalEvents = snapshots.compactMap { $0.dose.fixedFinalEvent(of: $0.snapshot) }
+        let finalized = Set(finalEvents.map(\.raw)).union(finalizedIdentities.keys)
+
+        // A mutable report of a dose finalized since the caller built it: it would change a finalized dose after all
+        var events = events.filter { event in
+            guard event.dose?.isMutable == true, finalized.contains(event.raw) else {
+                return true
             }
 
-            if !events.contains(where: { $0.type == .tempBasal }) {
-                events.append(contentsOf: runningTempBasal())
+            log.warning("Dropping a mutable report of the \(event.title) of \(event.date), it is finalized already")
+            return false
+        }
+
+        var identities = Set(events.map(\.raw))
+        func appendIfMissing(_ event: NewPumpEvent) {
+            guard identities.insert(event.raw).inserted else {
+                return
+            }
+            events.append(event)
+        }
+
+        // Finals the host has yet to confirm go out with every batch until it does, the same final every time
+        finalEvents.forEach(appendIfMissing)
+
+        // With `replacePendingEvents` the host drops every mutable dose it holds. Anything still in flight has to be in
+        // here: the running bolus and temp basal, and every dose still waiting on its record.
+        if replacePendingEvents {
+            if let bolusDose = state.bolusDose {
+                let bolus = bolusDose.snapshot
+                if !bolus.isFinished {
+                    appendIfMissing(NewPumpEvent.bolus(dose: bolusDose.doseEntry(of: bolus, isMutable: true)))
+                }
+            }
+
+            runningTempBasal().forEach(appendIfMissing)
+
+            for (dose, snapshot) in snapshots where !snapshot.isFinalized {
+                if let event = NewPumpEvent.finishedDose(dose, entry: dose.doseEntry(of: snapshot, isMutable: true)) {
+                    appendIfMissing(event)
+                }
             }
         }
 
+        if !finals.isEmpty {
+            lastFinalsSentAt = Date.now
+        }
+
+        recordStore.store(emitted: events.compactMap(EmittedDose.init))
+
         pumpDelegate.notify { delegate in
             guard let delegate = delegate else {
+                // The finals stay, and go out with the next batch
                 self.log.warning("No pump delegate, not notifying...")
                 return
             }
+
+            delegate.pumpManagerDidUpdateState(self)
 
             delegate.pumpManager(
                 self,
@@ -1324,9 +2032,846 @@ public extension MedtrumPumpManager {
                 replacePendingEvents: replacePendingEvents
             ) { error in
                 if let error = error {
+                    // The finals stay, and go out with the next batch
                     self.handlePumpDelegateError(method: "hasNewPumpEvents", error)
+                    return
                 }
+
+                self.acknowledgeFinals(finals)
             }
         }
+    }
+
+    // MARK: - Doses awaiting their record
+
+    /// How long a finished dose waits for its record, once every record the patch has written has been read
+    internal static let awaitingRecordTimeout: TimeInterval = .minutes(15)
+
+    /// How long a finished dose waits for its record at most, read up or not
+    internal static let awaitingRecordMaximumWait: TimeInterval = .minutes(60)
+
+    /// How far from when its command went out, on the patch clock, the record of a dose whose answer was lost may start
+    internal static let recordMatchWindow: TimeInterval = 60
+
+    /// How much earlier than when its command went out an unanswered temp basal is dated from the start its segment or
+    /// record shows: the skew is known to a few seconds only
+    internal static let unansweredStartSlack: TimeInterval = 5
+
+    /// A status received before the command of the dose it is checked against went out says nothing of that dose: the
+    /// monotonic clock where both are known (one run of the app), the wall clock otherwise
+    internal static func statusPredatesCommand(
+        of dose: UnfinalizedDose.State,
+        receivedAt: Date,
+        receivedUptime: TimeInterval
+    ) -> Bool {
+        if let sentUptime = dose.sentUptime {
+            return receivedUptime < sentUptime
+        }
+        if let sentAt = dose.sentAt {
+            return receivedAt < sentAt
+        }
+        return false
+    }
+
+    /// A time on the patch clock as ours - by the skew of the last reading - bounded to `[notBefore, notAfter]`
+    internal func patchTimeOnOurClock(_ patchTime: Date, notBefore: Date, notAfter: Date) -> Date {
+        max(min(patchTime.addingTimeInterval(-state.patchClockSkew), notAfter), notBefore)
+    }
+
+    /// For a change of the running basal that goes with ending a temp basal - see `endTempBasal`
+    internal func withDoseReportLock<T>(_ body: () -> T) -> T {
+        doseReportLock.withLock(body)
+    }
+
+    /// The patch splits a temp basal running at patch-local midnight into two records
+    internal static func crossesPatchMidnight(from start: Date, to end: Date, utcOffset: TimeInterval) -> Bool {
+        let day: TimeInterval = .hours(24)
+        let localStart = start.timeIntervalSince1970 + utcOffset
+        let nextMidnight = (floor(localStart / day) + 1) * day
+        return end.timeIntervalSince1970 + utcOffset > nextMidnight
+    }
+
+    /// A bolus or temp basal stopped running: from now on it waits for its record, and is reported as mutable until
+    /// then. Returns that interim report - nothing, if the dose has been finalized already. The dose object itself
+    /// moves over, so a progress reporter holding it sees it finished.
+    internal func awaitRecord(
+        _ dose: UnfinalizedDose,
+        _ reason: UnfinalizedDose.FinishReason,
+        deliveredUnits: Double? = nil,
+        endedAt: Date?
+    ) -> [NewPumpEvent] {
+        doseReportLock.withLock { () -> [NewPumpEvent] in
+            if dose.type == .tempBasal {
+                disableRecordMatchAcrossMidnight(dose, endedAt: endedAt ?? Date.now)
+            }
+
+            let endedNow = dose.finish(reason, deliveredUnits: deliveredUnits, endedAt: endedAt, at: now())
+            let ended = dose.snapshot
+
+            guard !ended.isFinalized else {
+                log.warning("The \(dose.type.rawValue) of \(dose.startDate) is finalized already, not awaiting its record")
+                return []
+            }
+
+            if endedNow {
+                log.info(
+                    "\(dose.type.rawValue) of \(dose.startDate) \(reason.rawValue), awaiting its record - " +
+                        "delivered \(ended.deliveredUnits) U, ended \(endedAt.map { "\($0)" } ?? "unseen"), " +
+                        "record \(ended.recordSequence.map { "#\($0)" } ?? "-"), patch start \(ended.pumpStartTime.map { "\($0)" } ?? "-")"
+                )
+            } else {
+                log.info(
+                    "\(dose.type.rawValue) of \(dose.startDate) \(reason.rawValue), but it ended already " +
+                        "(\(ended.finishReason?.rawValue ?? "-")) - keeping that end, delivered \(ended.deliveredUnits) U"
+                )
+            }
+
+            state.mutateAwaitingRecord { doses in
+                guard !doses.contains(where: { $0 === dose }) else {
+                    return
+                }
+                doses.append(dose)
+            }
+
+            return NewPumpEvent.finishedDose(dose, entry: dose.doseEntry(of: ended, isMutable: true)).map { [$0] } ?? []
+        }
+    }
+
+    /// A temp basal running across patch-local midnight - in the time zone we set on the patch - has a record each side
+    /// of it: no record may finalize it, the first half would under-count it
+    private func disableRecordMatchAcrossMidnight(_ dose: UnfinalizedDose, endedAt: Date) {
+        let running = dose.snapshot
+        guard !running.isFinished, !running.recordMatchDisabled else {
+            return
+        }
+
+        let skew = state.patchClockSkew
+        let start = running.pumpStartTime ?? dose.startDate.addingTimeInterval(skew)
+        let end = endedAt.addingTimeInterval(skew)
+        let utcOffset = state.patchUTCOffset ?? TimeInterval(TimeZone.current.secondsFromGMT())
+
+        guard Self.crossesPatchMidnight(from: start, to: end, utcOffset: utcOffset), dose.disableRecordMatch() else {
+            return
+        }
+
+        log.warning(
+            "The temp basal of \(dose.startDate) ran across patch-local midnight, which splits its record: it will be " +
+                "finalized from our estimate, not from its records"
+        )
+    }
+
+    /// Fixes the final report of `dose` - once: nil if it has one already - and keeps it in `awaitingRecord`, to go out
+    /// with every batch until the host confirms storing it. Only under `doseReportLock`; the caller hands the final
+    /// over before letting go of it. `deliveredUnits`: the record's amount, or nil for our own estimate.
+    private func finalize(_ dose: UnfinalizedDose, deliveredUnits: Double?, endDate: Date? = nil) -> NewPumpEvent? {
+        guard dose.finalize(deliveredUnits: deliveredUnits, endDate: endDate, at: now()) else {
+            log.warning("The \(dose.type.rawValue) of \(dose.startDate) is finalized already, not reporting it again")
+            return nil
+        }
+
+        state.mutateAwaitingRecord { doses in
+            guard !doses.contains(where: { $0 === dose }) else {
+                return
+            }
+            doses.append(dose)
+        }
+
+        guard let event = dose.finalEvent else {
+            return nil
+        }
+
+        finalizedIdentities = finalizedIdentities.filter { Date.now.timeIntervalSince($0.value) < Self.finalizedIdentityRetention }
+        finalizedIdentities[event.raw] = Date.now
+        return event
+    }
+
+    /// Finalizes `dose` and hands the final to the host at once. Only under `doseReportLock`.
+    private func emitFinal(_ dose: UnfinalizedDose, deliveredUnits: Double, endDate: Date? = nil) {
+        guard let event = finalize(dose, deliveredUnits: deliveredUnits, endDate: endDate) else {
+            return
+        }
+        emitPumpEvents([event])
+    }
+
+    /// Applies one record read off the patch: finalizes the dose waiting on it, if any - a bolus by the number its
+    /// command's answer gave it, or one whose answer was lost by when its command went out; a temp basal by its patch
+    /// start. Only finalizes: the identity of a dose never moves. Returns what it did, for the record screen.
+    internal func reconcile(_ response: GetRecordResponse) -> String? {
+        switch response.record {
+        case let .bolus(record):
+            guard record.type == .NORMAL else {
+                log.warning("Record \(response.sequence): \(record.type) bolus, we only deliver normal boluses")
+                return "not a normal bolus"
+            }
+
+            return doseReportLock.withLock { () -> String in
+                let skew = state.patchClockSkew
+                let waiting = state.awaitingRecord.filter { $0.type == .bolus && !$0.isFinalized }
+                // The record of a bolus whose answer named it - by its number and start - even one finalized, or gone
+                // since: never that of a neighbour whose answer was lost
+                let answered = state.answeredBolusRecords.first {
+                    $0.sequence == response.sequence &&
+                        abs(record.startTime.timeIntervalSince($0.pumpStartTime)) <= RecordSyncer.bolusStartTolerance
+                }
+                let unanswered = answered != nil ? nil : waiting.first { dose in
+                    let snapshot = dose.snapshot
+                    guard snapshot.recordSequence == nil, let sentAt = snapshot.sentAt else {
+                        return false
+                    }
+                    return response.sequence > snapshot.sequenceAtSend ?? 0 &&
+                        RecordSyncer.steps(record.normalAmount) == RecordSyncer.steps(dose.value) &&
+                        abs(record.startTime.timeIntervalSince(sentAt.addingTimeInterval(skew))) <= Self.recordMatchWindow
+                }
+
+                // The number alone could be a reused one - of a bolus cancelled before the patch wrote its record, so
+                // more than one waiting bolus may carry it. The start its answer gave tells them apart; no start of
+                // theirs, and the record may be that of a bolus whose answer was lost, given the same number.
+                let numbered = waiting.filter { $0.recordSequence == response.sequence }
+                let exact = numbered.first { dose in
+                    dose.snapshot.pumpStartTime.map {
+                        abs(record.startTime.timeIntervalSince($0)) <= RecordSyncer.bolusStartTolerance
+                    } ?? false
+                }
+
+                let match: UnfinalizedDose?
+                if let exact {
+                    guard RecordSyncer.steps(record.normalAmount) == RecordSyncer.steps(exact.value) else {
+                        log.error(
+                            "Record \(response.sequence) is the bolus of \(exact.startDate) by number and start, but of " +
+                                "\(record.normalAmount) U where we asked for \(exact.value) U - not finalizing it with it"
+                        )
+                        return "amount differs from bolus \(exact.startDate)"
+                    }
+                    match = exact
+                } else if let other = numbered.first {
+                    log.error(
+                        "Record \(response.sequence) is the bolus of \(other.startDate) by number, but starts at " +
+                            "\(record.startTime) where its answer said " +
+                            "\(other.snapshot.pumpStartTime.map { "\($0)" } ?? "-") - not finalizing it with it"
+                    )
+                    guard let unanswered else {
+                        return "start differs from bolus \(other.startDate)"
+                    }
+                    match = unanswered
+                } else {
+                    match = unanswered
+                }
+
+                guard let dose = match else {
+                    if answered != nil {
+                        log.info("Record \(response.sequence) is that of a bolus of ours finalized already, matching nothing")
+                        return "answered bolus finalized already"
+                    }
+                    log.info(
+                        "Record \(response.sequence): bolus of \(record.normalAmount) U at \(record.startTime) " +
+                            "matches no dose of ours, not imported"
+                    )
+                    return "unmatched"
+                }
+
+                let matched = dose.snapshot
+                log.info(
+                    "Record \(response.sequence) finalizes the bolus of \(dose.startDate) " +
+                        "(\(matched.finishReason?.rawValue ?? "-")): delivered \(record.normalDelivered) U of \(dose.value) U, " +
+                        "last reported \(matched.deliveredUnits) U"
+                )
+
+                emitFinal(dose, deliveredUnits: record.normalDelivered)
+                return "finalized bolus \(dose.startDate)"
+            }
+
+        case let .basal(record):
+            if record.endReason?.isSuspendedByPump() == true {
+                log.info("Record \(response.sequence): \(record.type) segment ended by \(record.endReason.map { "\($0)" } ?? "-")")
+            }
+
+            // The scheduled basal between a cancel and a set, and the like: nothing of ours waits on it
+            guard record.type.isTempBasal() else {
+                return nil
+            }
+
+            guard record.type == .ABSOLUTE_TEMP else {
+                log.info("Record \(response.sequence): \(record.type) segment, we only set absolute temp basals - not ours")
+                return "not an absolute temp basal"
+            }
+
+            return doseReportLock.withLock { () -> String in
+                if let dose = state.awaitingRecord.first(where: { dose in
+                    let snapshot = dose.snapshot
+                    guard dose.type == .tempBasal, !snapshot.isFinalized, let pumpStartTime = snapshot.pumpStartTime else {
+                        return false
+                    }
+                    return abs(record.startTime.timeIntervalSince(pumpStartTime)) <= RecordSyncer.tempBasalStartTolerance
+                }) {
+                    guard !dose.recordMatchDisabled else {
+                        log.info(
+                            "Record \(response.sequence) is a part of the temp basal of \(dose.startDate), which the patch " +
+                                "split: finalized from our estimate instead"
+                        )
+                        return "part of split temp basal \(dose.startDate)"
+                    }
+
+                    // Our start, the patch's duration: the identity stays on our clock
+                    let endDate = dose.startDate.addingTimeInterval(record.duration)
+                    log.info(
+                        "Record \(response.sequence) finalizes the temp basal of \(dose.startDate): " +
+                            "\(String(format: "%.1f", record.duration / 60)) min, delivered \(record.delivered) U - we " +
+                            "observed the end at \(dose.observedEndDate.map { "\($0)" } ?? "-")"
+                    )
+                    emitFinal(dose, deliveredUnits: record.delivered, endDate: endDate)
+                    return "finalized temp basal \(dose.startDate)"
+                }
+
+                if let outcome = finalizeUnconfirmedTempBasal(from: record, sequence: response.sequence) {
+                    return outcome
+                }
+
+                log.info(
+                    "Record \(response.sequence): temp basal of \(record.rate) U/h at \(record.startTime) matches no " +
+                        "dose of ours, not imported"
+                )
+                return "unmatched"
+            }
+
+        case .invalid,
+             .tdd,
+             .truncated,
+             .unhandled:
+            return nil
+        }
+    }
+
+    /// Finalizes, from our own estimate, the doses whose record is overdue - see `RecordSyncer.fallbackRule` - and drops
+    /// a temp basal whose command went unanswered that nothing showed ran. Returns how many.
+    @discardableResult internal func finalizeOverdueAwaitingDoses() -> Int {
+        let checkedAt = now()
+
+        return doseReportLock.withLock { () -> Int in
+            var settled = 0
+
+            // Only with every record read, counted from when it ended at the latest: a temp basal the patch may still
+            // run has no record yet, and records that cannot be read - or were skipped - say nothing: it stays,
+            // delivery uncertain
+            if let pending = state.unconfirmedTempBasal, !mayHaveSkippedRecord(of: pending) {
+                let end = unconfirmedTempBasalEnd(pending)
+                if RecordSyncer.fallbackRule(since: end, caughtUp: isCaughtUp(after: end), now: checkedAt) == .noRecord {
+                    dropUnconfirmedTempBasal(
+                        because: "no status showed it running and \(RecordSyncer.FallbackRule.noRecord.description) at the latest"
+                    )
+                    settled += 1
+                }
+            }
+
+            let overdue = state.awaitingRecord.compactMap { dose -> (dose: UnfinalizedDose, rule: RecordSyncer.FallbackRule)? in
+                let snapshot = dose.snapshot
+                guard !snapshot.isFinalized, let finishedAt = snapshot.finishedAt,
+                      let rule = RecordSyncer.fallbackRule(since: finishedAt, caughtUp: isCaughtUp(after: finishedAt), now: checkedAt)
+                else {
+                    return nil
+                }
+                return (dose, rule)
+            }
+
+            guard !overdue.isEmpty else {
+                return settled
+            }
+
+            let events = finalizeFromEstimate(overdue.map(\.dose)) { dose in
+                overdue.first { $0.dose === dose }?.rule.description ?? "-"
+            }
+            emitPumpEvents(events)
+            return settled + overdue.count
+        }
+    }
+
+    /// Final reports, from our own estimate, of every dose still waiting on its record - the records are out of reach.
+    /// Only under `doseReportLock`; the caller emits them.
+    private func finalizeAllAwaitingDoses(because reason: String) -> [NewPumpEvent] {
+        finalizeFromEstimate(state.awaitingRecord.filter { !$0.isFinalized }) { _ in reason }
+    }
+
+    /// Final reports from our own estimate. Only under `doseReportLock`; the caller emits them. A bolus whose command
+    /// went unanswered, counted in full without its record, is one the host is told was counted as delivered.
+    private func finalizeFromEstimate(_ doses: [UnfinalizedDose], because reason: (UnfinalizedDose) -> String) -> [NewPumpEvent] {
+        var events: [NewPumpEvent] = []
+
+        for dose in doses {
+            guard let event = finalize(dose, deliveredUnits: nil) else {
+                continue
+            }
+
+            let final = dose.snapshot
+            log.warning(
+                "Finalized the \(dose.type.rawValue) of \(dose.startDate) (\(final.finishReason?.rawValue ?? "-")) " +
+                    "without its record, \(reason(dose)): \(final.finalDeliveredUnits ?? 0) U delivered, by our estimate"
+            )
+
+            if dose.type == .bolus, final.confirmation == .uncertain, dose.countsInFull(final) {
+                emitAlert(alertType: .bolusCountedAsDelivered(units: dose.value))
+            }
+
+            events.append(event)
+        }
+
+        return events
+    }
+
+    /// The host stored a batch: the finals it carried need not go out again
+    private func acknowledgeFinals(_ finals: [UnfinalizedDose]) {
+        guard !finals.isEmpty else {
+            return
+        }
+
+        var acknowledged = 0
+        doseReportLock.withLock {
+            state.mutateAwaitingRecord { doses in
+                let before = doses.count
+                doses.removeAll { dose in dose.isFinalized && finals.contains { $0 === dose } }
+                acknowledged = before - doses.count
+            }
+        }
+
+        guard acknowledged > 0 else {
+            return
+        }
+
+        log.info("The host stored \(acknowledged) final report(s), done with those doses")
+        notifyStateDidChange()
+    }
+
+    /// A final the host has not confirmed in time to matter anymore, counted from when it was fixed
+    internal static func isUnconfirmedFinalExpired(_ dose: UnfinalizedDose, now: Date = Date.now) -> Bool {
+        let final = dose.snapshot
+        guard let endDate = final.finalEndDate else {
+            return false
+        }
+        return now.timeIntervalSince(final.finalizedAt ?? endDate) > unconfirmedFinalMaximumAge
+    }
+
+    /// Takes the expired finals off `awaitingRecord`. Only under `doseReportLock`.
+    private func dropExpiredFinals() {
+        let checkedAt = now()
+        var expired: [UnfinalizedDose] = []
+
+        state.mutateAwaitingRecord { doses in
+            expired = doses.filter { Self.isUnconfirmedFinalExpired($0, now: checkedAt) }
+            doses.removeAll { Self.isUnconfirmedFinalExpired($0, now: checkedAt) }
+        }
+
+        for dose in expired {
+            log.error("The host never confirmed the final of the \(dose.type.rawValue) of \(dose.startDate), giving up on it")
+        }
+    }
+
+    /// Finals the host has not confirmed, and no batch has carried for a while. Only under `doseReportLock`.
+    private var isUnconfirmedFinalsResendDue: Bool {
+        Date.now.timeIntervalSince(lastFinalsSentAt) >= Self.unconfirmedFinalsResendInterval &&
+            state.awaitingRecord.contains(where: \.isFinalized)
+    }
+
+    /// Sends the finals the host has yet to confirm again, if no batch carried them for a while. Needs neither the link
+    /// nor a patch.
+    internal func resendUnacknowledgedFinalsIfDue() {
+        doseReportLock.withLock {
+            guard isUnconfirmedFinalsResendDue else {
+                return
+            }
+
+            log.warning("The host has not confirmed \(state.awaitingRecord.filter(\.isFinalized).count) final report(s), sending them again")
+            emitPumpEvents([], replacePendingEvents: false)
+        }
+    }
+
+    /// Doses wait on records the patch has written already, or past their timeout - or finals are due to go out again
+    internal var hasPendingRecordWork: Bool {
+        if doseReportLock.withLock({ isUnconfirmedFinalsResendDue }) {
+            return true
+        }
+
+        var waitingSince = state.awaitingRecord.compactMap { dose -> Date? in
+            let snapshot = dose.snapshot
+            return snapshot.isFinalized ? nil : snapshot.finishedAt
+        }
+        if let pending = state.unconfirmedTempBasal {
+            waitingSince.append(unconfirmedTempBasalEnd(pending))
+        }
+
+        guard !waitingSince.isEmpty else {
+            return false
+        }
+
+        let checkedAt = now()
+        return state.syncedSequenceNumber < state.currentSequenceNumber || waitingSince.contains {
+            RecordSyncer.fallbackRule(since: $0, caughtUp: isCaughtUp(after: $0), now: checkedAt) != nil
+        }
+    }
+
+    /// Every record the patch has written by `end` has been read: the cursor is at the newest record it told us of, and
+    /// it told us so after `end` - when a dose ended, and its record was written. A number told before says nothing of
+    /// that record: the cursor at it, with the link lost since, is not caught up.
+    internal func isCaughtUp(after end: Date) -> Bool {
+        guard let confirmedAt = state.sequenceConfirmedAt else {
+            return false
+        }
+        return state.syncedSequenceNumber >= state.currentSequenceNumber && confirmedAt > end
+    }
+
+    /// The record sync gave up on record `sequence`, unreadable: kept if it could be the unconfirmed temp basal's
+    internal func noteSkippedRecord(_ sequence: Int) {
+        doseReportLock.withLock {
+            guard let pending = state.unconfirmedTempBasal, sequence > pending.snapshot.sequenceAtSend ?? 0 else {
+                return
+            }
+            log.warning("Record \(sequence) was skipped, and could be that of the temp basal whose command went unanswered")
+            state.skippedRecordSequences.append(sequence)
+        }
+    }
+
+    /// A record numbered past the newest one known when its command went out was skipped: it could be its record
+    private func mayHaveSkippedRecord(of pending: UnfinalizedDose) -> Bool {
+        let sequenceAtSend = pending.snapshot.sequenceAtSend ?? 0
+        return state.skippedRecordSequences.contains { $0 > sequenceAtSend }
+    }
+
+    // MARK: - Temp basal whose command went unanswered
+
+    /// A temp basal whose command went out unanswered - or was answered with another segment - is kept here, unreported:
+    /// the patch may or may not run it, and nothing reported may be taken back. A status showing it settles it as
+    /// running (`followTempBasalSegment`), its record as a final (`finalizeUnconfirmedTempBasal`) - a record of a part
+    /// of it, split at midnight or by a profile change, as running or ended, finalized from our estimate. With neither,
+    /// it is dropped as never run once every record the patch told of 15 min past when it ended at the latest was read
+    /// (`unconfirmedTempBasalEnd`, `isCaughtUp`, `finalizeOverdueAwaitingDoses`), none that could be its skipped - and
+    /// with the patch session. There is no time limit beyond that: while the records cannot be read, or one that could
+    /// be its was skipped, it stays and delivery stays uncertain.
+    private func keepUnconfirmedTempBasal(
+        _ dose: UnfinalizedDose,
+        sentAt: Date,
+        sentUptime: TimeInterval,
+        sequenceAtSend: Int,
+        priorSegmentStart: Date?
+    ) {
+        dose.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend, priorSegmentStart: priorSegmentStart)
+
+        doseReportLock.withLock {
+            if let superseded = state.unconfirmedTempBasal {
+                log.warning("The unconfirmed temp basal of \(superseded.value) U/h sent \(superseded.sentAt.map { "\($0)" } ?? "-") is superseded")
+            }
+            state.unconfirmedTempBasal = dose
+            // Those skipped before were written before it went out
+            state.skippedRecordSequences = []
+            // The patch may be running it: the next temp basal cancels first
+            state.basalState = .tempBasal
+        }
+
+        log.error(
+            "Temp basal of \(dose.value) U/h went out unanswered: kept unreported until a status shows it running, or its " +
+                "record turns up"
+        )
+        notifyStateDidChange()
+    }
+
+    /// The patch answered a later command - a cancel, a set, a resume - with the segment it started then: a segment of
+    /// the unconfirmed temp basal started before it, and ended by then
+    private func noteAnsweredSegment(startingAt start: Date) {
+        doseReportLock.withLock {
+            noteSegmentStart(start)
+            state.unconfirmedTempBasal?.noteLaterSegment(startingAt: start)
+        }
+    }
+
+    /// When the unconfirmed temp basal ended at the latest, if it ran at all: its planned end, or the start of a segment
+    /// known to have begun after its command went out (`laterSegmentStart`), on our clock. Its record is written then,
+    /// so the wait for it counts from there.
+    internal func unconfirmedTempBasalEnd(_ pending: UnfinalizedDose) -> Date {
+        guard let later = pending.snapshot.laterSegmentStart else {
+            return pending.estimatedEndDate
+        }
+        return patchTimeOnOurClock(later, notBefore: pending.startDate, notAfter: pending.estimatedEndDate)
+    }
+
+    /// A status received at `receivedAt` shows a segment - or a suspend - that started at `start` on the patch clock, and
+    /// is not the unconfirmed temp basal's. Started after its command went out, on the patch clock (through the skew,
+    /// with `unansweredStartSlack` for it), it began after that command: the temp basal, if it ran at all, ended by
+    /// then. Started later than the last segment known when the command went out is not enough: that one can be
+    /// stale - a midnight restart we never heard of starts between the two. Returns whether no unconfirmed temp basal
+    /// may still run past this segment's start - none is kept, or this one ended it.
+    @discardableResult internal func noteSegmentAfterUnconfirmedTempBasal(
+        startingAt start: Date,
+        receivedAt: Date,
+        receivedUptime: TimeInterval
+    ) -> Bool {
+        doseReportLock.withLock { () -> Bool in
+            guard let pending = state.unconfirmedTempBasal else {
+                return true
+            }
+
+            let unconfirmed = pending.snapshot
+            let sentOnPatchClock = (unconfirmed.sentAt ?? pending.startDate)
+                .addingTimeInterval(state.patchClockSkew + Self.unansweredStartSlack)
+            guard let prior = unconfirmed.priorSegmentStart, start > prior, start > sentOnPatchClock,
+                  !Self.statusPredatesCommand(of: unconfirmed, receivedAt: receivedAt, receivedUptime: receivedUptime)
+            else {
+                return false
+            }
+
+            if unconfirmed.laterSegmentStart.map({ start < $0 }) ?? true {
+                log.info("A segment from \(start) began after the unconfirmed temp basal's command: it ended by then, if it ran")
+            }
+            pending.noteLaterSegment(startingAt: start)
+            return true
+        }
+    }
+
+    /// A segment the patch reported, from a status or an answer - see `MedtrumPumpState.lastSegmentStart`. Only under
+    /// `doseReportLock`, which orders it against the command that reads it.
+    internal func noteSegmentStart(_ start: Date) {
+        state.lastSegmentStart = max(state.lastSegmentStart ?? start, start)
+    }
+
+    /// Drops the unconfirmed temp basal, never reported. Only under `doseReportLock`.
+    private func dropUnconfirmedTempBasal(because reason: String) {
+        guard let dose = state.unconfirmedTempBasal else {
+            return
+        }
+
+        log.warning("Dropping the temp basal of \(dose.value) U/h whose command went unanswered, \(reason)")
+        state.unconfirmedTempBasal = nil
+    }
+
+    /// A status received at `receivedAt` shows a temp basal segment, `basal`: one of ours whose cancel went unanswered
+    /// still runs; one whose command went unanswered, started since the last segment known before it, runs - reported
+    /// from its start on. Any other temp segment is not ours: it changes nothing, but may end the unconfirmed one.
+    internal func followTempBasalSegment(_ basal: BasalData, fullSync: Bool, receivedAt: Date, receivedUptime: TimeInterval) {
+        doseReportLock.withLock {
+            let dose = state.basalDose
+            let running = dose.snapshot
+            let isOurRate = basal.type == .ABSOLUTE_TEMP && abs(basal.rate - dose.value) <= 0.01
+
+            if dose.type == .tempBasal, !running.isFinished {
+                if let pumpStartTime = running.pumpStartTime {
+                    if isOurRate, abs(basal.startTime.timeIntervalSince(pumpStartTime)) <= RecordSyncer.tempBasalStartTolerance {
+                        if fullSync, let stopUnansweredAt = running.stopUnansweredAt, receivedAt > stopUnansweredAt,
+                           dose.clearStopUnanswered()
+                        {
+                            log.info("A full status shows the temp basal of \(dose.startDate) still running after its unanswered cancel")
+                        }
+                        return
+                    }
+                } else if isOurRate, dose.setPumpStartTime(basal.startTime) {
+                    // Saved by a build that did not keep the answer's
+                    log.info("Adopted patch start \(basal.startTime) for the running temp basal")
+                    return
+                }
+            }
+
+            guard let pending = state.unconfirmedTempBasal else {
+                if dose.type == .tempBasal {
+                    let utcOffset = state.patchUTCOffset ?? TimeInterval(TimeZone.current.secondsFromGMT())
+                    if isOurRate, !running.isFinished, let pumpStartTime = running.pumpStartTime,
+                       basal.startTime > pumpStartTime,
+                       Self.isPatchMidnight(basal.startTime, utcOffset: utcOffset) || running.recordMatchDisabled
+                    {
+                        // The patch restarts the running segment at patch-local midnight, and on a basal profile change
+                        log.info(
+                            "Status shows the temp basal of \(dose.startDate) restarted by the patch at \(basal.startTime) " +
+                                "(patch-local midnight or a profile change), still running"
+                        )
+                    } else {
+                        log.info("Status shows a \(basal.type) segment at \(basal.rate) U/h from \(basal.startTime), not our temp basal")
+                    }
+                }
+                return
+            }
+
+            if !confirmUnconfirmedTempBasal(pending, shownBy: basal, receivedAt: receivedAt) {
+                noteSegmentAfterUnconfirmedTempBasal(startingAt: basal.startTime, receivedAt: receivedAt, receivedUptime: receivedUptime)
+            }
+        }
+    }
+
+    /// The segment a status shows is the unconfirmed temp basal's: at its rate, started no earlier than the last segment
+    /// known before its command went out (and before one a later command started) - on the patch clock, exactly. It
+    /// runs: reported from its start on - or, the segment a restart of it, from its command on, and finalized from our
+    /// estimate. Only under `doseReportLock`.
+    /// The same second counts: the patch can start the temp basal in the second the cancel's STANDARD began, and a
+    /// segment of another type starting then can only be the one that replaced it. Returns whether it was the one.
+    private func confirmUnconfirmedTempBasal(
+        _ pending: UnfinalizedDose,
+        shownBy basal: BasalData,
+        receivedAt: Date
+    ) -> Bool {
+        let unconfirmed = pending.snapshot
+        guard basal.type == .ABSOLUTE_TEMP, abs(basal.rate - pending.value) <= 0.01,
+              let prior = unconfirmed.priorSegmentStart, basal.startTime >= prior,
+              unconfirmed.laterSegmentStart.map({ basal.startTime < $0 }) ?? true
+        else {
+            log.info(
+                "Status shows a \(basal.type) segment at \(basal.rate) U/h from \(basal.startTime): not the temp basal " +
+                    "whose command went unanswered"
+            )
+            return false
+        }
+
+        let sentAt = unconfirmed.sentAt ?? pending.startDate
+        // Started well after the command, the segment is a restart of it - at patch-local midnight, on a profile
+        // change - not its first: it ran from the command on, and its first record ends at the restart
+        let restarted = basal.startTime.timeIntervalSince(sentAt.addingTimeInterval(state.patchClockSkew)) > Self.recordMatchWindow
+        let start = restarted ? sentAt : patchTimeOnOurClock(
+            basal.startTime,
+            notBefore: sentAt.addingTimeInterval(-Self.unansweredStartSlack),
+            notAfter: receivedAt
+        )
+        let tempBasalDose = UnfinalizedDose(
+            tempRate: pending.value,
+            duration: pending.estimatedEndDate.timeIntervalSince(pending.startDate),
+            insulinType: pending.insulinType,
+            automatic: pending.automatic,
+            startDate: start
+        )
+        tempBasalDose.noteCommand(sentAt: sentAt, uptime: unconfirmed.sentUptime, sequence: unconfirmed.sequenceAtSend ?? 0)
+        tempBasalDose.setPumpStartTime(basal.startTime)
+
+        if restarted || unconfirmed.recordMatchDisabled {
+            // A record of a part would finalize it with that part
+            tempBasalDose.disableRecordMatch()
+            log.warning(
+                "Status shows the temp basal of \(pending.value) U/h whose command went unanswered running since " +
+                    "\(basal.startTime), \(restarted ? "a restart of it" : "split by a profile change"): reported from " +
+                    "\(start) on, finalized from our estimate, not from its records"
+            )
+        } else {
+            log.info(
+                "Status shows the temp basal of \(pending.value) U/h whose command went unanswered running since " +
+                    "\(basal.startTime): reported from \(start) on"
+            )
+        }
+
+        var events = endTempBasal(endedAt: start)
+        events.append(NewPumpEvent.tempBasal(dose: tempBasalDose.toDoseEntry(isMutable: true)))
+
+        state.unconfirmedTempBasal = nil
+        state.basalDose = tempBasalDose
+        state.basalState = .tempBasal
+        state.lastSync = Date.now
+        emitPumpEvents(events)
+        return true
+    }
+
+    /// `record` is the unconfirmed temp basal's: at its rate, started near when its command went out, between the
+    /// segments known before (the same second counts, as for a status) and after it. It ran: reported once, final from
+    /// its record - unless the record is only a part of it (`runSplitUnconfirmedTempBasal`). Only under
+    /// `doseReportLock`.
+    private func finalizeUnconfirmedTempBasal(from record: BasalRecord, sequence: Int) -> String? {
+        guard let pending = state.unconfirmedTempBasal else {
+            return nil
+        }
+
+        let unconfirmed = pending.snapshot
+        let sentAt = unconfirmed.sentAt ?? pending.startDate
+        guard RecordSyncer.steps(record.rate) == RecordSyncer.steps(pending.value),
+              abs(record.startTime.timeIntervalSince(sentAt.addingTimeInterval(state.patchClockSkew))) <= Self.recordMatchWindow,
+              unconfirmed.priorSegmentStart.map({ record.startTime >= $0 }) ?? true,
+              unconfirmed.laterSegmentStart.map({ record.startTime < $0 }) ?? true
+        else {
+            return nil
+        }
+
+        let start = patchTimeOnOurClock(record.startTime, notBefore: sentAt.addingTimeInterval(-Self.unansweredStartSlack), notAfter: Date.now)
+        let tempBasalDose = UnfinalizedDose(
+            tempRate: pending.value,
+            duration: pending.estimatedEndDate.timeIntervalSince(pending.startDate),
+            insulinType: pending.insulinType,
+            automatic: pending.automatic,
+            startDate: start
+        )
+        tempBasalDose.noteCommand(sentAt: sentAt, uptime: nil, sequence: unconfirmed.sequenceAtSend ?? 0)
+        tempBasalDose.setPumpStartTime(record.startTime)
+
+        let utcOffset = state.patchUTCOffset ?? TimeInterval(TimeZone.current.secondsFromGMT())
+        if unconfirmed.recordMatchDisabled || Self.isPatchMidnight(record.endTime, utcOffset: utcOffset) {
+            return runSplitUnconfirmedTempBasal(pending, as: tempBasalDose, shownBy: record, sequence: sequence)
+        }
+
+        let endDate = start.addingTimeInterval(record.duration)
+        tempBasalDose.finish(endDate >= tempBasalDose.estimatedEndDate ? .completed : .cancelled, endedAt: endDate, at: now())
+        state.unconfirmedTempBasal = nil
+
+        log.info(
+            "Record \(sequence) is the temp basal of \(pending.value) U/h whose command went unanswered: it ran " +
+                "\(String(format: "%.1f", record.duration / 60)) min from \(record.startTime), delivered \(record.delivered) U"
+        )
+        emitFinal(tempBasalDose, deliveredUnits: record.delivered, endDate: endDate)
+        return "finalized unconfirmed temp basal \(start)"
+    }
+
+    /// `record`, the unconfirmed temp basal's, ends where the patch split it - at patch-local midnight, or on a profile
+    /// change: only a part of it, but proof it ran. It is reported from the record's start on, and no record finalizes
+    /// it: it runs until it ended at the latest (`unconfirmedTempBasalEnd`) - waiting from there if that has passed -
+    /// and is finalized from our estimate. Only under `doseReportLock`.
+    private func runSplitUnconfirmedTempBasal(
+        _ pending: UnfinalizedDose,
+        as tempBasalDose: UnfinalizedDose,
+        shownBy record: BasalRecord,
+        sequence: Int
+    ) -> String {
+        tempBasalDose.disableRecordMatch()
+        let end = unconfirmedTempBasalEnd(pending)
+        state.unconfirmedTempBasal = nil
+
+        log.warning(
+            "Record \(sequence) is a part of the temp basal of \(pending.value) U/h whose command went unanswered, from " +
+                "\(record.startTime) to \(record.endTime) where the patch split it: it ran - reported from " +
+                "\(tempBasalDose.startDate) on, finalized from our estimate, not from its records"
+        )
+
+        var events: [NewPumpEvent]
+        if end <= now() {
+            events = awaitRecord(tempBasalDose, end >= tempBasalDose.estimatedEndDate ? .completed : .cancelled, endedAt: end)
+        } else {
+            events = endTempBasal(endedAt: tempBasalDose.startDate)
+            events.append(NewPumpEvent.tempBasal(dose: tempBasalDose.toDoseEntry(isMutable: true)))
+            state.basalDose = tempBasalDose
+            state.basalState = .tempBasal
+        }
+
+        state.lastSync = Date.now
+        emitPumpEvents(events)
+        return "part of split unconfirmed temp basal \(tempBasalDose.startDate)"
+    }
+
+    /// The patch splits a temp basal at patch-local midnight: a record of it ending then is a part
+    internal static func isPatchMidnight(_ time: Date, utcOffset: TimeInterval) -> Bool {
+        (time.timeIntervalSince1970 + utcOffset).truncatingRemainder(dividingBy: .hours(24)) == 0
+    }
+
+    /// A cancel of the running temp basal went out at `sentAt` and no answer came back: the patch may have stopped it.
+    /// It stays running and counted until a status says otherwise.
+    private func noteUnansweredCancel(sentAt: Date) {
+        guard state.basalDose.markStopUnanswered(at: sentAt) else {
+            return
+        }
+
+        log.warning("The cancel of the temp basal of \(state.basalDose.startDate) went unanswered, it may have stopped")
+        notifyStateDidChange()
+    }
+}
+
+private extension EmittedDose {
+    /// Events without a dose - alerts, patch replacement - carry no delivery and are skipped.
+    init?(_ event: NewPumpEvent) {
+        guard let dose = event.dose else {
+            return nil
+        }
+
+        self.init(
+            emittedAt: Date.now,
+            kind: dose.type.rawValue.uppercased(),
+            start: dose.startDate,
+            end: dose.endDate,
+            identity: dose.syncIdentifier ?? "-",
+            isMutable: dose.isMutable,
+            programmed: dose.programmedUnits,
+            delivered: dose.deliveredUnits
+        )
     }
 }

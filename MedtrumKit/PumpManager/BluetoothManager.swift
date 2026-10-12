@@ -1,6 +1,25 @@
 import CoreBluetooth
 
-class BluetoothManager: NSObject, CBCentralManagerDelegate {
+/// The connection to the patch as the pump manager drives it: connect, send a command and wait for its
+/// answer, drop the link. The statuses the patch pushes travel the other way, to `pumpManager`.
+///
+/// `BluetoothManager` is the only real one - this exists so the manager can be driven without
+/// CoreBluetooth, which the unit tests do with a scripted link. The UI keeps the concrete
+/// `BluetoothManager` for scanning, pairing and the connection state.
+protocol MedtrumLink: AnyObject {
+    /// Receives the statuses the patch pushes. The real link holds it weakly.
+    var pumpManager: MedtrumPumpManager? { get set }
+
+    /// Calls back once the session is usable, or with why it is not
+    func ensureConnected(_ completion: @escaping (MedtrumConnectError?) -> Void)
+
+    /// Sends a command and blocks until its answer arrives or the write times out
+    func write(_ packet: any MedtrumBasePacketProtocol) -> MedtrumWriteResult<Any>
+
+    func disconnect(force: Bool)
+}
+
+class BluetoothManager: NSObject, CBCentralManagerDelegate, MedtrumLink {
     public weak var pumpManager: MedtrumPumpManager? {
         didSet {
             // The first state report usually arrives before this is set - see `identifierAtLaunch` -

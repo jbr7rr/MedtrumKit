@@ -5,12 +5,14 @@ import LoopKit
 // than the estimated rate, and an estimate would complete while the bolus is still running.
 // Without updates (e.g. disconnected) it stays at the last reported amount.
 //
-// The pump manager pushes updates (`update(activeDose:)`) from `notifyStateDidChange`, so the dose and pump state
-// are only read on the path that mutates them; `progress` reads the locked snapshot.
+// The pump manager pushes updates (`update()`) from `notifyStateDidChange`, so the dose is only read on the path that
+// mutates it; `progress` reads the locked snapshot.
 //
-// Completes only once the pump manager has finalized this dose (no longer `state.bolusDose`):
-// confirmed completion and the reconnect path that assumes completion (`checkBolusDone`) report the full amount;
-// a cancelled or interrupted bolus stays at its partial amount, and the reporter is torn down on `.noBolus`.
+// Completes once the dose itself is finished (`UnfinalizedDose.isFinished`) - it then waits for its record as the same
+// object - rather than once it is no longer `state.bolusDose`: `notifyStateDidChange` runs on several queues, and one
+// that read "no bolus" just before a new one started would complete the new one's reporter. It reports the amount the
+// dose stopped at: a completion its own, a cancelled or interrupted bolus its partial one. A bolus never registered -
+// its command not sent or turned down - never reaches a reporter. The reporter is torn down on `.noBolus`.
 class MedtrumDoseProgressReporter: DoseProgressTimerEstimator {
     // Below 1, so a dose the patch reported as fully delivered doesn't read as complete before the patch confirms it.
     // High enough for the "x of y U" display to round to the full amount.
@@ -18,7 +20,7 @@ class MedtrumDoseProgressReporter: DoseProgressTimerEstimator {
 
     private struct Snapshot: Equatable {
         var deliveredUnits: Double
-        var isFinalized: Bool
+        var isFinished: Bool
     }
 
     private let dose: UnfinalizedDose
@@ -31,7 +33,7 @@ class MedtrumDoseProgressReporter: DoseProgressTimerEstimator {
         let percent = units > 0 ? min(snapshot.deliveredUnits / units, 1) : 1
         return DoseProgress(
             deliveredUnits: snapshot.deliveredUnits,
-            percentComplete: snapshot.isFinalized ? percent : min(percent, Self.maxUnconfirmedPercent)
+            percentComplete: snapshot.isFinished ? percent : min(percent, Self.maxUnconfirmedPercent)
         )
     }
 
@@ -39,19 +41,27 @@ class MedtrumDoseProgressReporter: DoseProgressTimerEstimator {
     init(dose: UnfinalizedDose, reportingQueue: DispatchQueue) {
         self.dose = dose
         units = dose.value
-        snapshot = Locked(Snapshot(deliveredUnits: dose.deliveredUnits, isFinalized: false))
+        snapshot = Locked(Snapshot(deliveredUnits: dose.deliveredUnits, isFinished: false))
         self.reportingQueue = reportingQueue
 
         super.init(reportingQueue: reportingQueue)
     }
 
-    // Called by the pump manager with its current `state.bolusDose`, on the path that mutated it
-    func update(activeDose: UnfinalizedDose?) {
-        let newSnapshot = Snapshot(deliveredUnits: dose.deliveredUnits, isFinalized: activeDose !== dose)
+    // Called by the pump manager on the path that mutated the dose
+    func update() {
+        // Both in one read: the amount a dose finished with is set in the same step as the end
+        let dose = self.dose.snapshot
+        let isFinished = dose.isFinished
+        let deliveredUnits = dose.deliveredUnits
         var changed = false
         snapshot.mutate { snapshot in
-            // a finalized dose doesn't change anymore
-            guard !snapshot.isFinalized, snapshot != newSnapshot else { return }
+            // Calls come from several queues, so one that read the dose earlier can arrive last: while it runs the
+            // amount only grows. Finished, it is the amount the dose finished with, and doesn't change here anymore.
+            let newSnapshot = Snapshot(
+                deliveredUnits: isFinished ? deliveredUnits : max(snapshot.deliveredUnits, deliveredUnits),
+                isFinished: isFinished
+            )
+            guard !snapshot.isFinished, snapshot != newSnapshot else { return }
             snapshot = newSnapshot
             changed = true
         }

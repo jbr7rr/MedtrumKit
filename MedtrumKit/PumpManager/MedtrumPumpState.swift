@@ -46,6 +46,30 @@ public struct PreviousPatch: Codable {
     public var reservoirLevel: Double?
 }
 
+/// The record a SetBolus answer named for a bolus, and when it started on the patch clock
+public struct AnsweredBolusRecord: RawRepresentable, Equatable {
+    public typealias RawValue = [String: Any]
+
+    public let sequence: Int
+    public let pumpStartTime: Date
+
+    public init(sequence: Int, pumpStartTime: Date) {
+        self.sequence = sequence
+        self.pumpStartTime = pumpStartTime
+    }
+
+    public init?(rawValue: RawValue) {
+        guard let sequence = rawValue["sequence"] as? Int, let pumpStartTime = rawValue["pumpStartTime"] as? Date else {
+            return nil
+        }
+        self.init(sequence: sequence, pumpStartTime: pumpStartTime)
+    }
+
+    public var rawValue: RawValue {
+        ["sequence": sequence, "pumpStartTime": pumpStartTime]
+    }
+}
+
 public class MedtrumPumpState: RawRepresentable {
     public typealias RawValue = PumpManager.RawStateValue
 
@@ -59,11 +83,19 @@ public class MedtrumPumpState: RawRepresentable {
         backupSessionToken = rawValue["backupSessionToken"] as? Data ?? Data()
         patchId = rawValue["patchId"] as? Data ?? Data()
         peripheralIdentifier = (rawValue["peripheralIdentifier"] as? String).flatMap { UUID(uuidString: $0) }
+        currentSequenceNumber = rawValue["currentSequenceNumber"] as? Int ?? 0
+        syncedSequenceNumber = rawValue["syncedSequenceNumber"] as? Int ?? 0
+        // Absent in state written before records were matched: never told, nothing skipped or answered
+        sequenceConfirmedAt = rawValue["sequenceConfirmedAt"] as? Date
+        skippedRecordSequences = rawValue["skippedRecordSequences"] as? [Int] ?? []
+        answeredBolusRecords = (rawValue["answeredBolusRecords"] as? [AnsweredBolusRecord.RawValue] ?? [])
+            .compactMap(AnsweredBolusRecord.init(rawValue:))
         patchActivatedAt = rawValue["patchActivatedAt"] as? Date ?? nil
         deviceType = rawValue["deviceType"] as? UInt8 ?? 0
         swVersion = rawValue["swVersion"] as? String ?? "0.0.0"
         pumpTime = rawValue["pumpTime"] as? Date ?? Date()
         pumpTimeSyncedAt = rawValue["pumpTimeSyncedAt"] as? Date ?? Date()
+        patchUTCOffset = rawValue["patchUTCOffset"] as? TimeInterval
         maxHourlyInsulin = rawValue["maxHourlyInsulin"] as? Double ?? 20
         maxDailyInsulin = rawValue["maxDailyInsulin"] as? Double ?? 100
         initialReservoir = rawValue["initialReservoir"] as? Double
@@ -129,6 +161,52 @@ public class MedtrumPumpState: RawRepresentable {
         } else {
             basalDose = UnfinalizedDose.defaultBasalDose(basalSchedule: basalSchedule, insulineType: insulinType)
         }
+
+        // Absent in state written before records were matched: none
+        unconfirmedTempBasal = (rawValue["unconfirmedTempBasal"] as? UnfinalizedDose.RawValue).flatMap(UnfinalizedDose.init(rawValue:))
+        var awaitingRecord = Self.deduplicated(
+            (rawValue["awaitingRecord"] as? [UnfinalizedDose.RawValue] ?? []).compactMap(UnfinalizedDose.init(rawValue:))
+        )
+
+        // A dose moves from running to waiting in two steps, and the state may have been saved in between: it is then
+        // in both places, or finished as the running one only. One dose again, waiting - a copy would be finished, and
+        // reported, a second time. The temp basal gives way to the scheduled basal until the next status says what runs.
+        func isWaiting(_ dose: UnfinalizedDose) -> Bool {
+            if awaitingRecord.contains(where: { $0.isSameDose(as: dose) }) {
+                return true
+            }
+            guard dose.isFinished else {
+                return false
+            }
+            awaitingRecord.append(dose)
+            return true
+        }
+        if let running = bolusDose, isWaiting(running) {
+            bolusDose = nil
+        }
+        if isWaiting(basalDose) {
+            basalDose = UnfinalizedDose.defaultBasalDose(basalSchedule: basalSchedule, insulineType: insulinType)
+        }
+
+        awaitingRecordStorage = Locked(awaitingRecord)
+    }
+
+    /// One entry per dose. Of two copies of a dose, the one with a final is kept: that final may have reached the host.
+    static func deduplicated(_ doses: [UnfinalizedDose]) -> [UnfinalizedDose] {
+        var kept: [UnfinalizedDose] = []
+
+        for dose in doses {
+            guard let index = kept.firstIndex(where: { $0.isSameDose(as: dose) }) else {
+                kept.append(dose)
+                continue
+            }
+
+            if dose.isFinalized, !kept[index].isFinalized {
+                kept[index] = dose
+            }
+        }
+
+        return kept
     }
 
     public init(_ basal: BasalRateSchedule?) {
@@ -138,15 +216,23 @@ public class MedtrumPumpState: RawRepresentable {
         useSilentTones = false
         lowReservoirWarning = nil
         bolusDose = nil
+        unconfirmedTempBasal = nil
+        awaitingRecordStorage = Locked([])
         sessionToken = Data()
         backupSessionToken = Data()
         patchId = Data()
         peripheralIdentifier = nil
+        currentSequenceNumber = 0
+        syncedSequenceNumber = 0
+        sequenceConfirmedAt = nil
+        skippedRecordSequences = []
+        answeredBolusRecords = []
         patchActivatedAt = nil
         deviceType = 0
         swVersion = "0.0.0"
         pumpTime = Date()
         pumpTimeSyncedAt = Date()
+        patchUTCOffset = nil
         pumpState = .none
         patchSessionEnded = true
 
@@ -181,6 +267,15 @@ public class MedtrumPumpState: RawRepresentable {
         value["backupSessionToken"] = backupSessionToken
         value["patchId"] = patchId
         value["peripheralIdentifier"] = peripheralIdentifier?.uuidString
+        value["currentSequenceNumber"] = currentSequenceNumber
+        value["syncedSequenceNumber"] = syncedSequenceNumber
+        value["sequenceConfirmedAt"] = sequenceConfirmedAt
+        if !skippedRecordSequences.isEmpty {
+            value["skippedRecordSequences"] = skippedRecordSequences
+        }
+        if !answeredBolusRecords.isEmpty {
+            value["answeredBolusRecords"] = answeredBolusRecords.map(\.rawValue)
+        }
         value["patchActivatedAt"] = patchActivatedAt
         value["patchGracePeriodFrom"] = patchGracePeriodFrom
         value["patchExpiresAt"] = patchExpiresAt
@@ -188,14 +283,19 @@ public class MedtrumPumpState: RawRepresentable {
         value["swVersion"] = swVersion
         value["pumpTime"] = pumpTime
         value["pumpTimeSyncedAt"] = pumpTimeSyncedAt
+        value["patchUTCOffset"] = patchUTCOffset
         value["pumpState"] = pumpState.rawValue
         value["patchSessionEnded"] = patchSessionEnded
         value["maxHourlyInsulin"] = maxHourlyInsulin
         value["maxDailyInsulin"] = maxDailyInsulin
         value["basalSchedule"] = basalSchedule.rawValue
         value["initialReservoir"] = initialReservoir
+        // The running doses before the ones waiting: a dose is added to `awaitingRecord` before it stops being the
+        // running one, so read in this order it is saved in one of them at least - see `init(rawValue:)`
         value["bolusDose"] = bolusDose?.rawValue
         value["basalDose"] = basalDose.rawValue
+        value["unconfirmedTempBasal"] = unconfirmedTempBasal?.rawValue
+        value["awaitingRecord"] = awaitingRecord.map(\.rawValue)
         value["reservoir"] = reservoir
         value["battery"] = battery
         value["basalState"] = basalState.rawValue
@@ -242,6 +342,35 @@ public class MedtrumPumpState: RawRepresentable {
     /// reconnecting to a known peripheral is honoured there.
     public var peripheralIdentifier: UUID?
 
+
+    /// The highest record number the patch says it has written - the pump reports it in the storage
+    /// field of every full status response
+    public var currentSequenceNumber: Int
+    /// The highest record number we have read back from the patch. Records are numbered per patch,
+    /// so this resets whenever `patchId` changes.
+    public var syncedSequenceNumber: Int
+    /// When the patch last told us its newest record is `currentSequenceNumber` - the storage field of a status, or
+    /// the answer to a command that ended a segment - on the manager's clock. A dose's record is written when it ends:
+    /// the cursor at a number told before then says nothing of it (`MedtrumPumpManager.isCaughtUp`). Nil until told.
+    public var sequenceConfirmedAt: Date?
+    /// Records the sync gave up on as unreadable, never read: only those that could be the record of the unconfirmed
+    /// temp basal - numbered past the newest record known when its command went out. It is then never dropped for
+    /// having no record. Per patch.
+    public var skippedRecordSequences: [Int]
+    /// The record numbers and patch starts the SetBolus answers gave our latest boluses: a record with both is that
+    /// bolus's, whatever became of the bolus since - never the record of one whose answer was lost. Kept while the
+    /// record may still be read - see `MedtrumPumpManager.noteAnsweredBolusRecord`. Per patch.
+    public var answeredBolusRecords: [AnsweredBolusRecord]
+
+    /// Forgets what belonged to the records of the patch before
+    func resetRecordSequence() {
+        currentSequenceNumber = 0
+        syncedSequenceNumber = 0
+        sequenceConfirmedAt = nil
+        skippedRecordSequences = []
+        answeredBolusRecords = []
+    }
+
     public var patchActivatedAt: Date?
     public var patchGracePeriodFrom: Date? {
         guard let activatedAt = patchActivatedAt else {
@@ -266,6 +395,15 @@ public class MedtrumPumpState: RawRepresentable {
 
     public var pumpTime: Date
     public var pumpTimeSyncedAt: Date
+
+    /// How far the patch clock runs ahead of ours, as of the last time we read it
+    var patchClockSkew: TimeInterval {
+        pumpTime.timeIntervalSince(pumpTimeSyncedAt)
+    }
+
+    /// The UTC offset we set on the patch with SetTimeZone: patch-local midnight, where the patch splits a temp basal
+    /// into two records, is on it. Nil for a patch set up before this was kept.
+    public var patchUTCOffset: TimeInterval?
 
     public var pumpState: PatchState
     /// No patch session is running: the last one ended, or none started yet
@@ -294,9 +432,55 @@ public class MedtrumPumpState: RawRepresentable {
     public var cancelingBolusSince: Date?
     // last state CoreBluetooth reported
     public var bluetoothState: CBManagerState = .unknown
+    /// The latest start of a basal segment the patch reported, on its clock - from statuses and command answers.
+    /// What an unanswered temp basal's segment must have started after.
+    var lastSegmentStart: Date?
     // **** END ****
 
     public var bolusDose: UnfinalizedDose?
+
+    /// A temp basal whose command went out unanswered: kept here, unreported, until a status shows the patch running it
+    /// - it then runs - or its record turns up - its final, or a part of it, then finalized from our estimate - or every
+    /// record the patch told of 15 min past when it ended at the latest was read, none that could be its skipped -
+    /// dropped (`MedtrumPumpManager.unconfirmedTempBasalEnd`). No time limit otherwise: while records cannot be read it
+    /// stays, and delivery stays uncertain. The patch session ending drops it. The host keeps counting what it counted
+    /// before. Changed under `MedtrumPumpManager.doseReportLock`.
+    public var unconfirmedTempBasal: UnfinalizedDose?
+
+    /// Boluses and temp basals that stopped running, until the host has confirmed storing their final report.
+    ///
+    /// A dose stays mutable until the patch's record for it has been read, or until we give up on the record. Once
+    /// finalized it stays here with its final, which goes out with every batch until the host confirms a batch that
+    /// carried it - see `MedtrumPumpManager.emitPumpEvents`.
+    ///
+    /// Locked: commands, statuses and the record sync add to and take from it on different queues.
+    public var awaitingRecord: [UnfinalizedDose] {
+        awaitingRecordStorage.value
+    }
+
+    func mutateAwaitingRecord(_ changes: (inout [UnfinalizedDose]) -> Void) {
+        awaitingRecordStorage.mutate(changes)
+    }
+
+    private let awaitingRecordStorage: Locked<[UnfinalizedDose]>
+
+    /// A bolus whose command went unanswered, still running as far as we know, or a temp basal whose command went
+    /// unanswered and is not settled - or a cancel of the running one. For the host's `deliveryIsUncertain`. One that
+    /// ended has its count settled by its record or the fallback, counting the more insulin meanwhile.
+    public var deliveryIsUncertain: Bool {
+        if let bolus = bolusDose?.snapshot, bolus.confirmation == .uncertain, !bolus.isFinished {
+            return true
+        }
+
+        if unconfirmedTempBasal != nil {
+            return true
+        }
+
+        let basal = basalDose
+        let running = basal.snapshot
+        return basal.type == .tempBasal && running.stopUnansweredAt != nil && !running.isFinished &&
+            Date.now < basal.estimatedEndDate
+    }
 
     private var isCancelingBolus: Bool {
         guard let since = cancelingBolusSince else {
@@ -329,7 +513,13 @@ public class MedtrumPumpState: RawRepresentable {
         case .suspend:
             return .suspended(basalDose.startDate)
         case .tempBasal:
-            return .tempBasal(basalDose.toDoseEntry(isMutable: true))
+            // One that ended waits on its record, and the scheduled basal runs
+            let dose = basalDose
+            let tempBasal = dose.snapshot
+            guard !tempBasal.isFinished else {
+                return .active(dose.tempBasalEnd(of: tempBasal))
+            }
+            return .tempBasal(dose.doseEntry(of: tempBasal, isMutable: true))
         }
     }
 
@@ -408,7 +598,11 @@ public class MedtrumPumpState: RawRepresentable {
             "* reservoirLevel: \(reservoir)",
             "* lowReservoirWarning: \(String(describing: lowReservoirWarning))",
             "* bolusState: \(bolusState.rawValue)",
-            "* bluetoothState: \(bluetoothState.rawValue)"
+            "* bluetoothState: \(bluetoothState.rawValue)",
+            "* patchId: \(patchId.hexEncodedString())",
+            "* recordSequence: \(syncedSequenceNumber)/\(currentSequenceNumber) (synced/pump)",
+            "* awaitingRecord: \(awaitingRecord.map { "\($0.type.rawValue)@\($0.startDate)\($0.isFinalized ? " (final)" : "")" }.joined(separator: ", "))",
+            "* unconfirmedTempBasal: \(unconfirmedTempBasal.map { "\($0.value) U/h sent \($0.sentAt.map { "\($0)" } ?? "-")" } ?? "-")"
         ].joined(separator: "\n")
     }
 }

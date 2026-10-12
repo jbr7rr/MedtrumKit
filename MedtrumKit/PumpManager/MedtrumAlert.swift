@@ -9,6 +9,8 @@ enum MedtrumAlert {
     case patchFaultNotification
     case reservoirEmptyNotification
     case baseResetNotification
+    /// A bolus whose command went unanswered, finalized in full without its record
+    case bolusCountedAsDelivered(units: Double)
 
     var title: String? {
         switch self {
@@ -98,6 +100,11 @@ enum MedtrumAlert {
                 managerIdentifier: MedtrumAlert.managerIdentifier,
                 alertIdentifier: "com.nightscout.medtrumkit.reservoir-low"
             )
+        case .bolusCountedAsDelivered:
+            return Alert.Identifier(
+                managerIdentifier: MedtrumAlert.managerIdentifier,
+                alertIdentifier: "com.nightscout.medtrumkit.bolus-counted-as-delivered"
+            )
         }
     }
 
@@ -175,6 +182,21 @@ enum MedtrumAlert {
                 body: String(
                     localized: "Your pump base has restarted unexpectedly and is no longer delivering insulin!",
                     comment: "Body pump base reset notification"
+                ),
+                acknowledgeActionButtonLabel: String(
+                    localized: "OK",
+                    comment: "Acknoledge alert"
+                )
+            )
+        case let .bolusCountedAsDelivered(units):
+            return Alert.Content(
+                title: String(localized: "Bolus counted as delivered", comment: "Title bolus counted as delivered notification"),
+                body: String(
+                    format: String(
+                        localized: "The patch did not answer the command for a bolus of %@ U, and its records do not show it. The full amount was counted as delivered.",
+                        comment: "Body bolus counted as delivered notification"
+                    ),
+                    units.formatted()
                 ),
                 acknowledgeActionButtonLabel: String(
                     localized: "OK",

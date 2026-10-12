@@ -1,6 +1,8 @@
 import Foundation
 import LoopKit
 
+/// The `raw` of an event is its permanent identity: LoopKit derives `DoseEntry.syncIdentifier` from it.
+/// It has to stay byte-for-byte identical for the whole life of a dose.
 public extension NewPumpEvent {
     private static let dateFormatter = ISO8601DateFormatter()
 
@@ -26,6 +28,21 @@ public extension NewPumpEvent {
                 .data(using: .utf8) ?? Data([]),
             title: String(localized: "Temp Basal", comment: "Pump Event title for UnfinalizedDose with doseType of .tempBasal")
         )
+    }
+
+    /// A bolus or temp basal reported off its `UnfinalizedDose`, as `entry` - nil for any other kind of dose. Same
+    /// identity for every report of the dose, mutable or final.
+    internal static func finishedDose(_ dose: UnfinalizedDose, entry: DoseEntry) -> NewPumpEvent? {
+        switch dose.type {
+        case .bolus:
+            return NewPumpEvent.bolus(dose: entry)
+        case .tempBasal:
+            return NewPumpEvent.tempBasal(dose: entry)
+        case .basal,
+             .resume,
+             .suspend:
+            return nil
+        }
     }
 
     static func basal(dose: DoseEntry) -> NewPumpEvent {
