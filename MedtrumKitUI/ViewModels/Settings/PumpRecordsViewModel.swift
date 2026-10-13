@@ -139,8 +139,8 @@ class PumpRecordsViewModel: ObservableObject, PumpManagerStatusObserver {
             ))
         }
 
-        // Finished, reported as mutable until their record is read - or until they time out. Then final, until the
-        // host confirms storing that.
+        // Finished boluses, reported as mutable until their record is read - or until they time out - and temp basals,
+        // final as they end. Then final, until the host confirms storing that.
         for dose in state.awaitingRecord {
             let snapshot = dose.snapshot
             var detail = "programmed=\(units(dose.value))" + (dose.type == .tempBasal ? "/h" : "")

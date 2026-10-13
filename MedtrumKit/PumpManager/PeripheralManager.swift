@@ -11,7 +11,7 @@ class PeripheralManager: NSObject {
     private var readCharacteristic: CBCharacteristic?
     private var writeCharacteristic: CBCharacteristic?
 
-    // access is serialized by the semaphore inside writePacket
+    // access is serialized by `writer` inside writePacket
     private var writeSequence: UInt8 = 0
 
     /// Guards the four fields below. writePacket runs on the caller's thread while the response
@@ -28,7 +28,7 @@ class PeripheralManager: NSObject {
     private var isReadyStorage = false
     /* end */
 
-    private let semaphore = DispatchSemaphore(value: 1)
+    private let writer = LinkWriter()
 
     /* access must be serialized with stateLock, prevents concurrent `considerFullSync` runs */
     private var isFullSyncInFlight = false
@@ -80,17 +80,35 @@ class PeripheralManager: NSObject {
         return isInvalidated
     }
 
-    func writePacket(_ packet: any MedtrumBasePacketProtocol) -> MedtrumWriteResult<Any> {
+    /// How long a command waits for its answer, unless its caller has less time
+    static let writeTimeout: TimeInterval = 30
+
+    /// `timeout`: how long the caller has, for the link to be free of the write ahead of it as well as for the answer -
+    /// not written at all, and timed out, if the link is not free by then. Nil: as long as the write ahead takes, then
+    /// `writeTimeout` for the answer.
+    func writePacket(_ packet: any MedtrumBasePacketProtocol, timeout: TimeInterval? = nil) -> MedtrumWriteResult<Any> {
         guard let characteristic = writeCharacteristic else {
             log.error("No write characteristic found... Device might be disconnected...")
             return .failure(error: .noWriteCharacteristic)
         }
 
-        semaphore.wait()
-        defer {
-            semaphore.signal()
+        let result = writer.exclusively(within: timeout) { left in
+            writeExclusively(packet, to: characteristic, timeout: left)
+        }
+        guard let result else {
+            log.warning("The link was busy with another write for all of \(timeout ?? 0) s, not writing")
+            return .failure(error: .timeout)
         }
 
+        return result
+    }
+
+    /// The write itself, the only one on the link - see `writer`
+    private func writeExclusively(
+        _ packet: any MedtrumBasePacketProtocol,
+        to characteristic: CBCharacteristic,
+        timeout: TimeInterval
+    ) -> MedtrumWriteResult<Any> {
         // The link may be gone before CoreBluetooth has told us, and a write onto it is swallowed: it would wait out its
         // timeout as a command that may have gone out. Down already as far as CoreBluetooth knows, it is not written.
         guard peripheral.state == .connected else {
@@ -126,7 +144,7 @@ class PeripheralManager: NSObject {
         }
 
         // Wait for response or timeout timer...
-        _ = writeQ.wait(timeout: .now() + .seconds(30))
+        _ = writeQ.wait(timeout: .now() + max(0, timeout))
 
         // Tear down as one step: on timeout the delegate may still be mid-flight, and this is
         // what tells it the command is no longer current.
@@ -143,6 +161,29 @@ class PeripheralManager: NSObject {
         }
 
         return response
+    }
+}
+
+/// One write on the link at a time: each waits for its answer before the next goes out
+final class LinkWriter {
+    private let semaphore = DispatchSemaphore(value: 1)
+
+    /// Runs `body` as the only writer, with how long it has left for the answer: what is left of `timeout` after
+    /// waiting for the writer ahead, or `PeripheralManager.writeTimeout` when there is no `timeout` - then the wait for
+    /// the writer ahead is as long as it takes. Nil, not having run it, if the writer ahead is not done by `timeout`.
+    func exclusively<T>(within timeout: TimeInterval?, _ body: (_ left: TimeInterval) -> T) -> T? {
+        guard let timeout else {
+            semaphore.wait()
+            defer { semaphore.signal() }
+            return body(PeripheralManager.writeTimeout)
+        }
+
+        let deadline = Date.now.addingTimeInterval(timeout)
+        guard semaphore.wait(timeout: .now() + max(0, timeout)) == .success else {
+            return nil
+        }
+        defer { semaphore.signal() }
+        return body(max(0, deadline.timeIntervalSinceNow))
     }
 }
 
@@ -462,7 +503,11 @@ extension PeripheralManager: CBPeripheralDelegate {
             }
 
             if isFullSyncDue {
-                let response = self.writePacket(SynchronizePacket())
+                // Between commands: a temp basal's records, read by the one that ended it after `heartbeatSync` said
+                // to sync, are not held up by it
+                guard let response = self.pumpManager?.betweenCommands({ self.writePacket(SynchronizePacket()) }) else {
+                    return
+                }
                 switch response {
                 case let .failure(error):
                     self.log.error("Failed to get synchronize: \(error.localizedDescription)")

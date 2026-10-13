@@ -33,6 +33,8 @@ final class FakeMedtrumLink: MedtrumLink {
 
     struct Write {
         let packet: any MedtrumBasePacketProtocol
+        /// How long the caller would wait for the answer
+        let timeout: TimeInterval
 
         var commandType: UInt8 {
             packet.commandType
@@ -51,12 +53,15 @@ final class FakeMedtrumLink: MedtrumLink {
 
     private let lock = NSLock()
     private var answers: [UInt8: [Answer]] = [:]
-    private var followUps: [UInt8: [[String]]] = [:]
+    private var followUps: [UInt8: [() -> Void]] = [:]
     private var recordedWrites: [Write] = []
     private var unscripted: [UInt8] = []
     private var disconnectRequests: [Bool] = []
     private var connectRequests = 0
     private var nextConnectError: MedtrumConnectError?
+    private var timeoutWait: ((TimeInterval) -> Void)?
+    /// One write at a time, as on the real link
+    private let writer = LinkWriter()
 
     // MARK: Scripting
 
@@ -75,9 +80,17 @@ final class FakeMedtrumLink: MedtrumLink {
     /// An answer, and the notifications the patch pushes right after it - delivered before the command's caller
     /// carries on, as they are on a device when the BLE queue gets to them first
     func script(_ commandType: UInt8, _ answer: Answer, thenNotify notifications: [String]) {
+        script(commandType, answer) { [weak self] in
+            notifications.forEach { self?.notify($0) }
+        }
+    }
+
+    /// An answer, and `work` run once it is in, before the command's caller carries on - what else reaches the manager
+    /// meanwhile on a device: a status, a batch another path sends
+    func script(_ commandType: UInt8, _ answer: Answer, then work: @escaping () -> Void) {
         lock.withLock {
             answers[commandType, default: []].append(answer)
-            followUps[commandType, default: []].append(notifications)
+            followUps[commandType, default: []].append(work)
         }
     }
 
@@ -85,6 +98,25 @@ final class FakeMedtrumLink: MedtrumLink {
     var connectError: MedtrumConnectError? {
         get { lock.withLock { nextConnectError } }
         set { lock.withLock { nextConnectError = newValue } }
+    }
+
+    /// Runs with the time a write answered `.timeout` waited in vain - for moving the manager's clock on by it
+    var onTimeout: ((TimeInterval) -> Void)? {
+        get { lock.withLock { timeoutWait } }
+        set { lock.withLock { timeoutWait = newValue } }
+    }
+
+    /// Holds the link's writer, as a write of another path waiting for its answer would - the heartbeat's full sync, say
+    /// - until `release` is signalled. Returns once it holds it.
+    func holdWriter(until release: DispatchSemaphore) {
+        let held = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { [writer] in
+            _ = writer.exclusively(within: nil) { _ in
+                held.signal()
+                release.wait()
+            }
+        }
+        held.wait()
     }
 
     // MARK: What happened
@@ -145,6 +177,20 @@ final class FakeMedtrumLink: MedtrumLink {
         deliver(response, duringReconnect: duringReconnect, fullSync: true)
     }
 
+    /// A full status carrying only what the notification `hex` carries - as the connect flow (`duringReconnect`) or the
+    /// session's periodic full sync hands one on
+    func deliverFullStatus(notification hex: String, duringReconnect: Bool) {
+        let packet = NotificationPacket()
+        packet.totalData = Self.bytes(hex)
+
+        guard packet.hasEnoughData else {
+            XCTFail("Notification too short: \(hex)")
+            return
+        }
+
+        deliver(packet.parseResponse(), duringReconnect: duringReconnect, fullSync: true)
+    }
+
     /// Runs `work` where the link delivers statuses - for driving what `PeripheralManager` does around them
     func onQueue(_ work: () -> Void) {
         queue.sync(execute: work)
@@ -172,9 +218,25 @@ final class FakeMedtrumLink: MedtrumLink {
         completion(error)
     }
 
-    func write(_ packet: any MedtrumBasePacketProtocol) -> MedtrumWriteResult<Any> {
-        let scripted = lock.withLock { () -> (answer: Answer, followUp: [String])? in
-            recordedWrites.append(Write(packet: packet))
+    func write(_ packet: any MedtrumBasePacketProtocol, timeout: TimeInterval?) -> MedtrumWriteResult<Any> {
+        // Not written, if a write held up ahead of it took all of `timeout`. The follow-up runs once the writer is free.
+        let written = writer.exclusively(within: timeout) { left in
+            answer(packet, waitingFor: left)
+        }
+        guard let written else {
+            return .failure(error: .timeout)
+        }
+
+        written.followUp()
+        return written.result
+    }
+
+    private func answer(
+        _ packet: any MedtrumBasePacketProtocol,
+        waitingFor timeout: TimeInterval
+    ) -> (result: MedtrumWriteResult<Any>, followUp: () -> Void) {
+        let scripted = lock.withLock { () -> (answer: Answer, followUp: () -> Void)? in
+            recordedWrites.append(Write(packet: packet, timeout: timeout))
 
             guard var queued = answers[packet.commandType], !queued.isEmpty else {
                 unscripted.append(packet.commandType)
@@ -184,7 +246,7 @@ final class FakeMedtrumLink: MedtrumLink {
             let next = queued.removeFirst()
             answers[packet.commandType] = queued
 
-            var followUp: [String] = []
+            var followUp: () -> Void = {}
             if var pending = followUps[packet.commandType], !pending.isEmpty {
                 followUp = pending.removeFirst()
                 followUps[packet.commandType] = pending
@@ -193,7 +255,7 @@ final class FakeMedtrumLink: MedtrumLink {
         }
 
         guard let scripted else {
-            return .failure(error: .timeout)
+            return (.failure(error: .timeout), {})
         }
 
         let result: MedtrumWriteResult<Any>
@@ -201,13 +263,13 @@ final class FakeMedtrumLink: MedtrumLink {
         case let .fragments(fragments):
             result = Self.result(of: packet, decoding: fragments.map(Self.bytes))
         case .timeout:
+            onTimeout?(timeout)
             result = .failure(error: .timeout)
         case let .failure(error):
             result = .failure(error: error)
         }
 
-        scripted.followUp.forEach(notify)
-        return result
+        return (result, scripted.followUp)
     }
 
     func disconnect(force: Bool) {

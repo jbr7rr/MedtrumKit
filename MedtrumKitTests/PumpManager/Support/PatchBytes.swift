@@ -48,6 +48,11 @@ enum PatchBytes {
         return answer(command: CommandType.GET_RECORD, body: recordHeader(type: 2, sequence: sequence, patchId: patchId) + payload)
     }
 
+    /// A GET_RECORD answer with a record of a type we do not parse - an ALARM (3), a type 10, ...
+    static func otherRecord(type: UInt8, sequence: Int, patchId: UInt64) -> [String] {
+        answer(command: CommandType.GET_RECORD, body: recordHeader(type: type, sequence: sequence, patchId: patchId) + Data(count: 16))
+    }
+
     /// An answer to CancelTempBasal, SetTempBasal or ResumePump: the segment the command started
     static func segmentAnswer(
         command: UInt8,
@@ -63,19 +68,22 @@ enum PatchBytes {
         return answer(command: command, body: body)
     }
 
-    /// A notification showing only a basal segment, as the patch pushes one when it changes, in patch state `state`
+    /// A notification showing only a basal segment, as the patch pushes one when it changes, in patch state `state`,
+    /// having delivered `delivered` so far
     static func basalNotification(
         type: BasalType,
         sequence: Int,
         patchId: UInt64,
         start: Date,
         rate: Double,
+        delivered: Double = 0,
         state: PatchState = .active
     ) -> String {
         var data = Data([state.rawValue, 0x08, 0x00, type.rawValue])
         data += UInt64(sequence).toData(length: 2) + patchId.toData(length: 2)
         data += start.toMedtrumSeconds()
-        data += UInt64(UInt32((rate / 0.05).rounded())).toData(length: 3)
+        let rateDelivery = UInt64((delivered / 0.05).rounded()) << 12 | UInt64((rate / 0.05).rounded())
+        data += rateDelivery.toData(length: 3)
         return data.hexEncodedString()
     }
 

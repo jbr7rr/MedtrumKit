@@ -45,6 +45,40 @@ public class UnfinalizedDose {
     static let deadlineBolusUnitsPerMinute = 0.5
     static let deliveryGrace: TimeInterval = .minutes(2)
 
+    /// A record the patch wrote of a part of a running temp basal - it restarts the segment at patch-local midnight and on
+    /// a profile change - read while the temp basal ran on: its final sums the parts, these and the ones read as it ends
+    public struct RecordedPart: Equatable {
+        public let sequence: Int
+        /// The patch's, as the record carries it: the low two bytes
+        public let patchId: UInt64
+        /// On the patch clock
+        public let start: Date
+        public let end: Date
+        public let delivered: Double
+
+        public init(sequence: Int, patchId: UInt64, start: Date, end: Date, delivered: Double) {
+            self.sequence = sequence
+            self.patchId = patchId
+            self.start = start
+            self.end = end
+            self.delivered = delivered
+        }
+
+        init?(rawValue: [String: Any]) {
+            guard let sequence = rawValue["sequence"] as? Int, let patchId = rawValue["patchId"] as? Int,
+                  let start = rawValue["start"] as? Date, let end = rawValue["end"] as? Date,
+                  let delivered = rawValue["delivered"] as? Double
+            else {
+                return nil
+            }
+            self.init(sequence: sequence, patchId: UInt64(patchId), start: start, end: end, delivered: delivered)
+        }
+
+        var rawValue: [String: Any] {
+            ["sequence": sequence, "patchId": Int(patchId & 0xFFFF), "start": start, "end": end, "delivered": delivered]
+        }
+    }
+
     /// Everything about a dose that changes after it was created. One object is shared by the running dose,
     /// `MedtrumPumpState.awaitingRecord`, a progress reporter and the record matching, on the BLE, command, delegate
     /// and record sync queues - so it is one value behind one lock: every transition changes it in one step, and
@@ -57,8 +91,8 @@ public class UnfinalizedDose {
         /// move.
         public fileprivate(set) var pumpStartTime: Date?
 
-        /// Set when the dose stops running. From then on it waits for its record, mutable for the host - see
-        /// `MedtrumPumpState.awaitingRecord`.
+        /// Set when the dose stops running. From then on a bolus waits for its record, mutable for the host - see
+        /// `MedtrumPumpState.awaitingRecord`. A temp basal is finalized as it ends.
         public fileprivate(set) var finishReason: FinishReason?
         /// When we learned that the dose stopped - what the record timeouts count from
         public fileprivate(set) var finishedAt: Date?
@@ -69,12 +103,20 @@ public class UnfinalizedDose {
         public fileprivate(set) var lastProgressAt: Date?
         public fileprivate(set) var lastProgressUnits: Double?
 
-        /// No record may finalize this dose: the patch split it into a record per segment - at patch-local midnight,
-        /// or on a basal profile change - and the first one read would finalize it with part of what it delivered.
-        /// Also a temp basal whose command went unanswered that a status first showed restarted so, or that only the
-        /// record of a part showed ran - and one still unconfirmed when a profile was set. It is finalized from our own
-        /// estimate instead.
+        /// No record may finalize this temp basal: a basal profile was set while it ran, and the patch split it into a
+        /// record per segment. Also one whose command went unanswered that a status first showed restarted so, or that
+        /// only the record of a part showed ran - and one still unconfirmed when a profile was set: its patch start is
+        /// not where its records begin. It is finalized from our own estimate instead, at its rate × duration.
         public fileprivate(set) var recordMatchDisabled = false
+
+        /// What the patch had delivered of this running temp basal by the last status showing its segment - the one
+        /// starting on `pumpStartTime` - and when that status was received: the base of our estimate of it, should its
+        /// records not be read
+        public fileprivate(set) var statusDelivery: Double?
+        public fileprivate(set) var statusDeliveryReceivedAt: Date?
+
+        /// The parts of this running temp basal whose records were read while it ran, in order - see `RecordedPart`
+        public fileprivate(set) var recordedParts: [RecordedPart] = []
 
         /// The final report, once there is one. Every report of the final is rebuilt from exactly these, so a final
         /// sent again until the host confirms storing it is byte for byte the same.
@@ -286,6 +328,16 @@ public class UnfinalizedDose {
         state.lastProgressAt = rawValue["lastProgressAt"] as? Date
         state.lastProgressUnits = rawValue["lastProgressUnits"] as? Double
         state.recordMatchDisabled = rawValue["recordMatchDisabled"] as? Bool ?? false
+        // Both or neither
+        if let statusDeliveryReceivedAt = rawValue["statusDeliveryReceivedAt"] as? Date,
+           let statusDelivery = rawValue["statusDelivery"] as? Double
+        {
+            state.statusDelivery = statusDelivery
+            state.statusDeliveryReceivedAt = statusDeliveryReceivedAt
+        }
+
+        // A part that does not decode leaves a gap: the parts then do not add up, and our estimate stands in
+        state.recordedParts = (rawValue["recordedParts"] as? [[String: Any]])?.compactMap(RecordedPart.init(rawValue:)) ?? []
 
         // Both or neither: a final is only ever set whole
         if let finalEndDate = rawValue["finalEndDate"] as? Date {
@@ -327,6 +379,11 @@ public class UnfinalizedDose {
         raw["lastProgressUnits"] = state.lastProgressUnits
         if state.recordMatchDisabled {
             raw["recordMatchDisabled"] = true
+        }
+        raw["statusDelivery"] = state.statusDelivery
+        raw["statusDeliveryReceivedAt"] = state.statusDeliveryReceivedAt
+        if !state.recordedParts.isEmpty {
+            raw["recordedParts"] = state.recordedParts.map(\.rawValue)
         }
         raw["finalDeliveredUnits"] = state.finalDeliveredUnits
         raw["finalEndDate"] = state.finalEndDate
@@ -436,6 +493,34 @@ public class UnfinalizedDose {
         }
     }
 
+    /// A status received at `receivedAt` shows this running temp basal's segment having delivered `delivered` - see
+    /// `State.statusDelivery`. The latest status is kept: they are handled on different queues.
+    @discardableResult func noteStatusDelivery(_ delivered: Double, receivedAt: Date) -> Bool {
+        transition { state -> Bool in
+            guard type == .tempBasal, !state.isFinished,
+                  state.statusDeliveryReceivedAt.map({ receivedAt > $0 }) ?? true
+            else {
+                return false
+            }
+            state.statusDelivery = delivered
+            state.statusDeliveryReceivedAt = receivedAt
+            return true
+        }
+    }
+
+    /// The record of a part of this temp basal, read while it runs - see `RecordedPart`. Kept once, only while it runs.
+    /// Returns whether it was kept.
+    @discardableResult func keepRecordedPart(_ part: RecordedPart) -> Bool {
+        transition { state -> Bool in
+            guard type == .tempBasal, !state.isFinished, !state.recordedParts.contains(where: { $0.sequence == part.sequence })
+            else {
+                return false
+            }
+            state.recordedParts.append(part)
+            return true
+        }
+    }
+
     /// Whether the host is to be warned of this bolus now, being told so: once, and only while it is uncertain
     func noteUncertaintyReported() -> Bool {
         transition { state -> Bool in
@@ -522,6 +607,8 @@ public class UnfinalizedDose {
             state.finalDeliveredUnits = entry.deliveredUnits
             state.finalEndDate = entry.endDate
             state.finalizedAt = now
+            // Summed up, or given up on
+            state.recordedParts = []
             return true
         }
     }
@@ -653,13 +740,39 @@ public class UnfinalizedDose {
             return countsInFull(state) ? value : state.deliveredUnits
 
         case .tempBasal:
-            return estimatedTempBasalDelivery(until: tempBasalEnd(of: state))
+            return tempBasalEstimate(of: state, restarted: false).units
 
         case .basal,
              .resume,
              .suspend:
             return 0
         }
+    }
+
+    /// What our estimate of a temp basal is based on
+    public enum TempBasalEstimateSource: String {
+        /// The amount the last status of its segment showed, and its rate since
+        case status
+        case rateTimesDuration = "rate × duration"
+    }
+
+    /// What a finished temp basal delivered, by our estimate: what the last status of its segment showed it had
+    /// delivered, plus its rate from then to its end - within [that amount, rate × duration], in 0.05 U steps. Without
+    /// such a status - or `restarted`, at patch-local midnight or by a profile change, which restarts that amount -
+    /// its rate × duration.
+    func tempBasalEstimate(of state: State, restarted: Bool) -> (units: Double, source: TempBasalEstimateSource) {
+        let end = tempBasalEnd(of: state)
+        let rateTimesDuration = estimatedTempBasalDelivery(until: end)
+
+        guard !restarted, !state.recordMatchDisabled, let delivered = state.statusDelivery,
+              let receivedAt = state.statusDeliveryReceivedAt
+        else {
+            return (rateTimesDuration, .rateTimesDuration)
+        }
+
+        let since = value * max(0, end.timeIntervalSince(receivedAt)) / .hours(1)
+        let estimate = max(delivered, min(delivered + since, value * max(0, end.timeIntervalSince(startDate)) / .hours(1)))
+        return (((estimate / 0.05).rounded() * 0.05).rounded(toPlaces: 2), .status)
     }
 
     /// A bolus that ended without our seeing how - over when we heard from the patch again, or one the patch never

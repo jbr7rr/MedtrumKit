@@ -4,11 +4,13 @@ import LoopKit
 /// Reads the patch's own event log, and finalizes the doses waiting on it.
 ///
 /// The patch writes a numbered record when a delivery event ends - a bolus, a basal segment - with what it really
-/// delivered. A finished bolus or temp basal stays mutable for the host (`MedtrumPumpState.awaitingRecord`) until its
-/// record has been read here and finalizes it (`MedtrumPumpManager.reconcile`) - or until a fallback gives up on it.
+/// delivered. A finished bolus stays mutable for the host (`MedtrumPumpState.awaitingRecord`) until its record has been
+/// read here and finalizes it (`MedtrumPumpManager.reconcile`) - or until a fallback gives up on it. A temp basal's
+/// records are read as it ends, and finalize it then (`finishTempBasalEnd`).
 ///
 /// Reads block on BLE writes, so this must not run on the main queue or the central manager's queue. It never reads
 /// while a bolus is running or a command is in flight, and stops between records when one starts: they share the link.
+/// Each record is read holding the manager's command lock, never waiting for it (`withCommandLockIfFree`).
 enum RecordSyncer {
     private static let logger = MedtrumLogger(category: "RecordSyncer")
 
@@ -68,6 +70,15 @@ enum RecordSyncer {
         runState.value = RunState()
     }
 
+    /// For tests: `body` runs as a sync run would, holding the single flight
+    static func whileRunningForTesting(_ body: () -> Void) {
+        guard begin(nil) else {
+            preconditionFailure("A record sync is running already")
+        }
+        defer { end() }
+        body()
+    }
+
     /// Single flight, and throttled for the heartbeat trigger
     private static func begin(_ trigger: Trigger?) -> Bool {
         let now = Date.now
@@ -93,7 +104,7 @@ enum RecordSyncer {
     }
 
     /// Waits out a run in progress rather than skipping it: it yields between two records to the command this runs for
-    private static func beginWaiting(_ trigger: Trigger, timeout: TimeInterval) -> Bool {
+    private static func beginWaiting(_ trigger: Trigger?, timeout: TimeInterval) -> Bool {
         let deadline = Date.now.addingTimeInterval(timeout)
 
         while !begin(trigger) {
@@ -137,6 +148,12 @@ enum RecordSyncer {
         } else if trigger != .beforeStop, pumpManager.isCommandActive {
             logger.debug("Not reading records (\(trigger.rawValue)): a command is in flight")
         } else {
+            // A temp basal that ended has its records read first: read here, they would make no final of it
+            _ = pumpManager.withCommandLockIfFree {
+                finishTempBasalEndInFlight(pumpManager: pumpManager, until: pumpManager.now().addingTimeInterval(
+                    MedtrumPumpManager.tempBasalEndReadBudget
+                ))
+            }
             readNewRecords(pumpManager: pumpManager, trigger: trigger)
         }
 
@@ -220,7 +237,19 @@ enum RecordSyncer {
 
             store.setStatus(.syncing(sequence: sequence, upTo: last))
 
-            switch read(sequence, patchId: patchId, pumpManager: pumpManager) {
+            // Not while a command holds the link, nor once one has started meanwhile
+            let result = pumpManager.withCommandLockIfFree { () -> ReadResult? in
+                guard trigger == .beforeStop || !pumpManager.isCommandActive else {
+                    return nil
+                }
+                return read(sequence, patchId: patchId, pumpManager: pumpManager)
+            }
+            guard let result = result ?? nil else {
+                logger.info("Stopping at record \(sequence), a command holds the link")
+                return
+            }
+
+            switch result {
             case let .linkLost(error):
                 logger.warning("Aborting record sync at \(sequence): \(error.errorDescription)")
                 store.setStatus(.failed("Aborted at \(sequence): \(error.errorDescription)"))
@@ -249,17 +278,18 @@ enum RecordSyncer {
         }
     }
 
-    /// Reconciles a record read off the patch, stores it for the debug screen, and moves the cursor past it - after
-    /// what it finalizes has been handed to the host
+    /// Reconciles a record read off the patch - unless it was applied already (`outcome`) - stores it for the debug
+    /// screen, and moves the cursor past it - after what it finalizes has been handed to the host
     private static func apply(
         _ response: GetRecordResponse,
         requested: Int,
         current: Int,
         patchId: Data,
-        pumpManager: MedtrumPumpManager
+        pumpManager: MedtrumPumpManager,
+        outcome applied: String? = nil
     ) {
         let isOurs = isSamePatch(response.patchId, patchId.toUInt64())
-        let outcome = isOurs ? pumpManager.reconcile(response) : "not this patch's record"
+        let outcome = applied ?? (isOurs ? pumpManager.reconcile(response) : "not this patch's record")
         log(response, requested: requested, expectedPatchId: patchId.toUInt64(), outcome: outcome, to: pumpManager.recordStore)
 
         let next = cursorAfterReading(reported: response.sequence, requested: requested, current: current)
@@ -272,6 +302,153 @@ enum RecordSyncer {
             return
         }
         state.syncedSequenceNumber = max(state.syncedSequenceNumber, next)
+    }
+
+    /// Reads the records the patch wrote for a temp basal of ours as it ended, up to the last one it named, and has it
+    /// reported final with what followed it - see `MedtrumPumpManager.TempBasalEnd`. On the caller's thread, which may
+    /// block on the link, holding the command lock: a full status's, or the end queue's. A run in progress is waited
+    /// out: it yields between two records to the lock held here. Each record is asked for once: on the first that can't
+    /// be read, or the first that is not the one asked for, it stops, and our estimate stands in. Not while a bolus
+    /// runs: its notifications and a cancel have the link.
+    static func finishTempBasalEnd(pumpManager: MedtrumPumpManager) {
+        guard let ending = pumpManager.pendingTempBasalEnd, mayRead(ending, pumpManager: pumpManager) else {
+            return
+        }
+
+        guard beginWaiting(nil, timeout: beforeStopWait) else {
+            _ = pumpManager.settleTempBasalEnd(ending, records: [], unread: "a record sync held the link")
+            return
+        }
+        defer { end() }
+
+        finishTempBasalEndInFlight(
+            pumpManager: pumpManager,
+            until: pumpManager.now().addingTimeInterval(MedtrumPumpManager.tempBasalEndReadBudget)
+        )
+    }
+
+    /// The same, on a command's own thread, holding the command lock: no other command comes between its answer and
+    /// these reads. They end by `deadline`. A run in progress stops at its next record, seeing the command: it is given
+    /// `inCommandRunWait` of that time to, then our estimate stands in.
+    static func finishTempBasalEnd(pumpManager: MedtrumPumpManager, inCommandUntil deadline: Date) {
+        guard let ending = pumpManager.pendingTempBasalEnd, mayRead(ending, pumpManager: pumpManager) else {
+            return
+        }
+
+        let wait = min(inCommandRunWait, max(0, deadline.timeIntervalSince(pumpManager.now())))
+        guard beginWaiting(nil, timeout: wait) else {
+            _ = pumpManager.settleTempBasalEnd(ending, records: [], unread: "a record sync was running")
+            return
+        }
+        defer { end() }
+
+        finishTempBasalEndInFlight(pumpManager: pumpManager, until: deadline)
+    }
+
+    /// How long a command's read waits for a run in progress to stop - the loop's own sync, say, that its follow-up
+    /// started just before
+    static let inCommandRunWait: TimeInterval = 1.5
+
+    /// Whether the records of `ending` would be read now: it names its last, and no bolus runs
+    static func wouldRead(_ ending: MedtrumPumpManager.TempBasalEnd, pumpManager: MedtrumPumpManager) -> Bool {
+        ending.lastRecord != nil && pumpManager.state.bolusDose == nil
+    }
+
+    /// Whether the records of `ending` are to be read at all - if not, it is settled from our estimate here
+    private static func mayRead(_ ending: MedtrumPumpManager.TempBasalEnd, pumpManager: MedtrumPumpManager) -> Bool {
+        guard wouldRead(ending, pumpManager: pumpManager) else {
+            _ = pumpManager.settleTempBasalEnd(
+                ending,
+                records: [],
+                unread: ending.lastRecord == nil ? "no record of its end is known" : "a bolus is running"
+            )
+            return false
+        }
+        return true
+    }
+
+    /// `finishTempBasalEnd`, the run already this one's, reading until `deadline` on the manager's clock
+    private static func finishTempBasalEndInFlight(pumpManager: MedtrumPumpManager, until deadline: Date) {
+        guard let ending = pumpManager.pendingTempBasalEnd else {
+            return
+        }
+
+        let state = pumpManager.state
+        let patchId = state.patchId
+        let store = pumpManager.recordStore
+        var records: [GetRecordResponse] = []
+        var unread: String?
+
+        if let last = ending.lastRecord, !patchId.isEmpty {
+            let first = state.syncedSequenceNumber + 1
+
+            if last < first {
+                unread = "its record \(last) was read before it ended"
+            } else if last - first >= MedtrumPumpManager.tempBasalEndMaxRecords {
+                unread = "records \(first)...\(last) are too many to read now"
+            } else {
+                logger.info("Reading records \(first)...\(last), of the temp basal of \(ending.dose.startDate) that ended")
+
+                reading: for sequence in first ... last {
+                    // Less than a round trip left, and the record would be asked for only to be given up on
+                    let left = deadline.timeIntervalSince(pumpManager.now())
+                    guard left >= MedtrumPumpManager.tempBasalEndRecordReadMinimum else {
+                        unread = "the \(Int(MedtrumPumpManager.tempBasalEndReadBudget)) s to read them ran out at \(sequence)"
+                        break reading
+                    }
+
+                    store.setStatus(.syncing(sequence: sequence, upTo: last))
+
+                    switch readOnce(sequence, patchId: patchId, pumpManager: pumpManager, timeout: left) {
+                    case let .record(response):
+                        guard response.sequence == sequence, isSamePatch(response.patchId, patchId.toUInt64()) else {
+                            unread = "record \(sequence) came back as \(response.sequence) of patch \(response.patchId)"
+                            break reading
+                        }
+                        records.append(response)
+
+                    case let .bad(problem):
+                        unread = "record \(sequence): \(problem)"
+                        break reading
+
+                    case let .linkLost(error):
+                        unread = "record \(sequence): \(error.errorDescription)"
+                        break reading
+                    }
+                }
+
+                if let unread {
+                    logger.warning("Stopped reading the records of the temp basal of \(ending.dose.startDate): \(unread)")
+                    store.setStatus(.failed(unread))
+                }
+            }
+        } else {
+            unread = "no record of its end is known"
+        }
+
+        // The session ended meanwhile - a base reset, a stop: these records are moot, and not this session's to keep
+        guard state.patchId == patchId else {
+            logger.warning("The patch session changed while the records of the temp basal of \(ending.dose.startDate) were read")
+            _ = pumpManager.settleTempBasalEnd(ending, records: [], unread: "the patch session changed while they were read")
+            return
+        }
+
+        let outcomes = pumpManager.settleTempBasalEnd(ending, records: records, unread: unread)
+
+        // As a sync would: stored, and the cursor past them - after the final went out
+        for response in records {
+            apply(
+                response,
+                requested: response.sequence,
+                current: state.currentSequenceNumber,
+                patchId: patchId,
+                pumpManager: pumpManager,
+                outcome: outcomes[response.sequence]
+            )
+        }
+        if !records.isEmpty, unread == nil {
+            store.finishedSync()
+        }
     }
 
     /// Reads an arbitrary range of records without moving `syncedSequenceNumber` or reconciling anything.
@@ -302,7 +479,18 @@ enum RecordSyncer {
 
             store.setStatus(.syncing(sequence: sequence, upTo: range.upperBound))
 
-            switch read(sequence, patchId: patchId, pumpManager: pumpManager) {
+            let result = pumpManager.withCommandLockIfFree { () -> ReadResult? in
+                guard !pumpManager.isCommandActive else {
+                    return nil
+                }
+                return read(sequence, patchId: patchId, pumpManager: pumpManager)
+            }
+            guard let result = result ?? nil else {
+                logger.info("Stopping the record fetch at \(sequence), a command holds the link")
+                return
+            }
+
+            switch result {
             case let .linkLost(error):
                 logger.warning("Aborting record fetch at \(sequence): \(error.errorDescription)")
                 store.setStatus(.failed("Aborted at \(sequence): \(error.errorDescription)"))
@@ -346,12 +534,17 @@ enum RecordSyncer {
         return result
     }
 
-    private static func readOnce(_ sequence: Int, patchId: Data, pumpManager: MedtrumPumpManager) -> ReadResult {
+    private static func readOnce(
+        _ sequence: Int,
+        patchId: Data,
+        pumpManager: MedtrumPumpManager,
+        timeout: TimeInterval? = nil
+    ) -> ReadResult {
         guard let link = pumpManager.link else {
             return .linkLost(.noManager)
         }
 
-        switch link.write(GetRecordPacket(recordIndex: sequence, patchId: patchId.toUInt64())) {
+        switch link.write(GetRecordPacket(recordIndex: sequence, patchId: patchId.toUInt64()), timeout: timeout) {
         case let .failure(error):
             switch error {
             case .noManager,

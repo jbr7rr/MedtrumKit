@@ -743,6 +743,102 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertNil(pumpManager.heartbeatSync(), "not on every heartbeat")
     }
 
+    // MARK: - Commands queued on the command lock
+
+    /// A bolus asked for while another's SetBolus awaits its answer waits for that command, then finds the first one
+    /// running: it is refused without going out, and the first runs on
+    func testBolusQueuedBehindAnotherIsRefusedWithoutGoingOut() {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75))
+
+        let secondDone = expectation(description: "second bolus")
+        let secondResult = Locked<PumpManagerError?>(nil)
+        link.script(CommandType.SET_BOLUS, .fragments(["0f1343000000a903ec00f907ab17b300"])) { [unowned self] in
+            pumpManager.enactBolus(units: 1, activationType: .manualNoRecommendation) { error in
+                secondResult.value = error
+                secondDone.fulfill()
+            }
+            // Past its checks, and waiting for the lock
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+        wait(for: [secondDone], timeout: 5)
+        settle()
+
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS])
+        guard case let .deviceState(error)? = secondResult.value, case .isBolussing? = error as? MedtrumConnectError else {
+            XCTFail("The second bolus was not refused as bolusing: \(String(describing: secondResult.value))")
+            return
+        }
+        XCTAssertEqual(pumpManager.state.bolusDose?.value, 0.05)
+        XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
+        XCTAssertEqual(reports(of: .bolus).count, 1)
+    }
+
+    /// The patch turns a bolus down: nothing of it is in the state, and what is there belongs to others - a cancel
+    /// asked for meanwhile, waiting to go out, and a bolus the state has running by then, whatever put it there
+    func testRejectedBolusLeavesWhatOtherOperationsHaveInTheState() {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75))
+
+        let running = UnfinalizedDose(units: 0.5, duration: 20, activationType: .manualNoRecommendation, insulinType: nil)
+        let cancelDone = expectation(description: "cancelBolus")
+        link.script(CommandType.SET_BOLUS, .failure(.invalidResponse(code: 8))) { [unowned self] in
+            pumpManager.state.bolusDose = running
+            pumpManager.cancelBolus { _ in cancelDone.fulfill() }
+        }
+        link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+
+        let atRejection = Locked<(bolus: UnfinalizedDose?, cancelingSince: Date?)?>(nil)
+        let rejected: PumpManagerError?? = completion(of: "enactBolus") { done in
+            self.pumpManager.enactBolus(units: 1, activationType: .manualNoRecommendation) { error in
+                // The cancel waits for this command: what it finds is what the rejection left
+                atRejection.value = (self.pumpManager.state.bolusDose, self.pumpManager.state.cancelingBolusSince)
+                done(error)
+            }
+        }
+        wait(for: [cancelDone], timeout: 5)
+        settle()
+
+        XCTAssertNotNil(rejected ?? nil, "turned down")
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS, CommandType.CANCEL_BOLUS])
+        XCTAssertTrue(atRejection.value?.bolus === running, "the running bolus was taken out of the state")
+        XCTAssertNotNil(atRejection.value?.cancelingSince, "the cancel waiting to go out was cleared")
+    }
+
+    /// A bolus whose connect fails while another command holds the lock - the first bolus, here - is reported failed at
+    /// once, not once that command is over, and leaves the first running
+    func testBolusWhoseConnectFailsIsReportedAtOnceAndLeavesTheRunningOne() {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75))
+
+        let secondResult = Locked<PumpManagerError?>(nil)
+        let secondReportedDuringTheFirst = Locked(false)
+        let secondDone = expectation(description: "second bolus")
+        link.script(CommandType.SET_BOLUS, .fragments(["0f1343000000a903ec00f907ab17b300"])) { [unowned self] in
+            link.connectError = .failedToConnectToDevice
+            let reported = DispatchSemaphore(value: 0)
+            pumpManager.enactBolus(units: 1, activationType: .manualNoRecommendation) { error in
+                secondResult.value = error
+                reported.signal()
+                secondDone.fulfill()
+            }
+            secondReportedDuringTheFirst.value = reported.wait(timeout: .now() + 1) == .success
+            link.connectError = nil
+        }
+
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+        wait(for: [secondDone], timeout: 5)
+        settle()
+
+        XCTAssertTrue(secondReportedDuringTheFirst.value, "the failed connect waited for the command holding the lock")
+        guard case .communication? = secondResult.value else {
+            XCTFail("The second bolus did not fail to connect: \(String(describing: secondResult.value))")
+            return
+        }
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS])
+        XCTAssertEqual(pumpManager.state.bolusDose?.value, 0.05)
+        XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
+    }
+
     /// `user.txt:11229-11295`: 2 U answered as record 123 from patch second 0x17A88697, completed at 2.0 U - waiting on
     /// its record. Returns its first report.
     private func completeAnsweredBolus() -> DoseEntry? {

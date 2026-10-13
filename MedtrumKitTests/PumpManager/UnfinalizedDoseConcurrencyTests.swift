@@ -309,6 +309,64 @@ final class UnfinalizedDoseConcurrencyTests: XCTestCase {
 
     // MARK: - Persistence
 
+    /// Our estimate of a temp basal whose records were not read: the last status of its segment, and its rate since -
+    /// within [what that status showed, rate × duration], in 0.05 U steps - else, or once restarted, rate × duration
+    func testTempBasalEstimateGoesFromTheLastStatusOfItsSegment() throws {
+        // 1.2 U/h, ended 21 min in: 0.42 U, 0.4 U as rate × duration
+        func tempBasal(showing delivered: Double?, at minute: Double) -> UnfinalizedDose {
+            let dose = UnfinalizedDose(tempRate: 1.2, duration: .minutes(30), insulinType: nil, automatic: true, startDate: t0)
+            if let delivered {
+                XCTAssertTrue(dose.noteStatusDelivery(delivered, receivedAt: t0.addingTimeInterval(.minutes(minute))))
+            }
+            dose.finish(.cancelled, endedAt: t0.addingTimeInterval(.minutes(21)), at: t0.addingTimeInterval(.minutes(21)))
+            return dose
+        }
+
+        func estimate(_ dose: UnfinalizedDose, restarted: Bool = false) -> (Double, UnfinalizedDose.TempBasalEstimateSource) {
+            let estimate = dose.tempBasalEstimate(of: dose.snapshot, restarted: restarted)
+            return (estimate.units, estimate.source)
+        }
+
+        // 0.1 + 1.2 U/h × 10 min
+        XCTAssertEqual(estimate(tempBasal(showing: 0.1, at: 11)).0, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(estimate(tempBasal(showing: 0.1, at: 11)).1, .status)
+        // 0.35 + 0.12 is past 1.2 U/h × 21 min, 0.42
+        XCTAssertEqual(estimate(tempBasal(showing: 0.35, at: 15)).0, 0.4, accuracy: 0.0001)
+        // Never below what the status showed
+        XCTAssertEqual(estimate(tempBasal(showing: 0.45, at: 20)).0, 0.45, accuracy: 0.0001)
+        // 0.05 + 0.15 and 0.05 + 0.12: 0.05 U steps, to the nearest
+        XCTAssertEqual(estimate(tempBasal(showing: 0.05, at: 13.5)).0, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(estimate(tempBasal(showing: 0.05, at: 15)).0, 0.15, accuracy: 0.0001)
+        // No status, or restarted since: rate × duration
+        XCTAssertEqual(estimate(tempBasal(showing: nil, at: 0)).0, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(estimate(tempBasal(showing: nil, at: 0)).1, .rateTimesDuration)
+        XCTAssertEqual(estimate(tempBasal(showing: 0.1, at: 11), restarted: true).0, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(estimate(tempBasal(showing: 0.1, at: 11), restarted: true).1, .rateTimesDuration)
+        // What finalizes it without a record
+        XCTAssertEqual(tempBasal(showing: 0.1, at: 11).fallbackDeliveredUnits, 0.3, accuracy: 0.0001)
+
+        // Only the latest status, and only while it runs; kept through a property list, and absent before it was kept
+        let dose = UnfinalizedDose(tempRate: 1.2, duration: .minutes(30), insulinType: nil, automatic: true, startDate: t0)
+        XCTAssertTrue(dose.noteStatusDelivery(0.1, receivedAt: t0.addingTimeInterval(.minutes(10))))
+        XCTAssertFalse(dose.noteStatusDelivery(0.05, receivedAt: t0.addingTimeInterval(.minutes(5))))
+        dose.finish(.cancelled, endedAt: t0.addingTimeInterval(.minutes(20)), at: t0.addingTimeInterval(.minutes(20)))
+        XCTAssertFalse(dose.noteStatusDelivery(0.3, receivedAt: t0.addingTimeInterval(.minutes(20))))
+        XCTAssertEqual(dose.snapshot.statusDelivery, 0.1)
+
+        let data = try PropertyListSerialization.data(fromPropertyList: dose.rawValue, format: .binary, options: 0)
+        let decoded = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? UnfinalizedDose.RawValue)
+        let restored = try XCTUnwrap(UnfinalizedDose(rawValue: decoded))
+        XCTAssertEqual(restored.snapshot.statusDelivery, 0.1)
+        XCTAssertEqual(restored.snapshot.statusDeliveryReceivedAt, t0.addingTimeInterval(.minutes(10)))
+
+        var older = decoded
+        older["statusDelivery"] = nil
+        older["statusDeliveryReceivedAt"] = nil
+        let restoredOlder = try XCTUnwrap(UnfinalizedDose(rawValue: older))
+        XCTAssertNil(restoredOlder.snapshot.statusDelivery)
+        XCTAssertNil(restoredOlder.snapshot.statusDeliveryReceivedAt)
+    }
+
     func testEveryFieldSurvivesARoundTripUnderTheSameKeys() throws {
         let tempBasal = try XCTUnwrap(UnfinalizedDose(rawValue: [
             "type": DoseType.tempBasal.rawValue,
@@ -349,5 +407,52 @@ final class UnfinalizedDoseConcurrencyTests: XCTestCase {
         XCTAssertEqual(restoredBolus.lastProgressUnits, 0.9)
         XCTAssertEqual(restoredBolus.lastProgressAt, t0.addingTimeInterval(50))
         XCTAssertNil(restoredBolus.observedEndDate)
+    }
+
+    /// The parts of a running temp basal read as it ran: kept once each, only while it runs, saved with it - a part that
+    /// does not decode is left out - and let go of with its final
+    func testRecordedPartsAreKeptWhileItRunsSavedAndLetGoOfWithTheFinal() throws {
+        let tempBasal = try XCTUnwrap(UnfinalizedDose(rawValue: [
+            "type": DoseType.tempBasal.rawValue,
+            "value": 0.6,
+            "startDate": t0,
+            "estimatedEndDate": t0.addingTimeInterval(.minutes(30)),
+            "deliveredUnits": 0.0,
+            "automatic": true
+        ]))
+        let first = UnfinalizedDose.RecordedPart(sequence: 946, patchId: 236, start: t0, end: t0.addingTimeInterval(435), delivered: 0.05)
+        let second = UnfinalizedDose.RecordedPart(
+            sequence: 949,
+            patchId: 236,
+            start: t0.addingTimeInterval(435),
+            end: t0.addingTimeInterval(897),
+            delivered: 0.05
+        )
+        XCTAssertTrue(tempBasal.keepRecordedPart(first))
+        XCTAssertFalse(tempBasal.keepRecordedPart(first), "once")
+        XCTAssertTrue(tempBasal.keepRecordedPart(second))
+        XCTAssertEqual(tempBasal.snapshot.recordedParts, [first, second])
+
+        // through a binary property list, as the host keeps it
+        let data = try PropertyListSerialization.data(fromPropertyList: tempBasal.rawValue, format: .binary, options: 0)
+        let decoded = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? UnfinalizedDose.RawValue)
+        XCTAssertEqual(try XCTUnwrap(UnfinalizedDose(rawValue: decoded)).snapshot.recordedParts, [first, second])
+
+        var garbled = decoded
+        var parts = try XCTUnwrap(decoded["recordedParts"] as? [[String: Any]])
+        parts[0]["end"] = "not a date"
+        garbled["recordedParts"] = parts
+        XCTAssertEqual(try XCTUnwrap(UnfinalizedDose(rawValue: garbled)).snapshot.recordedParts, [second])
+
+        var older = decoded
+        older["recordedParts"] = nil
+        XCTAssertEqual(try XCTUnwrap(UnfinalizedDose(rawValue: older)).snapshot.recordedParts, [])
+
+        tempBasal.finish(.cancelled, endedAt: t0.addingTimeInterval(897), at: t0.addingTimeInterval(900))
+        let third = UnfinalizedDose.RecordedPart(sequence: 950, patchId: 236, start: t0, end: t0, delivered: 0)
+        XCTAssertFalse(tempBasal.keepRecordedPart(third), "only while it runs")
+        XCTAssertTrue(tempBasal.finalize(deliveredUnits: 0.1, endDate: t0.addingTimeInterval(897), at: t0.addingTimeInterval(901)))
+        XCTAssertEqual(tempBasal.snapshot.recordedParts, [])
+        XCTAssertNil(tempBasal.rawValue["recordedParts"])
     }
 }

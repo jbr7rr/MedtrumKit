@@ -113,16 +113,20 @@ enum StateSyncer {
         let receivedUptime = syncResponse.receivedUptime
 
         var events: [NewPumpEvent] = []
+        // A temp basal this status ended, reported once its records are read
+        var endedTempBasal = false
         if syncResponse.state.isDeliveryHalted {
             // a halted state is authoritative even when the notification carries a cached basal.
             if let suspended = recordSuspendIfDelivering(
                 pumpManager: pumpManager,
                 basal: syncResponse.basal,
                 suspendTime: syncResponse.suspendTime,
+                storage: syncResponse.storage,
                 receivedAt: receivedAt,
                 receivedUptime: receivedUptime
             ) {
-                events.append(contentsOf: suspended)
+                events.append(contentsOf: suspended.events)
+                endedTempBasal = suspended.endedTempBasal
                 state.basalState = .suspended
             }
         } else if let basal = syncResponse.basal {
@@ -163,10 +167,12 @@ enum StateSyncer {
                     pumpManager: pumpManager,
                     basal: basal,
                     suspendTime: syncResponse.suspendTime,
+                    storage: syncResponse.storage,
                     receivedAt: receivedAt,
                     receivedUptime: receivedUptime
                 ) {
-                    events.append(contentsOf: suspended)
+                    events.append(contentsOf: suspended.events)
+                    endedTempBasal = suspended.endedTempBasal
                     state.basalState = .suspended
                 }
 
@@ -187,11 +193,22 @@ enum StateSyncer {
                     receivedAt: receivedAt,
                     receivedUptime: receivedUptime
                 ) {
-                    events.append(contentsOf: resumed)
+                    events.append(contentsOf: resumed.events)
+                    endedTempBasal = resumed.endedTempBasal
                     if endsUnconfirmed {
                         state.basalState = .active
                     }
                 }
+            }
+        }
+
+        // Its records are read here for a full status, whose thread may block on the link - not while connecting, nor
+        // with a command in flight, whose path comes first. Otherwise off the queue notifications arrive on.
+        var endReadDeferred = false
+        if endedTempBasal {
+            if !fullSync || duringReconnect || pumpManager.isCommandActive || !pumpManager.finishPendingTempBasalEndIfFree() {
+                pumpManager.finishPendingTempBasalEndSoon()
+                endReadDeferred = true
             }
         }
 
@@ -226,7 +243,12 @@ enum StateSyncer {
             if isUsable {
                 pumpManager.state.lastSync = syncDate
             }
-            pumpManager.emitPumpEvents(events)
+            // Not with the records of a temp basal still to be read - this status ended it, or a command did and reads
+            // them meanwhile: this batch would carry it out final from our estimate first. The batch their read ends
+            // with replaces pending events as this one would.
+            if !endReadDeferred || !events.isEmpty {
+                pumpManager.emitPumpEvents(events, unlessTempBasalEndPending: true)
+            }
         }
 
         pumpManager.notifyStateDidChange()
@@ -234,19 +256,21 @@ enum StateSyncer {
 
     /// The patch stopped delivering: the running basal ends, and the suspend starts, when the patch says it suspended
     /// (`suspendTime`, exact on its clock), or when a suspend segment started - else when this was received. A suspend
-    /// ends a temp basal for good: the patch resumes on its schedule. Nil when this status says nothing of the basal
-    /// running - received before the running temp basal's command went out - so the caller leaves the basal state as
-    /// it is: marking it suspended would refuse dosing with nothing suspended as far as the doses go.
+    /// ends a temp basal for good: the patch resumes on its schedule. The temp basal is reported final with the
+    /// suspend, once its records up to the newest one this status names (`storage`) are read. Nil when this status says
+    /// nothing of the basal running - received before the running temp basal's command went out - so the caller leaves
+    /// the basal state as it is: marking it suspended would refuse dosing with nothing suspended as far as the doses go.
     private static func recordSuspendIfDelivering(
         pumpManager: MedtrumPumpManager,
         basal: BasalData?,
         suspendTime: Date?,
+        storage: StorageData?,
         receivedAt: Date,
         receivedUptime: TimeInterval
-    ) -> [NewPumpEvent]? {
+    ) -> (events: [NewPumpEvent], endedTempBasal: Bool)? {
         let patchTime = suspendTime ?? basal.flatMap { $0.type.isSuspendedByPump() ? $0.startTime : nil }
 
-        return pumpManager.withDoseReportLock { () -> [NewPumpEvent]? in
+        return pumpManager.withDoseReportLock { () -> (events: [NewPumpEvent], endedTempBasal: Bool)? in
             if let patchTime {
                 pumpManager.noteSegmentAfterUnconfirmedTempBasal(
                     startingAt: patchTime,
@@ -258,7 +282,7 @@ enum StateSyncer {
             let state = pumpManager.state
             let dose = state.basalDose
             guard dose.type == .basal || dose.type == .resume || dose.type == .tempBasal else {
-                return []
+                return ([], false)
             }
 
             if dose.type == .tempBasal, MedtrumPumpManager.statusPredatesCommand(
@@ -272,15 +296,22 @@ enum StateSyncer {
                 pumpManager.patchTimeOnOurClock($0, notBefore: dose.startDate, notAfter: receivedAt)
             } ?? receivedAt
 
-            var events = pumpManager.endTempBasal(endedAt: eventTime)
-            state.basalDose = UnfinalizedDose(suspendStartTime: eventTime)
-            events.insert(NewPumpEvent.suspend(dose: state.basalDose.toDoseEntry()), at: 0)
+            let suspendDose = UnfinalizedDose(suspendStartTime: eventTime)
+            let suspended = NewPumpEvent.suspend(dose: suspendDose.toDoseEntry())
+            let ending = pumpManager.beginTempBasalEnd(
+                endedAt: eventTime,
+                patchEnd: patchTime,
+                lastRecord: storage.map { Int($0.sequence) },
+                then: [suspended]
+            )
+            state.basalDose = suspendDose
 
-            return events
+            return ending ? ([], true) : ([suspended], false)
         }
     }
 
-    /// The patch runs its schedule since the segment `basal` started: a temp basal of ours ends there, a suspend is
+    /// The patch runs its schedule since the segment `basal` started: a temp basal of ours ends there - reported final
+    /// with the scheduled basal once its records up to the one `basal` names, the newest, are read - a suspend is
     /// resumed there - on our clock, bounded to [the dose's start, when this was received]. Nil when this status says
     /// nothing of the temp basal running: received before its command went out, or a segment that started no later
     /// than it - the cancel before it, shown after it started.
@@ -289,8 +320,8 @@ enum StateSyncer {
         basal: BasalData,
         receivedAt: Date,
         receivedUptime: TimeInterval
-    ) -> [NewPumpEvent]? {
-        pumpManager.withDoseReportLock { () -> [NewPumpEvent]? in
+    ) -> (events: [NewPumpEvent], endedTempBasal: Bool)? {
+        pumpManager.withDoseReportLock { () -> (events: [NewPumpEvent], endedTempBasal: Bool)? in
             let state = pumpManager.state
             let dose = state.basalDose
 
@@ -313,16 +344,23 @@ enum StateSyncer {
                     return nil
                 }
 
-                // A temp basal was running - it ended, and waits for its record. Back to scheduled basal.
+                // A temp basal was running - it ended. Back to scheduled basal.
                 let endedAt = pumpManager.patchTimeOnOurClock(basal.startTime, notBefore: dose.startDate, notAfter: receivedAt)
-                let finishedTempBasal = pumpManager.endTempBasal(endedAt: endedAt)
-                state.basalDose = UnfinalizedDose(
+                let basalDose = UnfinalizedDose(
                     basalRate: state.currentBaseBasalRate,
                     insulinType: state.insulinType,
                     startDate: endedAt
                 )
+                let scheduled = NewPumpEvent.basal(dose: basalDose.toDoseEntry())
+                let ending = pumpManager.beginTempBasalEnd(
+                    endedAt: endedAt,
+                    patchEnd: basal.startTime,
+                    lastRecord: Int(basal.sequence),
+                    then: [scheduled]
+                )
+                state.basalDose = basalDose
 
-                return [NewPumpEvent.basal(dose: state.basalDose.toDoseEntry())] + finishedTempBasal
+                return ending ? ([], true) : ([scheduled], false)
 
             case .suspend:
                 // Delivery was suspended - report the resume. The suspend is already finalized.
@@ -331,10 +369,10 @@ enum StateSyncer {
                     insulinType: state.insulinType
                 )
 
-                return [NewPumpEvent.resume(dose: state.basalDose.toDoseEntry())]
+                return ([NewPumpEvent.resume(dose: state.basalDose.toDoseEntry())], false)
 
             default:
-                return []
+                return ([], false)
             }
         }
     }
@@ -388,7 +426,10 @@ enum StateSyncer {
             return
         }
 
-        fetchPatchTime(pumpManager: pumpManager)
+        // Between commands, not ahead of the records one reads
+        _ = pumpManager.betweenCommands {
+            fetchPatchTime(pumpManager: pumpManager)
+        }
     }
 
     public static func fetchPatchTime(pumpManager: MedtrumPumpManager) {

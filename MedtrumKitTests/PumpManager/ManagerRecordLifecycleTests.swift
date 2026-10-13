@@ -98,7 +98,8 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
     }
 
     /// A batch replacing what the host holds carries everything still in flight: the running bolus and temp basal,
-    /// a temp basal waiting on its record, and a final the host has not stored yet
+    /// and a final the host has not stored yet - and a temp basal saved waiting on its record by an earlier build,
+    /// final now from our estimate
     func testReplacingBatchCarriesEverythingInFlight() throws {
         let start = Date.now.addingTimeInterval(-20 * Self.minute)
         var raw = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75.35).rawValue
@@ -159,25 +160,64 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertEqual(runningTempBasal?.isMutable, true)
 
         let waiting = doses.first { $0.type == .tempBasal && $0.unitsPerHour == 0.8 }
-        XCTAssertEqual(waiting?.isMutable, true)
+        XCTAssertEqual(waiting?.isMutable, false)
         XCTAssertEqual(waiting?.endDate, start.addingTimeInterval(5 * Self.minute))
+        // 0.8 U/h for 5 min, by rate × duration
+        XCTAssertEqual(waiting?.deliveredUnits ?? 0, 0.05, accuracy: 0.001)
 
         let final = doses.first { $0.type == .bolus && !$0.isMutable }
         XCTAssertEqual(final?.deliveredUnits ?? 0, 0.95, accuracy: 0.001)
         XCTAssertEqual(final?.startDate, start.addingTimeInterval(Self.minute))
 
-        XCTAssertEqual(pumpManager.state.awaitingRecord.count, 1, "the final, stored now; the temp basal still waits")
+        XCTAssertEqual(pumpManager.state.awaitingRecord.count, 0, "both finals stored now")
+    }
+
+    /// State saved by the build before, a temp basal in it waiting on its record - mutable for the host: the first batch
+    /// after the launch carries it final, from our estimate, once. It is never reported mutable again.
+    func testTempBasalSavedWaitingOnItsRecordIsFinalizedOnceFromOurEstimate() throws {
+        var raw = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75.35).rawValue
+        let saved = runningTempBasal(rate: 1.2, startedAgo: 20 * Self.minute, duration: 30 * Self.minute)
+        let start = saved.startDate
+        var waitingTempBasal = saved.rawValue
+        waitingTempBasal["pumpStartTime"] = Self.patchTime(397_084_000)
+        waitingTempBasal["finishReason"] = "cancelled"
+        waitingTempBasal["finishedAt"] = start.addingTimeInterval(11 * Self.minute)
+        waitingTempBasal["observedEndDate"] = start.addingTimeInterval(11 * Self.minute)
+        raw["awaitingRecord"] = [waitingTempBasal]
+        makeManager(MedtrumPumpState(rawValue: try roundTripped(raw)))
+        XCTAssertEqual(pumpManager.state.awaitingRecord.map(\.isFinalized), [false])
+
+        let fullStatus = [
+            "2f034401000020ee0d80010080000006a803ec2a",
+            "2f03440200f607ab17193000e0052b33a817c5a8",
+            "2f0344033b59a903ec00b5d602001905735c"
+        ]
+        link.deliverFullStatus(fullStatus)
+        settle()
+
+        let reported = reports(of: .tempBasal).filter { $0.startDate == start }
+        XCTAssertEqual(reported.count, 1)
+        XCTAssertEqual(reported.first?.isMutable, false)
+        XCTAssertEqual(reported.first?.endDate, start.addingTimeInterval(11 * Self.minute))
+        // 1.2 U/h for 11 min, by rate × duration
+        XCTAssertEqual(reported.first?.deliveredUnits ?? 0, 0.2, accuracy: 0.001)
+        XCTAssertEqual(pumpManager.state.awaitingRecord.count, 0, "stored")
+
+        link.deliverFullStatus(fullStatus)
+        settle()
+        XCTAssertEqual(reports(of: .tempBasal).filter { $0.startDate == start }.count, 1)
     }
 
     /// Killed right after the host stored the batch of a replacing temp basal: the state it saved by then knows the new
-    /// temp basal, so the next replacing batch after the restart still carries it (and the old one, awaiting its record)
+    /// temp basal, so the next replacing batch after the restart still carries it (and the old one's final, not yet
+    /// confirmed when that state was saved)
     func testRestartRightAfterTheHostStoredAReplacingTempBasalKeepsIt() throws {
         let state = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 490, reservoir: 119.7)
         state.basalDose = runningTempBasal(
             rate: 0.65,
             startedAgo: 10 * Self.minute,
             duration: 30 * Self.minute,
-            pumpStartTime: Self.patchTime(397_081_000)
+            pumpStartTime: Self.patchTime(396_996_756 - 600)
         )
         state.basalState = .tempBasal
         makeManager(state)
@@ -186,6 +226,15 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
 
         link.script(CommandType.CANCEL_TEMP_BASAL, fragments: "121907000000010e00eb01ec0094b0a9170300")
         link.script(CommandType.SET_TEMP_BASAL, fragments: "121808000000060000ec01ec0097b0a917f900")
+        link.script(CommandType.GET_RECORD, PatchBytes.basalRecord(
+            sequence: 491,
+            patchId: 236,
+            type: .ABSOLUTE_TEMP,
+            start: Self.patchTime(396_996_756 - 600),
+            end: Self.patchTime(396_996_756),
+            rate: 0.65,
+            delivered: 0.1
+        ))
         XCTAssertNil(commandTempBasal(0, duration: 30 * Self.minute))
         settle()
 
@@ -197,6 +246,7 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.basalDose.type, .tempBasal)
         XCTAssertEqual(pumpManager.state.basalDose.value, 0)
         XCTAssertEqual(pumpManager.state.awaitingRecord.map(\.value), [0.65])
+        XCTAssertEqual(pumpManager.state.awaitingRecord.first?.isFinalized, true)
 
         link.deliverFullStatus([
             "2f034401000020ee0d80010080000006a803ec2a",

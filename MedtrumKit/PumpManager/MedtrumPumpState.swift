@@ -449,9 +449,10 @@ public class MedtrumPumpState: RawRepresentable {
 
     /// Boluses and temp basals that stopped running, until the host has confirmed storing their final report.
     ///
-    /// A dose stays mutable until the patch's record for it has been read, or until we give up on the record. Once
-    /// finalized it stays here with its final, which goes out with every batch until the host confirms a batch that
-    /// carried it - see `MedtrumPumpManager.emitPumpEvents`.
+    /// A bolus stays mutable until the patch's record for it has been read, or until we give up on the record. A temp
+    /// basal is final as it ends: it is here unfinalized only while its records are read, never reported so - see
+    /// `MedtrumPumpManager.TempBasalEnd`. Once finalized a dose stays here with its final, which goes out with every
+    /// batch until the host confirms a batch that carried it - see `MedtrumPumpManager.emitPumpEvents`.
     ///
     /// Locked: commands, statuses and the record sync add to and take from it on different queues.
     public var awaitingRecord: [UnfinalizedDose] {
@@ -513,7 +514,7 @@ public class MedtrumPumpState: RawRepresentable {
         case .suspend:
             return .suspended(basalDose.startDate)
         case .tempBasal:
-            // One that ended waits on its record, and the scheduled basal runs
+            // One that ended, while what follows it is put in place: the scheduled basal runs
             let dose = basalDose
             let tempBasal = dose.snapshot
             guard !tempBasal.isFinished else {

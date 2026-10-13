@@ -208,6 +208,9 @@ class MedtrumManagerTestCase: XCTestCase {
     /// there to the delegate queue, event batches go to the delegate queue directly, and the record store
     /// lands on main.
     func settle() {
+        // Where the records of a temp basal a notification ended are read
+        pumpManager?.tempBasalEndQueue.sync {}
+
         for _ in 0 ..< 2 {
             let drained = expectation(description: "main queue drained")
             DispatchQueue.main.async {
