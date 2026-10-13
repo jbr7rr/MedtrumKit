@@ -326,18 +326,16 @@ extension PeripheralManager: CBPeripheralDelegate {
             return
         }
 
-        guard let data = characteristic.value else {
-            log.warning("No data in didUpdateValueFor - characteristic: \(characteristic.uuid.uuidString)")
+        guard let data = characteristic.value, !data.isEmpty else {
+            log.warning(
+                "No usable data in didUpdateValueFor - characteristic: \(characteristic.uuid.uuidString), " +
+                    "data: \(characteristic.value?.hexEncodedString() ?? "nil")"
+            )
             return
         }
 
         if characteristic.uuid == CBUUID.READ_UUID {
-            // data[1] == 0x00, is a heartbeat with no data
-            if data[1] != 0x00 {
-                handleHeartbeat(data: data)
-            } else {
-                pumpManager?.issueHeartbeatIfNeeded()
-            }
+            handleHeartbeat(data: data)
 
             considerFullSync()
             return
@@ -426,13 +424,16 @@ extension PeripheralManager: CBPeripheralDelegate {
     }
 
     private func handleHeartbeat(data: Data) {
-        var data = data
-
         log.debug("READ -> Got data: \(data.hexEncodedString())")
-        data.append(0x00) // Little CRC hack. The notification lacks the CRC value, thus add an empty value there
 
-        var packet = NotificationPacket()
-        packet.decode(data)
+        let packet = NotificationPacket()
+        // not a command response: no header, no CRC
+        packet.totalData = data
+
+        guard packet.hasEnoughData else {
+            log.error("Heartbeat notification too short to parse: \(data.hexEncodedString())")
+            return
+        }
 
         parseStateUpdate(packet.parseResponse(), duringReconnect: false, fullSync: false)
     }

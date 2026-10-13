@@ -161,8 +161,11 @@ public class UnfinalizedDose {
         case .tempBasal:
             let actualEndDate = isMutable ?
                 estimatedEndDate :
-                min(endDate, estimatedEndDate) // in case this finalization happens late (TBR ended while not connected to the phone, etc)
-                                               // don't report the end date later than the scheduled end date
+                min(
+                    endDate,
+                    estimatedEndDate
+                ) // in case this finalization happens late (TBR ended while not connected to the phone, etc)
+            // don't report the end date later than the scheduled end date
             let duration = actualEndDate.timeIntervalSince(startDate)
             return DoseEntry(
                 type: .tempBasal,

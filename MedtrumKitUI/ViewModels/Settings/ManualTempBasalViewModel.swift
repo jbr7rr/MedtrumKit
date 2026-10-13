@@ -42,11 +42,11 @@ class ManualTempBasalViewModel: ObservableObject {
         if let pumpManager {
             selectedRate = pumpManager.state.currentBaseBasalRate
             enactingBolus = pumpManager.state.bolusDose != nil
-            
+
             pumpManager.addStatusObserver(self, queue: DispatchQueue.main)
         }
     }
-    
+
     deinit {
         pumpManager?.removeStatusObserver(self)
     }
@@ -65,7 +65,7 @@ class ManualTempBasalViewModel: ObservableObject {
             ) { error in
                 DispatchQueue.main.async {
                     self.enacting = false
-                    
+
                     if let error {
                         self.error = error.localizedDescription
                     } else {
@@ -77,9 +77,8 @@ class ManualTempBasalViewModel: ObservableObject {
     }
 }
 
-extension ManualTempBasalViewModel : PumpManagerStatusObserver {
-    func pumpManager(_ pumpManager: any LoopKit.PumpManager, didUpdate status: LoopKit.PumpManagerStatus, oldStatus: LoopKit.PumpManagerStatus) {
-        
+extension ManualTempBasalViewModel: PumpManagerStatusObserver {
+    func pumpManager(_: any LoopKit.PumpManager, didUpdate _: LoopKit.PumpManagerStatus, oldStatus _: LoopKit.PumpManagerStatus) {
         DispatchQueue.main.async {
             self.enactingBolus = self.pumpManager?.state.bolusDose != nil
         }

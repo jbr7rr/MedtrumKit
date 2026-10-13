@@ -4,11 +4,9 @@ class PatchActivationViewModel: ObservableObject {
 
     private let pumpManager: MedtrumPumpManager?
     private let nextStep: () -> Void
-    let previousStep: () -> Void
-    init(_ pumpManager: MedtrumPumpManager?, _ nextStep: @escaping () -> Void, _ previousStep: @escaping () -> Void) {
+    init(_ pumpManager: MedtrumPumpManager?, _ nextStep: @escaping () -> Void) {
         self.pumpManager = pumpManager
         self.nextStep = nextStep
-        self.previousStep = previousStep
     }
 
     func activate() {

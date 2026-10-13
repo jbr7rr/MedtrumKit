@@ -1,11 +1,19 @@
 import Combine
+import Foundation
 import LoopKit
 import OSLog
 
 class MedtrumLogger {
     private let logger: Logger
     private let writer = MedtrumLogWriter.shared
-    public static var pumpManager: MedtrumPumpManager?
+    private static let pumpManagerLock = NSLock()
+
+    private weak static var pumpManagerStorage: MedtrumPumpManager?
+
+    public static var pumpManager: MedtrumPumpManager? {
+        get { pumpManagerLock.withLock { pumpManagerStorage } }
+        set { pumpManagerLock.withLock { pumpManagerStorage = newValue } }
+    }
 
     init(category: String) {
         logger = Logger(subsystem: "org.nightscout.MedtrumKit", category: category)
@@ -46,20 +54,27 @@ class MedtrumLogger {
     private func writeToFile(_ msg: String, _ type: OSLogEntryLog.Level) {
         writer.append(msg, level: getLevel(type))
     }
-    
+
     private func writeToPumpManager(_ msg: String, _ type: OSLogEntryLog.Level) {
+        guard type != .debug else {
+            return
+        }
+
         guard let pumpManager = Self.pumpManager else {
             return
         }
-        
+
+        // `logDeviceIdentifier` is a snapshot that is safe to read from any thread.
+        let identifier = pumpManager.logDeviceIdentifier
+
         pumpManager.pumpDelegate.notify { delegate in
             guard let delegate else {
                 return
             }
-            
+
             delegate.deviceManager(
                 pumpManager,
-                logEventForDeviceIdentifier: pumpManager.state.pumpSN.hexEncodedString(),
+                logEventForDeviceIdentifier: identifier,
                 type: .delegate,
                 message: "[\(self.getLevel(type))] \(msg)",
             ) { _ in }
