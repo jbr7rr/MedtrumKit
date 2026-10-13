@@ -11,8 +11,7 @@ import XCTest
 // handleResponse() does not (it only checks length, opcode and response code), so the AAPS
 // fixtures carry an arbitrary last byte. It is recomputed here so the frames are valid for
 // this implementation; the record payload is untouched, and decode() drops the byte anyway.
-// LICENSE: AGPL-3.0, like the AAPS original — not MedtrumKit's MIT license. See the header
-// of GetRecordPacket.swift.
+// LICENSE: MIT, relicensed by J. Bunt on 2026-09-03 — see the header of GetRecordPacket.swift.
 
 final class GetRecordPacketTests: XCTestCase {
     func testGetRequestGivenPacketWhenCalledThenReturnOpCode() throws {

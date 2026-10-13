@@ -8,11 +8,11 @@ import Foundation
 // payload length is checked per record type. Written by Claude (Anthropic), directed
 // and reviewed by @tomacs.
 //
-// LICENSE: the AAPS original is under the GNU AGPL-3.0, and so is this file — NOT
-// MedtrumKit's MIT license. It can only become MIT if J. Bunt, author of the original and
-// copyright holder of MedtrumKit, relicenses it himself; no maintainer can do that on his
-// behalf. Reasoning and request: see the pull request that adds this file, and issue #141.
-// Once he agrees, replace this paragraph with the grant (link to his comment + date).
+// LICENSE: MIT, like the rest of MedtrumKit. The AAPS original is under the GNU AGPL-3.0;
+// J. Bunt, its author and the copyright holder of MedtrumKit, relicensed his Medtrum driver
+// code for this port on 2026-09-03 ("Fine with licensing, also all future contributions under
+// Medtrum driver by me from AAPS are fine to port this way"):
+// https://github.com/jbr7rr/MedtrumKit/pull/193#issuecomment-5522107794
 
 enum BolusType: UInt8, Codable {
     case NONE = 0
