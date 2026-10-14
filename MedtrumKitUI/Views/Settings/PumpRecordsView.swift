@@ -7,6 +7,7 @@ import SwiftUI
 struct PumpRecordsView: View {
     @ObservedObject var viewModel: PumpRecordsViewModel
     @ObservedObject var store: PumpRecordStore
+    @State private var groupReports = true
 
     var body: some View {
         List {
@@ -57,67 +58,88 @@ struct PumpRecordsView: View {
                     Text("Nothing reported yet")
                         .foregroundColor(.secondary)
                 } else {
-                    Button(action: { store.clearEmitted() }) {
-                        Text("Clear")
-                    }
+                    Toggle("Group by dose", isOn: $groupReports)
 
-                    ForEach(store.emitted) { dose in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text(dose.kind)
-                                    .font(.caption.bold())
-                                if dose.isMutable {
-                                    Text("mutable")
-                                        .font(.caption2)
-                                        .foregroundColor(.orange)
+                    let groups = viewModel.reportedDoses(store.emitted)
+
+                    if groupReports {
+                        ForEach(groups) { group in
+                            DisclosureGroup {
+                                ForEach(group.reports) { report in
+                                    reportLine(report)
                                 }
-                                Spacer()
-                                Text(viewModel.dateFormatter.string(from: dose.start))
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Text(group.latest.kind)
+                                            .font(.caption.bold())
+                                        stateBadge(group.latest)
+                                        Text("×\(group.reports.count)")
+                                            .font(.caption2.bold())
+                                            .foregroundColor(group.reports.count > 1 ? .blue : .secondary)
+                                        Spacer()
+                                        Text(viewModel.dateFormatter.string(from: group.latest.start))
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Text(viewModel.describe(group.latest))
+                                        .font(.caption2.monospaced())
+                                        .foregroundColor(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    identityLine(group.identity, tag: group.tag)
+                                }
+                                .padding(.vertical, 2)
                             }
-                            Text(viewModel.describe(dose))
-                                .font(.caption2.monospaced())
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(dose.identity)
-                                .font(.caption2.monospaced())
-                                .foregroundColor(.secondary.opacity(0.6))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
                         }
-                        .padding(.vertical, 2)
+                    } else {
+                        ForEach(store.emitted) { dose in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(dose.kind)
+                                        .font(.caption.bold())
+                                    stateBadge(dose)
+                                    if let position = viewModel.position(of: dose, in: groups) {
+                                        Text("report \(position.index)/\(position.count)")
+                                            .font(.caption2)
+                                            .foregroundColor(position.count > 1 ? .blue : .secondary)
+                                    }
+                                    Spacer()
+                                    Text(viewModel.dateFormatter.string(from: dose.start))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Text("sent " + viewModel.dateFormatter.string(from: dose.emittedAt))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(viewModel.describe(dose))
+                                    .font(.caption2.monospaced())
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                identityLine(
+                                    dose.identity,
+                                    tag: viewModel.position(of: dose, in: groups)?.tag
+                                )
+                            }
+                            .padding(.vertical, 2)
+                        }
                     }
                 }
             } header: {
                 Text("Reported to the host")
             } footer: {
                 Text(
-                    "Newest first, last 50. The bottom line is the syncIdentifier - it must stay " +
-                        "identical across every report of one dose, so a repeat means an update and a " +
-                        "change means the host now sees two doses."
+                    "Newest first, last 200 reports, grouped by the dose's syncIdentifier: ×N is how often " +
+                        "that dose was reported - its mutable updates, then the final. The identity must stay " +
+                        "the same across every report of one dose; a changed one means the host now sees two " +
+                        "doses. Ungrouped, the [tag] after each identity matches the reports of one dose."
                 )
             }
 
             Section {
-                if let fetchError = viewModel.fetchError {
-                    Text(fetchError)
-                        .font(.caption)
-                        .foregroundColor(.red)
-                }
-
-                fetchButton("Fetch newest record #\(viewModel.currentSequence)", .current)
-
                 if store.records.isEmpty {
-                    // Nothing held, so the only sensible move is to pull the most recent ones - both
-                    // directions would do the same thing, so offer one button rather than a choice
-                    fetchButton("Fetch 10 latest records", .newer)
+                    Text("No records read yet")
+                        .foregroundColor(.secondary)
                 } else {
-                    if let newest = store.newestRecordSequence, newest <= viewModel.currentSequence {
-                        fetchButton("Fetch 10 newer records", .newer)
-                    }
-
-                    // Records are newest first, so newer belongs above the list and earlier below it
                     ForEach(store.records) { record in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
@@ -142,10 +164,6 @@ struct PumpRecordsView: View {
                         }
                         .padding(.vertical, 2)
                     }
-
-                    if let oldest = store.oldestRecordSequence, oldest > 1 {
-                        fetchButton("Fetch 10 earlier records", .older)
-                    }
                 }
             } header: {
                 Text("Patch records")
@@ -167,21 +185,34 @@ struct PumpRecordsView: View {
         }
     }
 
-    @ViewBuilder private func fetchButton(
-        _ title: String,
-        _ direction: MedtrumPumpManager.RecordFetchDirection
-    ) -> some View {
-        Button(action: { viewModel.fetchRecords(direction) }) {
+    /// One report of a dose, inside its group: when it went out and what it said
+    @ViewBuilder private func reportLine(_ report: EmittedDose) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(title)
-                Spacer()
-                if viewModel.isFetching {
-                    ProgressView()
-                }
+                Text("sent " + viewModel.dateFormatter.string(from: report.emittedAt))
+                    .font(.caption2)
+                stateBadge(report)
             }
+            Text(viewModel.describe(report))
+                .font(.caption2.monospaced())
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        // A fetch shares the BLE link with everything else, so never start one on top of a sync
-        .disabled(viewModel.isFetching || store.status != .idle)
+        .padding(.vertical, 1)
+    }
+
+    @ViewBuilder private func stateBadge(_ dose: EmittedDose) -> some View {
+        Text(dose.isMutable ? "mutable" : "final")
+            .font(.caption2)
+            .foregroundColor(dose.isMutable ? .orange : .green)
+    }
+
+    @ViewBuilder private func identityLine(_ identity: String, tag: String?) -> some View {
+        Text(tag.map { "[\($0)] " + identity } ?? identity)
+            .font(.caption2.monospaced())
+            .foregroundColor(.secondary.opacity(0.6))
+            .lineLimit(1)
+            .truncationMode(.middle)
     }
 
     @ViewBuilder private func row(_ title: String, _ value: String, color: Color = .secondary) -> some View {

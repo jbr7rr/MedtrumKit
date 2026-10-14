@@ -9,6 +9,18 @@ struct TrackedDose: Identifiable {
     let detail: String
 }
 
+/// Every report the host got of one dose - one identity - oldest first, so the screen can show a dose's
+/// life (mutable updates, then the final) as one entry rather than scattered through the list.
+struct ReportedDose: Identifiable {
+    var id: String { identity }
+    let identity: String
+    /// Short, stable tag for the identity, to tell reports of the same dose apart in the flat list
+    let tag: String
+    let reports: [EmittedDose]
+
+    var latest: EmittedDose { reports[reports.count - 1] }
+}
+
 /// Backs the pump records debug screen: what we think is being delivered, next to what the patch says.
 ///
 /// The records themselves come straight from `PumpRecordStore`, which the view observes directly - this
@@ -19,8 +31,6 @@ class PumpRecordsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var doses: [TrackedDose] = []
     @Published var syncedSequence: Int = 0
     @Published var currentSequence: Int = 0
-    @Published var isFetching = false
-    @Published var fetchError: String?
 
     let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -49,24 +59,6 @@ class PumpRecordsViewModel: ObservableObject, PumpManagerStatusObserver {
     /// backlog here is expected right after adopting a patch rather than a sign of trouble.
     var pendingRecords: Int {
         max(0, currentSequence - syncedSequence)
-    }
-
-    /// Reads ten records either side of what is on screen. Debug-only - the driver reads forward from
-    /// its own cursor and never revisits.
-    func fetchRecords(_ direction: MedtrumPumpManager.RecordFetchDirection) {
-        guard let pumpManager, !isFetching else {
-            return
-        }
-
-        isFetching = true
-        fetchError = nil
-
-        pumpManager.fetchRecords(direction) { error in
-            DispatchQueue.main.async {
-                self.isFetching = false
-                self.fetchError = error?.localizedDescription
-            }
-        }
     }
 
     func pumpManager(
@@ -168,6 +160,43 @@ class PumpRecordsViewModel: ObservableObject, PumpManagerStatusObserver {
         }
 
         self.doses = doses
+    }
+
+    /// The reports grouped by identity, the dose reported most recently first
+    func reportedDoses(_ emitted: [EmittedDose]) -> [ReportedDose] {
+        var order: [String] = []
+        var reports: [String: [EmittedDose]] = [:]
+
+        // `emitted` is newest first: the first sighting of an identity is its latest report
+        for dose in emitted {
+            if reports[dose.identity] == nil {
+                order.append(dose.identity)
+            }
+            reports[dose.identity, default: []].insert(dose, at: 0)
+        }
+
+        return order.map { identity in
+            ReportedDose(identity: identity, tag: Self.tag(for: identity), reports: reports[identity] ?? [])
+        }
+    }
+
+    /// Which report of its dose `dose` was, and of how many in the list, plus the dose's tag
+    func position(of dose: EmittedDose, in groups: [ReportedDose]) -> (index: Int, count: Int, tag: String)? {
+        guard let group = groups.first(where: { $0.identity == dose.identity }),
+              let index = group.reports.firstIndex(where: { $0.id == dose.id })
+        else {
+            return nil
+        }
+        return (index + 1, group.reports.count, group.tag)
+    }
+
+    /// FNV-1a of the identity, four hex digits: enough to match rows by eye, not a real identity
+    private static func tag(for identity: String) -> String {
+        var hash: UInt32 = 2_166_136_261
+        for byte in identity.utf8 {
+            hash = (hash ^ UInt32(byte)) &* 16_777_619
+        }
+        return String(format: "%04x", hash & 0xFFFF)
     }
 
     /// The delivery numbers exactly as the host received them.

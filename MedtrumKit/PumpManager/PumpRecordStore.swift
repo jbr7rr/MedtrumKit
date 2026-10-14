@@ -18,7 +18,7 @@ public struct StoredPumpRecord: Identifiable, Equatable {
     /// dose of ours will eventually be matched against, so it is worth seeing next to our own times.
     public let eventDate: Date?
     /// What the record did to our doses - the dose it finalized, or that it matched none. Nil where there is nothing
-    /// to match, and for records fetched from the debug screen, which are not reconciled.
+    /// to match.
     public let outcome: String?
 }
 
@@ -68,7 +68,7 @@ public final class PumpRecordStore: ObservableObject {
 
     /// Lower than the record cap on purpose: a dose is written here every time it is reported, not once,
     /// so a temp basal re-sent on each batch fills this far faster than records arrive.
-    private static let emittedCapacity = 50
+    private static let emittedCapacity = 200
 
     @Published public private(set) var records: [StoredPumpRecord] = []
     /// Newest first, capped the same way as `records`
@@ -101,26 +101,11 @@ public final class PumpRecordStore: ObservableObject {
     func store(_ record: StoredPumpRecord) {
         onMain {
             // A record can be read more than once - a retry, or a re-read of one that was still being
-            // written - and the newer read wins rather than appearing twice. Not over what reconciling it did:
-            // the debug fetch has no outcome to replace it with.
-            var record = record
-            if record.outcome == nil, let outcome = self.records.first(where: { $0.id == record.id })?.outcome {
-                record = StoredPumpRecord(
-                    id: record.id,
-                    fetchedAt: record.fetchedAt,
-                    kind: record.kind,
-                    summary: record.summary,
-                    eventDate: record.eventDate,
-                    outcome: outcome
-                )
-            }
-
+            // written - and the newer read wins rather than appearing twice
             self.records.removeAll { $0.id == record.id }
             self.records.append(record)
 
-            // Always by sequence, newest first. Reads arrive in whatever order they were asked for, and
-            // a backfill walks upwards, so inserting positionally would interleave a fetched batch with
-            // what is already held instead of slotting it underneath.
+            // Always by sequence, newest first: a sync walks upwards
             self.records.sort { $0.id > $1.id }
 
             if self.records.count > Self.capacity {
@@ -141,22 +126,6 @@ public final class PumpRecordStore: ObservableObject {
                 self.emitted.removeLast(self.emitted.count - Self.emittedCapacity)
             }
         }
-    }
-
-    /// Drops the reported doses, so a run can be watched from a known-empty starting point.
-    public func clearEmitted() {
-        onMain {
-            self.emitted = []
-        }
-    }
-
-    /// The ends of what we hold, so the screen can ask for the ten either side of it.
-    public var oldestRecordSequence: Int? {
-        records.map(\.id).min()
-    }
-
-    public var newestRecordSequence: Int? {
-        records.map(\.id).max()
     }
 
     /// Records are numbered per patch, so anything we hold is meaningless once the patch changes. The

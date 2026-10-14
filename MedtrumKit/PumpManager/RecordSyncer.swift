@@ -453,65 +453,6 @@ enum RecordSyncer {
         }
     }
 
-    /// Reads an arbitrary range of records without moving `syncedSequenceNumber` or reconciling anything.
-    ///
-    /// Only the debug screen uses this - the driver reads forward from its own cursor and never needs to
-    /// revisit. Same blocking rules as `syncRecords`.
-    static func fetchRecords(pumpManager: MedtrumPumpManager, _ range: ClosedRange<Int>) {
-        guard begin(nil) else {
-            logger.debug("Record sync already running, skipping fetch")
-            return
-        }
-        defer { end() }
-
-        logger.info("Fetching records \(range.lowerBound)...\(range.upperBound)")
-
-        let store = pumpManager.recordStore
-        defer { store.finishedSync() }
-
-        let patchId = pumpManager.state.patchId
-        var badInARow = 0
-
-        for sequence in range {
-            // Gives way like the driver's own reads: a bolus or a command needs the link more
-            if pumpManager.isCommandActive || pumpManager.state.bolusDose != nil {
-                logger.info("Stopping the record fetch at \(sequence), a command needs the link")
-                return
-            }
-
-            store.setStatus(.syncing(sequence: sequence, upTo: range.upperBound))
-
-            let result = pumpManager.withCommandLockIfFree { () -> ReadResult? in
-                guard !pumpManager.isCommandActive else {
-                    return nil
-                }
-                return read(sequence, patchId: patchId, pumpManager: pumpManager)
-            }
-            guard let result = result ?? nil else {
-                logger.info("Stopping the record fetch at \(sequence), a command holds the link")
-                return
-            }
-
-            switch result {
-            case let .linkLost(error):
-                logger.warning("Aborting record fetch at \(sequence): \(error.errorDescription)")
-                store.setStatus(.failed("Aborted at \(sequence): \(error.errorDescription)"))
-                return
-
-            case let .bad(problem):
-                badInARow += 1
-                store.setStatus(.failed("Record \(sequence): \(problem)"))
-                if badInARow >= maxBadRecordsInARow {
-                    return
-                }
-
-            case let .record(response):
-                badInARow = 0
-                log(response, requested: sequence, expectedPatchId: patchId.toUInt64(), outcome: nil, to: store)
-            }
-        }
-    }
-
     private enum ReadResult {
         case record(GetRecordResponse)
         /// The patch answered twice with nothing we can use: an error code, a garbled answer, a record that does not parse
