@@ -18,8 +18,9 @@ struct SynchronizePacketResponse: Codable {
     /// When it came in, taken as it is parsed: a command written after it can't be in it, whenever it is applied -
     /// see `MedtrumPumpManager.statusPredatesCommand`
     var receivedAt = Date.now
-    /// `receivedAt` on the monotonic clock, which a change of the wall clock does not move
-    var receivedUptime = ProcessInfo.processInfo.systemUptime
+    /// `receivedAt` on the monotonic clock, which a change of the wall clock does not move - the one
+    /// `MedtrumPumpManager.uptime` stamps commands on
+    var receivedUptime = TimeInterval.continuousUptime
 
     func validated(expectedPatchId: UInt64 = 0) -> SynchronizePacketResponse {
         let invalidBolus = bolus.map { !(0 ... 50).contains($0.delivered) } ?? false

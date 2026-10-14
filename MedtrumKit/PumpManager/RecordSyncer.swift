@@ -291,6 +291,8 @@ enum RecordSyncer {
         let isOurs = isSamePatch(response.patchId, patchId.toUInt64())
         let outcome = applied ?? (isOurs ? pumpManager.reconcile(response) : "not this patch's record")
         log(response, requested: requested, expectedPatchId: patchId.toUInt64(), outcome: outcome, to: pumpManager.recordStore)
+        // A bolus whose command went unanswered keeps track of the records read in order since it went out
+        pumpManager.noteRecordRead(response.sequence, requested: requested, isOurs: isOurs)
 
         let next = cursorAfterReading(reported: response.sequence, requested: requested, current: current)
         if next != response.sequence {
@@ -690,10 +692,6 @@ enum RecordSyncer {
             return ("BOLUS", fields.joined(separator: " "), bolus.startTime)
 
         case let .basal(basal):
-            // The comparison this whole thing exists for: what the pump says it put in, versus what
-            // rate x duration - the way we model it today - would have said
-            let estimated = basal.estimatedDelivery
-            let reported = UnfinalizedDose.roundBasalRate(estimated)
             let endReason: String = basal.endReason.map { "\($0)" } ?? "unknown(\(basal.rawEndReason))"
             let fields: [String] = [
                 "type=\(basal.type)",
@@ -703,13 +701,7 @@ enum RecordSyncer {
                 "duration=\(minutes(basal.duration))",
                 "rate=\(units(basal.rate))/h",
                 "percent=\(basal.percent)",
-                "delivered=\(units(basal.delivered))",
-                "estimated=\(units(estimated))",
-                // What we would actually hand the host: the estimate put through the same rounding
-                // `UnfinalizedDose` applies. It floors, so `diff` is measured against this rather than
-                // the raw estimate - the estimate is not what anyone downstream ever sees.
-                "reported=\(units(reported))",
-                "diff=\(units(reported - basal.delivered))"
+                "delivered=\(units(basal.delivered))"
             ]
             return ("BASAL", fields.joined(separator: " "), basal.startTime)
 

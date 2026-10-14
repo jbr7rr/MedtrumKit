@@ -99,7 +99,9 @@ enum StateSyncer {
             state.currentSequenceNumber = max(state.currentSequenceNumber, Int(storage.sequence))
             // The newest record the patch has written, as it says
             if Int(storage.sequence) >= state.currentSequenceNumber {
-                pumpManager.noteRecordSequenceConfirmed(receivedAt: syncResponse.receivedAt)
+                pumpManager.noteRecordSequenceConfirmed(
+                    receivedAt: syncResponse.receivedAt, receivedUptime: syncResponse.receivedUptime
+                )
             }
         }
 

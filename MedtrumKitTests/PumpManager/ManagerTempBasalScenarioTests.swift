@@ -2583,7 +2583,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         packet.totalData = FakeMedtrumLink.bytes(hex)
         var status = packet.parseResponse()
         status.receivedAt = status.receivedAt.addingTimeInterval(-receivedAgo)
-        status.receivedUptime -= receivedAgo
+        status.receivedUptime += uptimeOffset.value - receivedAgo
         link.onQueue {
             self.pumpManager.handleStatus(status, duringReconnect: false, fullSync: false)
         }

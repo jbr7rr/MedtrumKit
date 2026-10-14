@@ -47,7 +47,17 @@ final class FakeMedtrumLink: MedtrumLink {
         }
     }
 
-    weak var pumpManager: MedtrumPumpManager?
+    weak var pumpManager: MedtrumPumpManager? {
+        didSet {
+            guard pumpManager != nil, let work = lock.withLock({ () -> (() -> Void)? in
+                defer { attachWork = nil }
+                return attachWork
+            }) else {
+                return
+            }
+            work()
+        }
+    }
 
     let queue = DispatchQueue(label: "com.nightscout.MedtrumKitTests.fakeLink")
 
@@ -60,6 +70,7 @@ final class FakeMedtrumLink: MedtrumLink {
     private var connectRequests = 0
     private var nextConnectError: MedtrumConnectError?
     private var timeoutWait: ((TimeInterval) -> Void)?
+    private var attachWork: (() -> Void)?
     /// One write at a time, as on the real link
     private let writer = LinkWriter()
 
@@ -104,6 +115,12 @@ final class FakeMedtrumLink: MedtrumLink {
     var onTimeout: ((TimeInterval) -> Void)? {
         get { lock.withLock { timeoutWait } }
         set { lock.withLock { timeoutWait = newValue } }
+    }
+
+    /// Runs once, as the next manager takes the link - in its init, before it returns: a status arriving at once, say
+    var whenAttached: (() -> Void)? {
+        get { lock.withLock { attachWork } }
+        set { lock.withLock { attachWork = newValue } }
     }
 
     /// Holds the link's writer, as a write of another path waiting for its answer would - the heartbeat's full sync, say
@@ -203,6 +220,9 @@ final class FakeMedtrumLink: MedtrumLink {
                 return
             }
 
+            // Stamped as received on the manager's monotonic clock, which the scenario moves
+            var response = response
+            response.receivedUptime += pumpManager.uptime() - TimeInterval.continuousUptime
             pumpManager.handleStatus(response, duringReconnect: duringReconnect, fullSync: fullSync)
         }
     }

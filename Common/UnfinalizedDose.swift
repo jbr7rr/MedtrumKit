@@ -136,11 +136,18 @@ public class UnfinalizedDose {
         /// `sentAt` on the monotonic clock, which survives a change of the wall clock - but not a restart, so it is
         /// never saved
         public fileprivate(set) var sentUptime: TimeInterval?
-        /// The newest record number known when the command went out: the record of a bolus whose answer was lost is
-        /// numbered past it
+        /// The newest record number known when the command went out - for a bolus, or claimed by an earlier bolus's
+        /// answer (`MedtrumPumpState.answeredBolusRecords`): the record of a bolus whose answer was lost is numbered past it
         public fileprivate(set) var sequenceAtSend: Int?
         /// The record the patch allocated for this bolus, from the answer to its command: matched by number
         public fileprivate(set) var recordSequence: Int?
+        /// Of a bolus whose command went unanswered: every record numbered past `sequenceAtSend` up to this one was read,
+        /// in order and in its own place, while it ran or waited on its record - nil, none yet. A record skipped, or
+        /// read in another's place, stops it there for good: that one could have been its.
+        public fileprivate(set) var recordsReadThrough: Int?
+        /// Of a bolus whose command went unanswered: the first record read that could be its - at its amount, numbered
+        /// past `sequenceAtSend`, near when it went out or matching no dose of ours - whatever it finalized
+        public fileprivate(set) var possibleRecord: Int?
         /// The latest start of a segment the patch was known to run when the command of this unanswered temp basal
         /// went out, on its clock: a segment of ours started after it
         public fileprivate(set) var priorSegmentStart: Date?
@@ -203,15 +210,13 @@ public class UnfinalizedDose {
         duration: TimeInterval,
         activationType: BolusActivationType,
         insulinType: InsulinType?,
-        confirmation: Confirmation = .confirmed
+        confirmation: Confirmation = .confirmed,
+        startDate: Date = Date.now
     ) {
-        var estimatedEndDate = Date.now
-        estimatedEndDate.addTimeInterval(duration)
-
         type = .bolus
         value = units
-        startDate = Date.now
-        self.estimatedEndDate = estimatedEndDate
+        self.startDate = startDate
+        estimatedEndDate = startDate.addingTimeInterval(duration)
         self.insulinType = insulinType
         automatic = activationType.isAutomatic
 
@@ -352,6 +357,8 @@ public class UnfinalizedDose {
         state.sentAt = rawValue["sentAt"] as? Date
         state.sequenceAtSend = rawValue["sequenceAtSend"] as? Int
         state.recordSequence = rawValue["recordSequence"] as? Int
+        state.recordsReadThrough = rawValue["recordsReadThrough"] as? Int
+        state.possibleRecord = rawValue["possibleRecord"] as? Int
         state.priorSegmentStart = rawValue["priorSegmentStart"] as? Date
         state.laterSegmentStart = rawValue["laterSegmentStart"] as? Date
         state.stopUnansweredAt = rawValue["stopUnansweredAt"] as? Date
@@ -398,6 +405,8 @@ public class UnfinalizedDose {
         raw["sentAt"] = state.sentAt
         raw["sequenceAtSend"] = state.sequenceAtSend
         raw["recordSequence"] = state.recordSequence
+        raw["recordsReadThrough"] = state.recordsReadThrough
+        raw["possibleRecord"] = state.possibleRecord
         raw["priorSegmentStart"] = state.priorSegmentStart
         raw["laterSegmentStart"] = state.laterSegmentStart
         raw["stopUnansweredAt"] = state.stopUnansweredAt
@@ -433,10 +442,28 @@ public class UnfinalizedDose {
     }
 
     /// What the answer to the SetBolus command said of this bolus. For a dose not shared yet.
-    func noteAnswer(recordSequence: Int, pumpStartTime: Date) {
+    func noteAnswer(recordSequence: Int, pumpStartTime: Date? = nil) {
         transition { state in
             state.recordSequence = recordSequence
             state.pumpStartTime = pumpStartTime
+        }
+    }
+
+    /// Record `sequence` was read in its own place while this bolus whose command went unanswered ran or waited on its
+    /// record - see `State.recordsReadThrough`. Moves it on only from the record before.
+    func noteRecordRead(_ sequence: Int) {
+        transition { state in
+            guard let sequenceAtSend = state.sequenceAtSend, sequence == (state.recordsReadThrough ?? sequenceAtSend) + 1 else {
+                return
+            }
+            state.recordsReadThrough = sequence
+        }
+    }
+
+    /// Record `sequence` could be that of this bolus whose command went unanswered - see `State.possibleRecord`
+    func notePossibleRecord(_ sequence: Int) {
+        transition { state in
+            state.possibleRecord = state.possibleRecord ?? sequence
         }
     }
 
@@ -859,8 +886,7 @@ public class UnfinalizedDose {
     }
 
     /// Snaps a value onto the increments the pump can actually meter. Note this *floors* rather than
-    /// rounds to nearest, so a value between two increments is always reported low - see the record
-    /// screen, which shows this next to what the patch says it delivered.
+    /// rounds to nearest, so a value between two increments is always reported low.
     static func roundBasalRate(_ rate: Double) -> Double {
         MedtrumPumpManager.onboardingSupportedBasalRates.last(where: { $0 <= rate }) ?? 0
     }

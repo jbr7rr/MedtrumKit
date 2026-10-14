@@ -301,6 +301,25 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.basalState, .active)
     }
 
+    /// Commands and statuses are stamped on the one monotonic clock, and it is the one that counts sleep
+    /// (`mach_continuous_time`), not the one that stops in it (`mach_absolute_time`, `systemUptime`): a phone with its
+    /// screen locked sleeps between the wakes that bring its statuses. The two read the same on a host that has not
+    /// slept since it booted.
+    func testCommandsAndStatusesAreStampedOnTheClockThatCountsSleep() {
+        let manager = MedtrumPumpManager(
+            state: activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 100),
+            link: FakeMedtrumLink()
+        )
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        let continuous = Double(mach_continuous_time()) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
+
+        XCTAssertEqual(TimeInterval.continuousUptime, continuous, accuracy: 0.5)
+        XCTAssertEqual(manager.uptime(), continuous, accuracy: 0.5, "commands, and the record counter's tellings")
+        XCTAssertEqual(SynchronizePacketResponse(state: .active, activeAlarms: []).receivedUptime, continuous, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(TimeInterval.continuousUptime + 0.5, ProcessInfo.processInfo.systemUptime)
+    }
+
     /// Every field a dose keeps for its record and its final, through the property list the host saves the state in -
     /// and the state's own new fields
     func testEveryNewFieldSurvivesARoundTrip() throws {
@@ -316,6 +335,8 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         uncertain.noteCommand(sentAt: t0, uptime: 100, sequence: 823)
         XCTAssertTrue(uncertain.noteUncertaintyReported())
         XCTAssertTrue(uncertain.finish(.completionNotSeen, endedAt: nil, at: t0.addingTimeInterval(173)))
+        uncertain.noteRecordRead(824)
+        uncertain.notePossibleRecord(824)
 
         let bolus = UnfinalizedDose(units: 2, duration: 80, activationType: .manualNoRecommendation, insulinType: nil)
         bolus.noteCommand(sentAt: t0, uptime: nil, sequence: 122)
@@ -339,7 +360,8 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertTrue(tempBasal.disableRecordMatch())
 
         XCTAssertTrue(Set(uncertain.rawValue.keys).isSuperset(of: [
-            "confirmation", "uncertaintyReported", "sentAt", "sequenceAtSend", "finishReason", "finishedAt"
+            "confirmation", "uncertaintyReported", "sentAt", "sequenceAtSend", "finishReason", "finishedAt",
+            "recordsReadThrough", "possibleRecord"
         ]))
         XCTAssertTrue(Set(bolus.rawValue.keys).isSuperset(of: [
             "recordSequence", "pumpStartTime", "lastProgressAt", "lastProgressUnits", "observedEndDate",
@@ -358,6 +380,8 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertEqual(restoredUncertain.confirmation, .uncertain)
         XCTAssertTrue(restoredUncertain.snapshot.uncertaintyReported)
         XCTAssertNil(restoredUncertain.snapshot.sentUptime, "the monotonic clock of another run is not kept")
+        XCTAssertEqual(restoredUncertain.snapshot.recordsReadThrough, 824)
+        XCTAssertEqual(restoredUncertain.snapshot.possibleRecord, 824)
 
         let state = activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 100)
         state.mutateAwaitingRecord { $0 = [uncertain, bolus] }
@@ -365,7 +389,9 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         state.patchUTCOffset = 7200
         state.sequenceConfirmedAt = t0.addingTimeInterval(400)
         state.skippedRecordSequences = [120]
-        state.answeredBolusRecords = [AnsweredBolusRecord(sequence: 123, pumpStartTime: t0.addingTimeInterval(1))]
+        state.answeredBolusRecords = [123]
+        let pending = PendingBolus(units: 1.5, sentAt: t0.addingTimeInterval(500), sequenceAtSend: 124, automatic: true)
+        state.pendingBolus = pending
 
         let restored = MedtrumPumpState(rawValue: try roundTripped(state.rawValue))
         XCTAssertEqual(restored.awaitingRecord.map { $0.rawValue as NSDictionary }, [uncertain, bolus].map { $0.rawValue as NSDictionary })
@@ -373,8 +399,20 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertEqual(restored.patchUTCOffset, 7200)
         XCTAssertEqual(restored.sequenceConfirmedAt, t0.addingTimeInterval(400))
         XCTAssertEqual(restored.skippedRecordSequences, [120])
-        XCTAssertEqual(restored.answeredBolusRecords, [AnsweredBolusRecord(sequence: 123, pumpStartTime: t0.addingTimeInterval(1))])
+        XCTAssertEqual(restored.answeredBolusRecords, [123])
+        XCTAssertEqual(restored.pendingBolus, pending)
         XCTAssertTrue(restored.deliveryIsUncertain, "the unconfirmed temp basal")
+    }
+
+    /// The answered bolus records saved with their patch starts, as builds before kept them, decode to their numbers
+    func testAnsweredBolusRecordsSavedWithTheirStartsDecode() throws {
+        var raw = activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 124, reservoir: 100).rawValue
+        raw["answeredBolusRecords"] = [
+            ["sequence": 123, "pumpStartTime": Date.now],
+            ["sequence": 124, "pumpStartTime": Date.now]
+        ]
+
+        XCTAssertEqual(MedtrumPumpState(rawValue: try roundTripped(raw)).answeredBolusRecords, [123, 124])
     }
 
     /// The state the shipped driver saves decodes without loss, and saves again as it was
@@ -436,6 +474,8 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertFalse(running.isFinished)
         XCTAssertNil(running.recordSequence)
         XCTAssertNil(running.sentAt)
+        XCTAssertNil(running.snapshot.recordsReadThrough)
+        XCTAssertNil(running.snapshot.possibleRecord)
         XCTAssertEqual(state.basalDose.type, .tempBasal)
         XCTAssertEqual(state.basalDose.pumpStartTime, t0.addingTimeInterval(-590))
         XCTAssertEqual(state.awaitingRecord.count, 0)
@@ -444,6 +484,7 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertNil(state.sequenceConfirmedAt, "never told: not caught up until a status says so")
         XCTAssertEqual(state.skippedRecordSequences, [])
         XCTAssertEqual(state.answeredBolusRecords, [])
+        XCTAssertNil(state.pendingBolus)
         XCTAssertFalse(state.deliveryIsUncertain)
         XCTAssertEqual(state.currentSequenceNumber, 122)
         XCTAssertEqual(state.syncedSequenceNumber, 120)
@@ -453,6 +494,7 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertEqual(saved["basalDose"] as? NSDictionary, tempBasal as NSDictionary)
         XCTAssertEqual((saved["awaitingRecord"] as? [Any])?.count, 0)
         XCTAssertNil(saved["unconfirmedTempBasal"])
+        XCTAssertNil(saved["pendingBolus"])
 
         // A bolus without a send time still has a deadline - from its start
         XCTAssertEqual(

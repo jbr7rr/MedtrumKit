@@ -173,8 +173,7 @@ class PumpRecordsViewModel: ObservableObject, PumpManagerStatusObserver {
     /// The delivery numbers exactly as the host received them.
     ///
     /// Both are already final here - `delivered` has been through whatever rounding the dose type
-    /// applies, so there is nothing to contrast it against. The estimate-versus-reported comparison
-    /// belongs on the patch records, where the pump's own figure is the third number.
+    /// applies.
     func describe(_ dose: EmittedDose) -> String {
         var fields = ["programmed=\(units(dose.programmed))"]
 

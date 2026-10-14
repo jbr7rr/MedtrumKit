@@ -46,12 +46,6 @@ struct BasalRecord {
     var duration: TimeInterval {
         endTime.timeIntervalSince(startTime)
     }
-
-    /// What our own model would have reported for this window: the rate the pump ran at, times how
-    /// long it ran. The pump's `delivered` is the ground truth to compare this against.
-    var estimatedDelivery: Double {
-        rate * (duration / .hours(1))
-    }
 }
 
 struct TddRecord {

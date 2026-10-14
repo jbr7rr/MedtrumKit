@@ -17,6 +17,9 @@ class MedtrumManagerTestCase: XCTestCase {
 
     /// How far the manager's clock - the one its record fallbacks and bolus deadlines go by - is ahead of ours
     let clockOffset = Locked<TimeInterval>(0)
+    /// How far the manager's monotonic clock is ahead of ours: moved with `clockOffset`, but not by a change of the wall
+    /// clock (`changeWallClock`)
+    let uptimeOffset = Locked<TimeInterval>(0)
 
     override func setUp() {
         super.setUp()
@@ -43,10 +46,23 @@ class MedtrumManagerTestCase: XCTestCase {
         let pumpManager = MedtrumPumpManager(state: state, link: link)
         let clockOffset = clockOffset
         pumpManager.now = { Date.now.addingTimeInterval(clockOffset.value) }
+        let uptimeOffset = uptimeOffset
+        pumpManager.uptime = { TimeInterval.continuousUptime + uptimeOffset.value }
         pumpManager.delegateQueue = delegate.queue
         pumpManager.pumpManagerDelegate = delegate
         self.pumpManager = pumpManager
         return pumpManager
+    }
+
+    /// The app killed, and started again from `saved` - the state as the host had it, through the property list it is
+    /// saved in: a new manager, and a new host. What the old manager still sends reaches no one.
+    @discardableResult func restart(from saved: PumpManager.RawStateValue?) throws -> MedtrumPumpManager {
+        let raw = try XCTUnwrap(saved, "the host has no state")
+        let data = try PropertyListSerialization.data(fromPropertyList: raw, format: .binary, options: 0)
+        let decoded = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+
+        delegate = FakePumpManagerDelegate()
+        return makeManager(MedtrumPumpState(rawValue: decoded))
     }
 
     /// An activated, connected patch running its schedule - one rate all day
@@ -103,8 +119,14 @@ class MedtrumManagerTestCase: XCTestCase {
 
     // MARK: Driving
 
-    /// Moves the manager's clock on - see `clockOffset`
+    /// Moves the manager's clock on - see `clockOffset` - and its monotonic clock with it
     func advanceClock(by interval: TimeInterval) {
+        clockOffset.mutate { $0 += interval }
+        uptimeOffset.mutate { $0 += interval }
+    }
+
+    /// The phone's wall clock set by `interval`, forward or back: the monotonic clock does not move
+    func changeWallClock(by interval: TimeInterval) {
         clockOffset.mutate { $0 += interval }
     }
 

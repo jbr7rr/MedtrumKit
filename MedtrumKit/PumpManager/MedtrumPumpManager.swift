@@ -32,6 +32,10 @@ public class MedtrumPumpManager: DeviceManager {
     /// A temp basal that ended, reported once its records are read - see `TempBasalEnd`. Only under `doseReportLock`.
     private var pendingTempBasalEndStorage: TempBasalEnd?
 
+    /// A bolus whose command went unanswered in an earlier run, the host not yet warned of it - see
+    /// `reportBolusFromLastRun`. Only under `doseReportLock`.
+    private var bolusFromLastRun: UnfinalizedDose?
+
     /// Where the records of a temp basal a notification ended are read: not the queue statuses arrive on, which the
     /// answers have to reach
     let tempBasalEndQueue = DispatchQueue(label: "com.nightscout.MedtrumKit.tempBasalEnd")
@@ -57,6 +61,10 @@ public class MedtrumPumpManager: DeviceManager {
 
     /// The clock the record fallbacks and a bolus's deadline go by. Only tests move it.
     var now: () -> Date = { Date.now }
+    /// The monotonic clock, which a change of the wall clock does not move and which counts sleep
+    /// (`TimeInterval.continuousUptime`): commands and the record counter's tellings are stamped on it, as statuses are
+    /// (`SynchronizePacketResponse.receivedUptime`). Only tests move it.
+    var uptime: () -> TimeInterval = { .continuousUptime }
 
     public var state: MedtrumPumpState
     var oldState: MedtrumPumpState
@@ -107,6 +115,8 @@ public class MedtrumPumpManager: DeviceManager {
             object: nil
         )
 
+        // Before the link can hand it a status: one synced against a state without the bolus
+        takeOverPendingBolus()
         link.pumpManager = self
         MedtrumLogger.pumpManager = self
     }
@@ -119,6 +129,7 @@ public class MedtrumPumpManager: DeviceManager {
         self.link = link
         refreshLogDeviceIdentifier()
 
+        takeOverPendingBolus()
         link.pumpManager = self
     }
 
@@ -286,6 +297,9 @@ public class MedtrumPumpManager: DeviceManager {
     /// A status from the patch: a notification it pushed, or the answer to a Synchronize the link sent
     /// while connecting or to keep the session fresh
     func handleStatus(_ syncResponse: SynchronizePacketResponse, duringReconnect: Bool, fullSync: Bool) {
+        // Told of before anything the status does to it
+        reportBolusFromLastRun()
+
         StateSyncer.sync(
             syncResponse: syncResponse,
             state: state,
@@ -340,7 +354,8 @@ public extension MedtrumPumpManager {
     }
 
     func ensureCurrentPumpData(completion: ((Date?) -> Void)?) {
-        // Needs neither the link nor a patch
+        // Need neither the link nor a patch
+        reportBolusFromLastRun()
         resendUnacknowledgedFinalsIfDue()
 
         let age = Date.now.timeIntervalSince(state.lastSync)
@@ -490,8 +505,8 @@ public extension MedtrumPumpManager {
         let duration = estimatedDuration(toBolus: units)
         log.info("Enact bolus - \(units)U, \(duration)sec")
 
-        // Until the SetBolus is answered nothing of this bolus is in the state: its error paths leave the state alone -
-        // what is there is another operation's, a bolus running or a cancel waiting to go out
+        // Until the SetBolus is answered nothing of this bolus is in the state but `pendingBolus`: its error paths leave
+        // the rest alone - what is there is another operation's, a bolus running or a cancel waiting to go out
         ensureConnectedAndActive { error in
             if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
@@ -513,8 +528,20 @@ public extension MedtrumPumpManager {
             }
 
             let sentAt = Date.now
-            let sentUptime = ProcessInfo.processInfo.systemUptime
-            let sequenceAtSend = self.state.currentSequenceNumber
+            let sentUptime = self.uptime()
+            // The newest record known, or claimed: every number an answer gave is an earlier bolus's, below this one's
+            // own - see `MedtrumPumpState.answeredBolusRecords`. The known one lags a claimed one whose completion was lost.
+            let sequenceAtSend = max(self.state.currentSequenceNumber, self.state.answeredBolusRecords.max() ?? 0)
+
+            // On disk before it goes out: killed before its answer, the app comes back with it - see `pendingBolus`
+            self.state.pendingBolus = PendingBolus(
+                units: units,
+                sentAt: sentAt,
+                sequenceAtSend: sequenceAtSend,
+                automatic: activationType.isAutomatic
+            )
+            self.handOverState(before: "writing the bolus")
+
             let writeResult = self.link.write(SetBolusPacket(bolusAmount: units))
             let outcome = MedtrumCommandOutcome(writeResult)
 
@@ -526,18 +553,24 @@ public extension MedtrumPumpManager {
             // Never left the phone, or turned down: nothing to report
             guard outcome == .accepted || outcome == .unknown else {
                 self.log.error("Failed to write (\(outcome)): \(writeError?.localizedDescription ?? "-")")
+                // On disk before the command fails: killed after it, the app must not come back with a bolus that never
+                // ran
+                self.state.pendingBolus = nil
+                self.handOverState(before: "failing the bolus")
                 completion(.communication(writeError))
                 return
             }
 
             // Unanswered, the patch may be delivering it: running and counted in full until a notification shows it
-            // delivering or its deadline passes, and never sent again
+            // delivering or its deadline passes, and never sent again. Dated from when it went out, as one taken over
+            // after a kill is (`takeOverPendingBolus`): one identity, whichever run reports it.
             let doseEntry = UnfinalizedDose(
                 units: units,
                 duration: duration,
                 activationType: activationType,
                 insulinType: self.state.insulinType,
-                confirmation: outcome == .unknown ? .uncertain : .confirmed
+                confirmation: outcome == .unknown ? .uncertain : .confirmed,
+                startDate: sentAt
             )
             doseEntry.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend)
 
@@ -545,9 +578,11 @@ public extension MedtrumPumpManager {
                 self.noteBolusAnswer(response, of: doseEntry)
             }
 
-            // Running and reported in one step - see `doseReportLock`
+            // Running and reported in one step - see `doseReportLock` - and no longer pending: the state the host saves
+            // as it takes the report has the one, not the other
             self.doseReportLock.withLock {
                 self.state.bolusDose = doseEntry
+                self.state.pendingBolus = nil
                 self.emitPumpEvents([NewPumpEvent.bolus(unfinalizedDose: doseEntry)], replacePendingEvents: false)
             }
             self.notifyStateDidChange()
@@ -585,17 +620,17 @@ public extension MedtrumPumpManager {
         }
 
         dose.noteAnswer(recordSequence: recordSequence, pumpStartTime: startTime)
-        noteAnsweredBolusRecord(AnsweredBolusRecord(sequence: recordSequence, pumpStartTime: startTime))
+        noteAnsweredBolusRecord(recordSequence)
         log.info("Bolus is record #\(recordSequence), patch start \(startTime)")
     }
 
     /// See `MedtrumPumpState.answeredBolusRecords`. Kept while its record may still be read: past the cursor, or within
     /// a run behind it - a restart reads again from the cursor as saved.
-    private func noteAnsweredBolusRecord(_ answered: AnsweredBolusRecord) {
+    private func noteAnsweredBolusRecord(_ sequence: Int) {
         doseReportLock.withLock {
             let oldest = state.syncedSequenceNumber - RecordSyncer.Trigger.beforeStop.maxRecords
             state.answeredBolusRecords = Array(
-                (state.answeredBolusRecords.filter { $0.sequence > oldest } + [answered]).suffix(Self.answeredBolusRecordsKept)
+                (state.answeredBolusRecords.filter { $0 > oldest } + [sequence]).suffix(Self.answeredBolusRecordsKept)
             )
         }
     }
@@ -753,7 +788,7 @@ public extension MedtrumPumpManager {
             }
 
             let sentAt = Date.now
-            let sentUptime = ProcessInfo.processInfo.systemUptime
+            let sentUptime = self.uptime()
             let sequenceAtSend = self.state.currentSequenceNumber
             let priorSegmentStart = self.doseReportLock.withLock { self.state.lastSegmentStart }
 
@@ -907,7 +942,7 @@ public extension MedtrumPumpManager {
 
         // Nothing to hand over for when nothing will be read: the batch settling it saves the state with it
         if RecordSyncer.wouldRead(ending, pumpManager: self) {
-            handOverStateBeforeReading()
+            handOverState(before: "reading the records")
         }
         RecordSyncer.finishTempBasalEnd(
             pumpManager: self,
@@ -917,8 +952,10 @@ public extension MedtrumPumpManager {
 
     /// Hands the state to the host, and waits until it has it - `stateHandOverTimeout` at most: a command is about to
     /// read the records of the temp basal it ended, a round trip or more on the link, and only then does the batch go
-    /// out that saves the state with it. Not holding `doseReportLock`, nor on the delegate queue.
-    private func handOverStateBeforeReading() {
+    /// out that saves the state with it - or to write a bolus, which a kill before its answer must not lose, or to fail
+    /// one, which a kill after must not bring back. Best effort: a host slower than that is not waited for. Not holding
+    /// `doseReportLock`, nor on the delegate queue.
+    private func handOverState(before action: String) {
         let handedOver = DispatchSemaphore(value: 0)
         pumpDelegate.notify { delegate in
             delegate?.pumpManagerDidUpdateState(self)
@@ -926,11 +963,11 @@ public extension MedtrumPumpManager {
         }
 
         if handedOver.wait(timeout: .now() + Self.stateHandOverTimeout) == .timedOut {
-            log.warning("The host did not take the state within \(Int(Self.stateHandOverTimeout)) s, reading the records anyway")
+            log.warning("The host did not take the state within \(Int(Self.stateHandOverTimeout)) s, \(action) anyway")
         }
     }
 
-    /// How long a command waits for the host to take the state before it reads records
+    /// How long a command waits for the host to take the state before it reads records, or writes or fails a bolus
     private static let stateHandOverTimeout: TimeInterval = 3
 
     func suspendDelivery(completion: @escaping ((any Error)?) -> Void) {
@@ -1680,11 +1717,17 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            guard cancelled.raiseAfterEnd(to: delivered) else {
+            // Logged whatever it says, 0 U included: what the patch itself says the cancelled bolus delivered
+            let kept = cancelled.deliveredUnits
+            let raised = cancelled.raiseAfterEnd(to: delivered)
+            log.info(
+                "Completion of \(delivered) U after the cancel of the bolus of \(cancelled.startDate), record " +
+                    "\(cancelled.snapshot.recordSequence.map { "#\($0)" } ?? "-"): " +
+                    (raised ? "raising its amount from \(kept) U" : "keeping its \(kept) U")
+            )
+            guard raised else {
                 return
             }
-
-            log.info("Completion of \(delivered) U after the cancel of the bolus of \(cancelled.startDate), raising its amount")
             // A temp basal's records being read: their batch carries it, waiting on its record
             emitPumpEvents([], unlessTempBasalEndPending: true)
         }
@@ -1807,6 +1850,93 @@ public extension MedtrumPumpManager {
         }
     }
 
+    /// In a new run's state, a SetBolus still pending went out and the app was gone before its answer: the patch may be
+    /// delivering it. It runs from here on as a bolus whose command went unanswered does (`enactBolus`), dated from when
+    /// it went out - its deadline and the window its record is looked for in count from then. Not if its dose was
+    /// registered: the state was saved as it was, read in part before. The host is told of it, and warned, as soon as it
+    /// can be - and so of one whose command went unanswered in the last run that it was never warned of
+    /// (`reportBolusFromLastRun`).
+    private func takeOverPendingBolus() {
+        doseReportLock.withLock {
+            if let pending = state.pendingBolus {
+                state.pendingBolus = nil
+
+                let registered = ([state.bolusDose].compactMap { $0 } + state.awaitingRecord).contains { dose in
+                    dose.type == .bolus && dose.sentAt == pending.sentAt
+                }
+                if registered {
+                    log.info("The bolus of \(pending.units) U sent at \(pending.sentAt) was registered already")
+                } else if let running = state.bolusDose {
+                    log.error(
+                        "The bolus of \(pending.units) U sent at \(pending.sentAt) is pending, with the bolus of " +
+                            "\(running.startDate) running - keeping that one"
+                    )
+                } else {
+                    let dose = UnfinalizedDose(
+                        units: pending.units,
+                        duration: estimatedDuration(toBolus: pending.units),
+                        activationType: pending.automatic ? .automatic : .manualNoRecommendation,
+                        insulinType: state.insulinType,
+                        confirmation: .uncertain,
+                        startDate: pending.sentAt
+                    )
+                    dose.noteCommand(sentAt: pending.sentAt, uptime: nil, sequence: pending.sequenceAtSend)
+
+                    // Answered, the state saved before its dose was registered: its answer, kept for its record, is
+                    // the one past `sequenceAtSend` - every number claimed before it went out is at or below that, and
+                    // commands go one at a time. The latest, should there be more.
+                    if let answered = state.answeredBolusRecords.last(where: { $0 > pending.sequenceAtSend }) {
+                        dose.noteAnswer(recordSequence: answered)
+                        log.info("The bolus of \(pending.units) U sent at \(pending.sentAt) was answered as record #\(answered)")
+                    }
+
+                    state.bolusDose = dose
+                    log.error(
+                        "The app stopped while the bolus of \(pending.units) U sent at \(pending.sentAt) awaited its " +
+                            "answer: it may be delivering. Counted in full until the patch shows it, or its record says " +
+                            "otherwise - not sent again"
+                    )
+                }
+            }
+
+            if let bolus = state.bolusDose {
+                let running = bolus.snapshot
+                if running.confirmation == .uncertain, !running.isFinished, !running.uncertaintyReported {
+                    bolusFromLastRun = bolus
+                }
+            }
+        }
+    }
+
+    /// Reports `bolusFromLastRun` running, counted in full, and warns the host of it - once there is a host to tell:
+    /// on the loop's first sync or the first status of this run, whichever comes first. From then on it is the running
+    /// bolus, reported as any.
+    internal func reportBolusFromLastRun() {
+        guard pumpDelegate.delegate != nil else {
+            return
+        }
+
+        let dose = doseReportLock.withLock { () -> UnfinalizedDose? in
+            guard let dose = bolusFromLastRun else {
+                return nil
+            }
+            bolusFromLastRun = nil
+
+            let running = dose.snapshot
+            if state.bolusDose === dose, !running.isFinished {
+                emitPumpEvents([NewPumpEvent.bolus(dose: dose.doseEntry(of: running, isMutable: true))], replacePendingEvents: false)
+            }
+            return dose
+        }
+
+        guard let dose else {
+            return
+        }
+
+        notifyStateDidChange()
+        warnOfUncertainBolus(dose)
+    }
+
     /// Takes the record number out of a command response.
     ///
     /// Every command that ends a basal segment answers with the record the patch wrote for it. Adopting
@@ -1826,12 +1956,22 @@ public extension MedtrumPumpManager {
 
         // Written just now, as the command ended a segment: the newest record the patch has
         state.sequenceConfirmedAt = now()
+        noteRecordSequenceConfirmedInThisRun(at: now(), uptime: uptime())
     }
 
-    /// A status received at `receivedAt` says `currentSequenceNumber` is the newest record the patch has written
-    internal func noteRecordSequenceConfirmed(receivedAt: Date) {
+    /// A status received at `receivedAt` (`receivedUptime`) says `currentSequenceNumber` is the newest record the patch
+    /// has written
+    internal func noteRecordSequenceConfirmed(receivedAt: Date, receivedUptime: TimeInterval) {
         let confirmedAt = now().addingTimeInterval(receivedAt.timeIntervalSinceNow)
         state.sequenceConfirmedAt = max(state.sequenceConfirmedAt ?? confirmedAt, confirmedAt)
+        noteRecordSequenceConfirmedInThisRun(at: confirmedAt, uptime: receivedUptime)
+    }
+
+    private func noteRecordSequenceConfirmedInThisRun(at confirmedAt: Date, uptime confirmedUptime: TimeInterval) {
+        guard (state.sequenceConfirmedInThisRun?.uptime ?? -.infinity) < confirmedUptime else {
+            return
+        }
+        state.sequenceConfirmedInThisRun = (at: confirmedAt, uptime: confirmedUptime)
     }
 
     enum RecordFetchDirection {
@@ -2384,65 +2524,56 @@ public extension MedtrumPumpManager {
             return doseReportLock.withLock { () -> String in
                 let skew = state.patchClockSkew
                 let waiting = state.awaitingRecord.filter { $0.type == .bolus && !$0.isFinalized }
-                // The record of a bolus whose answer named it - by its number and start - even one finalized, or gone
-                // since: never that of a neighbour whose answer was lost
-                let answered = state.answeredBolusRecords.first {
-                    $0.sequence == response.sequence &&
-                        abs(record.startTime.timeIntervalSince($0.pumpStartTime)) <= RecordSyncer.bolusStartTolerance
-                }
-                let unanswered = answered != nil ? nil : waiting.first { dose in
+                // A number a SetBolus answer gave is that bolus's record - see `MedtrumPumpState.answeredBolusRecords`:
+                // never that of one whose answer was lost
+                let claimed = state.answeredBolusRecords.contains(response.sequence)
+                // Whether this record can be that of `dose`, whose answer was lost: unclaimed, at its amount, numbered
+                // past the newest known when its command went out, starting near then
+                let couldBeOf = { (dose: UnfinalizedDose, nearItsCommand: Bool) -> Bool in
                     let snapshot = dose.snapshot
-                    guard snapshot.recordSequence == nil, let sentAt = snapshot.sentAt else {
+                    guard !claimed, snapshot.recordSequence == nil, let sentAt = snapshot.sentAt else {
                         return false
                     }
                     return response.sequence > snapshot.sequenceAtSend ?? 0 &&
                         RecordSyncer.steps(record.normalAmount) == RecordSyncer.steps(dose.value) &&
-                        abs(record.startTime.timeIntervalSince(sentAt.addingTimeInterval(skew))) <= Self.recordMatchWindow
+                        (!nearItsCommand ||
+                            abs(record.startTime.timeIntervalSince(sentAt.addingTimeInterval(skew))) <= Self.recordMatchWindow)
+                }
+                // Whatever it finalizes, a bolus whose command went unanswered this record could be of may have run -
+                // see `unansweredBolusNeverRan`
+                for dose in unansweredBoluses where couldBeOf(dose, true) {
+                    dose.notePossibleRecord(response.sequence)
                 }
 
-                // The number alone could be a reused one - of a bolus cancelled before the patch wrote its record, so
-                // more than one waiting bolus may carry it. The start its answer gave tells them apart; no start of
-                // theirs, and the record may be that of a bolus whose answer was lost, given the same number.
-                let numbered = waiting.filter { $0.recordSequence == response.sequence }
-                let exact = numbered.first { dose in
-                    dose.snapshot.pumpStartTime.map {
-                        abs(record.startTime.timeIntervalSince($0)) <= RecordSyncer.bolusStartTolerance
+                let dose: UnfinalizedDose
+                if let numbered = waiting.first(where: { $0.recordSequence == response.sequence }) {
+                    // Its record by the number alone: a start or amount other than ours is only worth a look
+                    let answeredStart = numbered.snapshot.pumpStartTime
+                    let startDiffers = answeredStart.map {
+                        abs(record.startTime.timeIntervalSince($0)) > RecordSyncer.bolusStartTolerance
                     } ?? false
-                }
-
-                let match: UnfinalizedDose?
-                if let exact {
-                    guard RecordSyncer.steps(record.normalAmount) == RecordSyncer.steps(exact.value) else {
-                        log.error(
-                            "Record \(response.sequence) is the bolus of \(exact.startDate) by number and start, but of " +
-                                "\(record.normalAmount) U where we asked for \(exact.value) U - not finalizing it with it"
+                    if startDiffers || RecordSyncer.steps(record.normalAmount) != RecordSyncer.steps(numbered.value) {
+                        log.warning(
+                            "Record \(response.sequence) of the bolus of \(numbered.startDate) is of \(record.normalAmount) U " +
+                                "from \(record.startTime), where we asked for \(numbered.value) U and its answer said " +
+                                "\(answeredStart.map { "\($0)" } ?? "-") - finalizing it with it, by its number"
                         )
-                        return "amount differs from bolus \(exact.startDate)"
                     }
-                    match = exact
-                } else if let other = numbered.first {
-                    log.error(
-                        "Record \(response.sequence) is the bolus of \(other.startDate) by number, but starts at " +
-                            "\(record.startTime) where its answer said " +
-                            "\(other.snapshot.pumpStartTime.map { "\($0)" } ?? "-") - not finalizing it with it"
-                    )
-                    guard let unanswered else {
-                        return "start differs from bolus \(other.startDate)"
-                    }
-                    match = unanswered
+                    dose = numbered
+                } else if claimed {
+                    log.info("Record \(response.sequence) is that of a bolus of ours finalized already, matching nothing")
+                    return "answered bolus finalized already"
+                } else if let unanswered = waiting.first(where: { couldBeOf($0, true) }) {
+                    dose = unanswered
                 } else {
-                    match = unanswered
-                }
-
-                guard let dose = match else {
-                    if answered != nil {
-                        log.info("Record \(response.sequence) is that of a bolus of ours finalized already, matching nothing")
-                        return "answered bolus finalized already"
-                    }
                     log.info(
                         "Record \(response.sequence): bolus of \(record.normalAmount) U at \(record.startTime) " +
                             "matches no dose of ours, not imported"
                     )
+                    // Ours by its amount, should the patch clock be further off than we think
+                    for dose in unansweredBoluses where couldBeOf(dose, false) {
+                        dose.notePossibleRecord(response.sequence)
+                    }
                     return "unmatched"
                 }
 
@@ -2615,7 +2746,8 @@ public extension MedtrumPumpManager {
                 continue
             }
 
-            guard let event = finalize(dose, deliveredUnits: nil) else {
+            let neverRan = unansweredBolusNeverRan(dose)
+            guard let event = finalize(dose, deliveredUnits: neverRan ? 0 : nil) else {
                 continue
             }
 
@@ -2625,7 +2757,7 @@ public extension MedtrumPumpManager {
                     "without its record, \(reason(dose)): \(final.finalDeliveredUnits ?? 0) U delivered, by our estimate"
             )
 
-            if dose.type == .bolus, final.confirmation == .uncertain, dose.countsInFull(final) {
+            if dose.type == .bolus, final.confirmation == .uncertain, dose.countsInFull(final), !neverRan {
                 emitAlert(alertType: .bolusCountedAsDelivered(units: dose.value))
             }
 
@@ -2734,6 +2866,80 @@ public extension MedtrumPumpManager {
             return false
         }
         return state.syncedSequenceNumber >= state.currentSequenceNumber && confirmedAt > end
+    }
+
+    /// The boluses whose command went unanswered, never seen delivering - running, or waiting on their record. Only
+    /// under `doseReportLock`.
+    private var unansweredBoluses: [UnfinalizedDose] {
+        ([state.bolusDose].compactMap { $0 } + state.awaitingRecord).filter { dose in
+            let snapshot = dose.snapshot
+            return dose.type == .bolus && snapshot.confirmation == .uncertain && snapshot.recordSequence == nil &&
+                !snapshot.isFinalized
+        }
+    }
+
+    /// Record `sequence` was read off the patch - asked for as `requested`, of this patch (`isOurs`) - and applied: see
+    /// `UnfinalizedDose.State.recordsReadThrough`
+    internal func noteRecordRead(_ sequence: Int, requested: Int, isOurs: Bool) {
+        guard isOurs, sequence == requested else {
+            return
+        }
+        doseReportLock.withLock {
+            for dose in unansweredBoluses {
+                dose.noteRecordRead(sequence)
+            }
+        }
+    }
+
+    /// Whether `dose`, a bolus whose command went unanswered that ran its course unseen, never ran: past its deadline its
+    /// record was written, had it run - and the patch told its newest record since, every one numbered past the newest
+    /// known when the command went out was read up to there, and none could be its. A bolus is left without a record
+    /// only if cancelled before it was written: one cancelled, or cut off, may have run. Why it may have is logged. Only
+    /// under `doseReportLock`. A number an answer gave is never this one's - see `MedtrumPumpState.answeredBolusRecords`.
+    private func unansweredBolusNeverRan(_ dose: UnfinalizedDose) -> Bool {
+        let snapshot = dose.snapshot
+        guard dose.type == .bolus, snapshot.confirmation == .uncertain, snapshot.recordSequence == nil else {
+            return false
+        }
+
+        let deadline = dose.deliveryDeadline(of: snapshot)
+        let mayHaveRun: String
+        if snapshot.finishReason != .completionNotSeen {
+            mayHaveRun = "it was \(snapshot.finishReason?.rawValue ?? "not ended")"
+        } else if snapshot.sequenceAtSend == nil {
+            mayHaveRun = "the record known when it went out was not kept"
+        } else if now() < deadline {
+            mayHaveRun = "it is not past its deadline"
+        } else if !sequenceConfirmed(after: deadline, of: snapshot) {
+            mayHaveRun = "the patch has not told its newest record since its deadline"
+        } else if let through = snapshot.recordsReadThrough ?? snapshot.sequenceAtSend, through < state.currentSequenceNumber {
+            mayHaveRun = "records \(through + 1)...\(state.currentSequenceNumber) were not all read in order, it may be one of them"
+        } else if let possible = snapshot.possibleRecord {
+            mayHaveRun = "record \(possible) could be its"
+        } else {
+            log.warning(
+                "The bolus of \(dose.startDate) whose command went unanswered never ran: no record past " +
+                    "\(snapshot.sequenceAtSend.map(String.init) ?? "-") up to \(state.currentSequenceNumber) is its - 0 U"
+            )
+            return true
+        }
+
+        log.warning("The bolus of \(dose.startDate) whose command went unanswered may have run, \(mayHaveRun): counted in full")
+        return false
+    }
+
+    /// The patch told its newest record after `deadline`, for the bolus `snapshot` is of. Sent in this run, by the
+    /// monotonic clock: a change of the wall clock can't put a telling from before it went out past its deadline. Sent
+    /// in an earlier run - another boot, maybe, whose monotonic clock is not ours - only a telling of this run counts, all
+    /// of it after the bolus went out.
+    private func sequenceConfirmed(after deadline: Date, of snapshot: UnfinalizedDose.State) -> Bool {
+        guard let confirmed = state.sequenceConfirmedInThisRun else {
+            return false
+        }
+        if let sentUptime = snapshot.sentUptime, let sentAt = snapshot.sentAt {
+            return confirmed.uptime > sentUptime + deadline.timeIntervalSince(sentAt)
+        }
+        return confirmed.at > deadline
     }
 
     /// The record sync gave up on record `sequence`, unreadable: kept if it could be the unconfirmed temp basal's
