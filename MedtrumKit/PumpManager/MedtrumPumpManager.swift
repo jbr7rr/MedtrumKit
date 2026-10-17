@@ -800,24 +800,7 @@ public extension MedtrumPumpManager {
                     self.emitAlert(alertType: .patchExpiredNotification(after: self.state.notificationAfterActivation))
                 }
 
-                let start = Date.now
-                let resumeDose = UnfinalizedDose(
-                    resumeStartTime: start,
-                    insulinType: self.state.insulinType
-                )
-                let events = [
-                    NewPumpEvent.replacedPump(date: start),
-                    NewPumpEvent.resume(dose: resumeDose.toDoseEntry())
-                ]
-
-                self.state.initialReservoir = nil
-                self.state.patchId = data.patchId
-                self.state.patchActivatedAt = Date.now
-                self.state.basalDose = resumeDose
-                self.state.lastSync = Date.now
-                self.notifyStateDidChange()
-
-                self.emitPumpEvents(events)
+                self.startPatchSession(patchId: data.patchId, at: Date.now)
 
                 self.log.info("Patch activated!")
                 completion(.success)
@@ -843,33 +826,7 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            self.state.previousPatch = PreviousPatch(
-                patchId: self.state.patchId,
-                lastStateRaw: self.state.pumpState.rawValue,
-                lastSyncAt: self.state.lastSync,
-                battery: self.state.battery,
-                activatedAt: self.state.patchActivatedAt ?? Date.distantPast,
-                deactivatedAt: Date.now,
-                initialReservoirLevel: self.state.initialReservoir,
-                reservoirLevel: self.state.reservoir
-            )
-
-            let suspendStart = Date.now
-            let suspendDose = UnfinalizedDose(suspendStartTime: suspendStart)
-
-            var events = self.finalizedTempBasal(endedAt: suspendStart)
-            events.append(contentsOf: self.finalizeInterruptedBolus())
-            events.append(NewPumpEvent.suspend(dose: suspendDose.toDoseEntry()))
-
-            self.state.patchId = Data()
-            self.state.pumpState = .none
-            self.state.backupSessionToken = self.state.sessionToken
-            self.state.sessionToken = Data()
-            self.state.lastSync = Date.now
-            self.state.basalDose = suspendDose
-            self.notifyStateDidChange()
-
-            self.emitPumpEvents(events)
+            self.endPatchSession(at: Date.now)
 
             self.log.info("Patch deactivated")
             completion(.success)
@@ -881,34 +838,68 @@ public extension MedtrumPumpManager {
     func forceDeactivatePatch() {
         log.info("Force deactivating patch...")
 
-        let suspendDose = UnfinalizedDose(suspendStartTime: Date.now)
+        endPatchSession(at: Date.now)
 
-        var events = finalizedTempBasal(endedAt: Date.now)
-        events.append(contentsOf: finalizeInterruptedBolus())
-        events.append(NewPumpEvent.suspend(dose: suspendDose.toDoseEntry()))
+        bluetooth.disconnect(force: true)
+    }
 
+    /// The new patch delivers on its schedule from `start`
+    private func startPatchSession(patchId: Data, at start: Date) {
+        let resumeDose = UnfinalizedDose(
+            resumeStartTime: start,
+            insulinType: state.insulinType
+        )
+        let events = [
+            NewPumpEvent.replacedPump(date: start),
+            NewPumpEvent.resume(dose: resumeDose.toDoseEntry())
+        ]
+
+        state.initialReservoir = nil
+        state.patchId = patchId
+        state.patchActivatedAt = start
+        state.basalDose = resumeDose
+        // What commands check: the old patch may have left it suspended or running a temp basal, and it would
+        // stay so until the first status that shows the new patch's basal
+        state.basalState = .active
+        state.lastSync = Date.now
+        notifyStateDidChange()
+
+        emitPumpEvents(events)
+    }
+
+    /// The patch session is over: delivery stopped at `stoppedAt`, unless it had stopped already
+    private func endPatchSession(at stoppedAt: Date) {
         state.previousPatch = PreviousPatch(
             patchId: state.patchId,
             lastStateRaw: state.pumpState.rawValue,
             lastSyncAt: state.lastSync,
             battery: state.battery,
             activatedAt: state.patchActivatedAt ?? Date.distantPast,
-            deactivatedAt: Date.now,
+            deactivatedAt: stoppedAt,
             initialReservoirLevel: state.initialReservoir,
             reservoirLevel: state.reservoir
         )
+
+        var events = finalizedTempBasal(endedAt: stoppedAt)
+        events.append(contentsOf: finalizeInterruptedBolus())
+
+        // Suspended already - by the patch halting, or by a suspend - its suspend was reported then. A second, later one
+        // would have a host that keeps only the last count the time between the two as delivered.
+        if state.basalDose.type != .suspend {
+            let suspendDose = UnfinalizedDose(suspendStartTime: stoppedAt)
+            events.append(NewPumpEvent.suspend(dose: suspendDose.toDoseEntry()))
+            state.basalDose = suspendDose
+        }
 
         state.patchId = Data()
         state.pumpState = .none
         state.backupSessionToken = state.sessionToken
         state.sessionToken = Data()
         state.lastSync = Date.now
-        state.basalDose = suspendDose
+        state.basalState = .suspended
         notifyStateDidChange()
 
         emitPumpEvents(events)
-
-        bluetooth.disconnect(force: true)
     }
 
     func clearAlert(alertType: AlertType, completion: @escaping (Bool) -> Void) {
