@@ -767,6 +767,13 @@ public extension MedtrumPumpManager {
             }
 
             guard !self.state.pumpState.isRunning else {
+                // The patch activated, but its answer was lost: the session it starts is not started yet
+                if self.state.patchSessionEnded {
+                    // Its id is not known: the first status after this sets it
+                    self.log.warning("Patch already activated, but its session was not started - starting it")
+                    self.startPatchSession(patchId: Data(), at: Date.now)
+                }
+
                 self.log.info("Patch already activated!")
                 completion(.success)
                 return
@@ -796,10 +803,6 @@ public extension MedtrumPumpManager {
                     return
                 }
 
-                if self.state.expiryMode == .default {
-                    self.emitAlert(alertType: .patchExpiredNotification(after: self.state.notificationAfterActivation))
-                }
-
                 self.startPatchSession(patchId: data.patchId, at: Date.now)
 
                 self.log.info("Patch activated!")
@@ -826,7 +829,8 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            self.endPatchSession(at: Date.now)
+            // Connected: the connect synced the patch's status, and its notifications have kept it current since
+            self.endPatchSession(at: Date.now, statusIsCurrent: true)
 
             self.log.info("Patch deactivated")
             completion(.success)
@@ -838,22 +842,46 @@ public extension MedtrumPumpManager {
     func forceDeactivatePatch() {
         log.info("Force deactivating patch...")
 
-        endPatchSession(at: Date.now)
+        endPatchSession(at: Date.now, statusIsCurrent: false)
 
         bluetooth.disconnect(force: true)
     }
 
     /// The new patch delivers on its schedule from `start`
     private func startPatchSession(patchId: Data, at start: Date) {
+        if state.expiryMode == .default {
+            emitAlert(alertType: .patchExpiredNotification(after: state.notificationAfterActivation))
+        }
+
+        var events: [NewPumpEvent] = []
+        if !state.patchSessionEnded {
+            // The previous patch was replaced without deactivating it - it fell off, or was swapped outside the app. When it
+            // stopped is unknown, so it is taken to have delivered until `start`: a temp basal or a bolus in flight ends
+            // there, and the schedule runs from there. No suspend: a host can take one with a resume at the same time as
+            // never ending.
+            log.warning("Previous patch session was not ended, ending its delivery at activation")
+            events.append(contentsOf: finalizedTempBasal(endedAt: start))
+            events.append(contentsOf: finalizeInterruptedBolus())
+        }
+
         let resumeDose = UnfinalizedDose(
             resumeStartTime: start,
             insulinType: state.insulinType
         )
-        let events = [
-            NewPumpEvent.replacedPump(date: start),
-            NewPumpEvent.resume(dose: resumeDose.toDoseEntry())
-        ]
+        events.append(NewPumpEvent.replacedPump(date: start))
+        if state.basalDose.type == .suspend {
+            // Only a suspend that was reported gets a resume: a host can take one without it as suspended before it
+            events.append(NewPumpEvent.resume(dose: resumeDose.toDoseEntry()))
+        } else if !state.patchSessionEnded {
+            let basalDose = UnfinalizedDose(
+                basalRate: state.currentBaseBasalRate,
+                insulinType: state.insulinType,
+                startDate: start
+            )
+            events.append(NewPumpEvent.basal(dose: basalDose.toDoseEntry()))
+        }
 
+        state.patchSessionEnded = false
         state.initialReservoir = nil
         state.patchId = patchId
         state.patchActivatedAt = start
@@ -867,39 +895,55 @@ public extension MedtrumPumpManager {
         emitPumpEvents(events)
     }
 
-    /// The patch session is over: delivery stopped at `stoppedAt`, unless it had stopped already
-    private func endPatchSession(at stoppedAt: Date) {
-        state.previousPatch = PreviousPatch(
-            patchId: state.patchId,
-            lastStateRaw: state.pumpState.rawValue,
-            lastSyncAt: state.lastSync,
-            battery: state.battery,
-            activatedAt: state.patchActivatedAt ?? Date.distantPast,
-            deactivatedAt: stoppedAt,
-            initialReservoirLevel: state.initialReservoir,
-            reservoirLevel: state.reservoir
-        )
-
-        var events = finalizedTempBasal(endedAt: stoppedAt)
-        events.append(contentsOf: finalizeInterruptedBolus())
+    /// The patch session is over: delivery stopped at `stoppedAt`, unless it is known to have stopped already
+    private func endPatchSession(at stoppedAt: Date, statusIsCurrent: Bool) {
+        // Ended already - a force after a deactivation, or no session started since: the previous patch is recorded
+        if !state.patchSessionEnded {
+            state.previousPatch = PreviousPatch(
+                patchId: state.patchId,
+                lastStateRaw: state.pumpState.rawValue,
+                lastSyncAt: state.lastSync,
+                battery: state.battery,
+                activatedAt: state.patchActivatedAt ?? Date.distantPast,
+                deactivatedAt: stoppedAt,
+                initialReservoirLevel: state.initialReservoir,
+                reservoirLevel: state.reservoir
+            )
+        }
 
         // Suspended already - by the patch halting, or by a suspend - its suspend was reported then. A second, later one
-        // would have a host that keeps only the last count the time between the two as delivered.
-        if state.basalDose.type != .suspend {
-            let suspendDose = UnfinalizedDose(suspendStartTime: stoppedAt)
-            events.append(NewPumpEvent.suspend(dose: suspendDose.toDoseEntry()))
-            state.basalDose = suspendDose
-        }
+        // would have a host that keeps only the last count the time between the two as delivered. That holds only while
+        // the patch can't have resumed: a suspend can end on its own, unseen while out of range, so it takes a state the
+        // patch never leaves, one it never delivered in or no longer does, or a current one that shows it not delivering.
+        // Otherwise the suspend is reported now.
+        let isDelivering = state.pumpState.isRunning && !state.pumpState.isSuspended
+        let hasStopped = state.basalDose.type == .suspend &&
+            (state.pumpState.isTerminated || state.pumpState.isSetup || (statusIsCurrent && !isDelivering))
+        let events = hasStopped ? finalizeInterruptedBolus() : stoppedDelivery(at: stoppedAt)
 
         state.patchId = Data()
         state.pumpState = .none
         state.backupSessionToken = state.sessionToken
         state.sessionToken = Data()
+        state.initialReservoir = nil
+        state.patchSessionEnded = true
         state.lastSync = Date.now
         state.basalState = .suspended
         notifyStateDidChange()
 
         emitPumpEvents(events)
+    }
+
+    /// Delivery stopped at `stoppedAt`: a temp basal or a bolus in flight ends there, and the suspend starts
+    private func stoppedDelivery(at stoppedAt: Date) -> [NewPumpEvent] {
+        var events = finalizedTempBasal(endedAt: stoppedAt)
+        events.append(contentsOf: finalizeInterruptedBolus())
+
+        let suspendDose = UnfinalizedDose(suspendStartTime: stoppedAt)
+        events.append(NewPumpEvent.suspend(dose: suspendDose.toDoseEntry()))
+        state.basalDose = suspendDose
+
+        return events
     }
 
     func clearAlert(alertType: AlertType, completion: @escaping (Bool) -> Void) {
@@ -1087,7 +1131,7 @@ public extension MedtrumPumpManager {
         }
 
         log.warning(
-            "Patch deactivated during a bolus... \(doseEntry.deliveredUnits) U of the \(doseEntry.value) U"
+            "Patch session ended during a bolus... \(doseEntry.deliveredUnits) U of the \(doseEntry.value) U"
         )
 
         let dose = doseEntry.toDoseEntry()

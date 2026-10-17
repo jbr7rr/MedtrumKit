@@ -122,7 +122,12 @@ enum StateSyncer {
         }
 
         if let storage = syncResponse.storage {
-            state.patchId = UInt64(storage.patchId).toData(length: 4)
+            // No session: the old patch can report its id until it disconnects, which rejects the new one's payloads. A
+            // running patch with another id is the new one, its session not started.
+            let patchId = UInt64(storage.patchId).toData(length: 4)
+            if !state.patchSessionEnded || (syncResponse.state.isRunning && patchId != state.previousPatch?.patchId) {
+                state.patchId = patchId
+            }
         }
 
         if let bolusProgress = syncResponse.bolus {

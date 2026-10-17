@@ -57,7 +57,7 @@ public extension NewPumpEvent {
 
     static func replacedPump(date: Date = Date.now) -> NewPumpEvent {
         NewPumpEvent(
-            date: Date.now,
+            date: date,
             dose: nil,
             raw: "PATCH_REPLACE \(dateFormatter.string(from: date))".data(using: .utf8) ?? Data([]),
             title: String(localized: "Patch replace", comment: "Pump Event title for replace patch"),
