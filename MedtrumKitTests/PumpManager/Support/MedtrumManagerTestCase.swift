@@ -72,6 +72,7 @@ class MedtrumManagerTestCase: XCTestCase {
 
         state.isOnboarded = true
         state.pumpState = .active
+        state.patchSessionEnded = false
         state.isConnected = true
         state.patchId = patchId.toData(length: 4)
         state.patchActivatedAt = now.addingTimeInterval(-24 * Self.hour)

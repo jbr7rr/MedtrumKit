@@ -392,9 +392,9 @@ enum StateSyncer {
 
     /// An activated patch never goes back to a setup state on its own: when it does, the base has
     /// rebooted and came back as a blank patch - with a new patch id, its age and sequence restarted,
-    /// and no delivery.
+    /// and no delivery. Not a patch whose session ended: the state the old one reported after it, as it
+    /// stopped, is followed by the new one's setup.
     static func baseResetCheck(syncResponse: SynchronizePacketResponse, state: MedtrumPumpState) -> BaseResetCheck {
-        // No session: the old patch, stopped, is still reported until the new one is set up - that setup is no reset
         guard !state.pumpState.isSetup, syncResponse.state.isSetup,
               !(state.patchSessionEnded && state.pumpState.isTerminated)
         else {

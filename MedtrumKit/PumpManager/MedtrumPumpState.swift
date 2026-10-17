@@ -836,6 +836,7 @@ public class MedtrumPumpState: RawRepresentable {
             "* isOnboarded: \(isOnboarded)",
             "* lastSync: \(lastSync)",
             "* pumpState: \(pumpState.rawValue)",
+            "* patchSessionEnded: \(patchSessionEnded)",
             "* pumpSN: \(pumpSN.hexEncodedString())",
             "* pumpName: \(pumpName)",
             "* model: \(model)",
