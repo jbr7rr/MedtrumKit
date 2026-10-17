@@ -229,6 +229,13 @@ class MedtrumManagerTestCase: XCTestCase {
     /// Lets everything the manager posted run. `notifyStateDidChange` hops to the main queue and from
     /// there to the delegate queue, event batches go to the delegate queue directly, and the record store
     /// lands on main.
+    /// What the settings screen tells of the doses the driver could not be sure of: each, and where it is
+    var uncertain: [(kind: UncertainDelivery.Kind, cause: UncertainDelivery.Cause, phase: UncertainDelivery.Phase, delivered: Double?, record: Int?)] {
+        pumpManager.state.uncertainDeliveries.map { delivery in
+            (delivery.kind, delivery.cause, pumpManager.state.phase(of: delivery), delivery.delivered, delivery.record)
+        }
+    }
+
     func settle() {
         // Where the records of a temp basal a notification ended are read
         pumpManager?.tempBasalEndQueue.sync {}

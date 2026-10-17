@@ -2,6 +2,19 @@ import LoopKit
 import LoopKitUI
 import SwiftUI
 
+/// One dose the driver could not be sure of, as the settings screen tells of it - see `UncertainDelivery`
+struct UncertainDeliveryNotice: Identifiable {
+    let id: String
+    let title: String
+    let cause: String
+    let status: String
+    /// What to do meanwhile, while it is not settled
+    let advice: String?
+    let isSettled: Bool
+    /// Still uncertain: what the host counts may not be what the patch delivered
+    let isUncertain: Bool
+}
+
 enum PatchLifecycleState {
     case noPatch
     case active
@@ -49,6 +62,8 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
     @Published var showingStopTempBasalConfirmation = false
     @Published var hasPreviousPatch = false
     @Published var isClearingAlert = false
+    /// Newest first
+    @Published var uncertainDeliveries: [UncertainDeliveryNotice] = []
 
     @Published var useSilentTones = false {
         didSet {
@@ -92,6 +107,23 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
+        return formatter
+    }()
+
+    let noticeDateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        formatter.doesRelativeDateFormatting = true
+        return formatter
+    }()
+
+    let unitsFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 2
+        formatter.minimumIntegerDigits = 1
         return formatter
     }()
 
@@ -445,6 +477,195 @@ extension MedtrumKitSettingsViewModel {
         if let insulinType = state.insulinType {
             self.insulinType = insulinType
         }
+
+        uncertainDeliveries = state.uncertainDeliveries.reversed().map { notice(for: $0, phase: state.phase(of: $0)) }
+    }
+
+    private func notice(for delivery: UncertainDelivery, phase: UncertainDelivery.Phase) -> UncertainDeliveryNotice {
+        let amount = unitsFormatter.string(from: delivery.amount as NSNumber) ?? "\(delivery.amount)"
+        let delivered = delivery.delivered.map { unitsFormatter.string(from: $0 as NSNumber) ?? "\($0)" } ?? "-"
+
+        let title: String
+        switch delivery.kind {
+        case .bolus:
+            title = String(
+                format: String(localized: "Bolus of %1$@ U (%2$@)", comment: "uncertain delivery notice: the bolus, and when"),
+                amount,
+                noticeDateFormatter.string(from: delivery.sentAt)
+            )
+        case .tempBasal:
+            title = String(
+                format: String(
+                    localized: "Temp basal of %1$@ U/h (%2$@)",
+                    comment: "uncertain delivery notice: the temp basal, and when"
+                ),
+                amount,
+                noticeDateFormatter.string(from: delivery.sentAt)
+            )
+        case .tempBasalCancel:
+            title = String(
+                format: String(
+                    localized: "Cancel of the temp basal of %1$@ U/h (%2$@)",
+                    comment: "uncertain delivery notice: the cancel of a temp basal, and when"
+                ),
+                amount,
+                noticeDateFormatter.string(from: delivery.notedAt)
+            )
+        }
+
+        let cause: String
+        switch delivery.cause {
+        case .unanswered:
+            cause = String(localized: "The patch did not confirm the command.", comment: "uncertain delivery cause: unconfirmed")
+        case .endNotSeen:
+            cause = String(localized: "The end of the bolus was not seen.", comment: "uncertain delivery cause: end not seen")
+        case .appRestarted:
+            cause = String(
+                localized: "The app was restarted while the command was out.",
+                comment: "uncertain delivery cause: app restarted"
+            )
+        case .patchDeactivated:
+            cause = String(
+                localized: "The patch session ended during the bolus.",
+                comment: "uncertain delivery cause: the patch session ended"
+            )
+        }
+
+        let status: String
+        switch phase {
+        case .countedInFull:
+            status = String(
+                format: String(
+                    localized: "Counted as the full %@ U until the patch's record says what it delivered.",
+                    comment: "uncertain delivery status: bolus counted in full"
+                ),
+                amount
+            )
+        case let .countedAs(units):
+            status = String(
+                format: String(
+                    localized: "Counted as the %@ U the patch reported until its record says what it delivered.",
+                    comment: "uncertain delivery status: bolus counted as reported"
+                ),
+                unitsFormatter.string(from: units as NSNumber) ?? "\(units)"
+            )
+        case .notReported:
+            status = String(
+                localized: "Not counted until a status or its record shows that the patch ran it.",
+                comment: "uncertain delivery status: temp basal not reported"
+            )
+        case .awaitingRecord:
+            status = delivery.kind == .tempBasalCancel ? String(
+                localized: "The temp basal ended. Final once its record is read.",
+                comment: "uncertain delivery status: cancelled temp basal awaiting record"
+            ) : String(
+                localized: "The patch ran it. Final once its record is read.",
+                comment: "uncertain delivery status: awaiting record"
+            )
+        case .countedRunning:
+            status = String(
+                localized: "Counted as running until a status shows whether the cancel stopped it.",
+                comment: "uncertain delivery status: temp basal counted running"
+            )
+        case .stillRunning:
+            status = String(
+                localized: "A status shows the temp basal still running: the cancel did not stop it.",
+                comment: "uncertain delivery status: temp basal still running"
+            )
+        case .settled(.byRecord):
+            status = delivery.record.map { record in
+                String(
+                    format: String(
+                        localized: "Settled by the patch's record #%1$lld: %2$@ U delivered.",
+                        comment: "uncertain delivery status: settled by a numbered record"
+                    ),
+                    record,
+                    delivered
+                )
+            } ?? String(
+                format: String(
+                    localized: "Settled by the patch's records: %@ U delivered.",
+                    comment: "uncertain delivery status: settled by records"
+                ),
+                delivered
+            )
+        case .settled(.byEstimate):
+            status = String(
+                format: String(
+                    localized: "Final without its record: counted as %@ U.",
+                    comment: "uncertain delivery status: settled by estimate"
+                ),
+                delivered
+            )
+        case .settled(.neverRan):
+            status = String(
+                localized: "The patch's records show it never ran: 0 U.",
+                comment: "uncertain delivery status: never ran"
+            )
+        case .settled(.notConfirmed):
+            let duration = delivery.duration.flatMap { timeRemainingFormatter.string(from: $0) } ?? "-"
+            status = String(
+                format: String(
+                    localized: "Not counted: the patch never showed it running, but may have run it - %1$@ U/h for up to %2$@.",
+                    comment: "uncertain delivery status: temp basal never confirmed, not counted"
+                ),
+                amount,
+                duration
+            )
+        case .settled(.final):
+            status = String(
+                format: String(localized: "Final: %@ U.", comment: "uncertain delivery status: final, how not known"),
+                delivered
+            )
+        case .settled(.untracked):
+            status = String(
+                localized: "No longer tracked.",
+                comment: "uncertain delivery status: its dose no longer tracked"
+            )
+        }
+
+        let advice: String?
+        let isUncertain: Bool
+        switch phase {
+        case .countedInFull,
+             .countedAs:
+            isUncertain = true
+            advice = String(
+                localized: "Don't bolus again to make up for it. Keep the phone near the patch: its record is usually read within minutes.",
+                comment: "uncertain delivery advice for a bolus"
+            )
+        case .notReported:
+            isUncertain = true
+            advice = String(
+                localized: "Keep the phone near the patch: a status or its record settles it. If its records cannot be read, it may stay uncertain.",
+                comment: "uncertain delivery advice for a temp basal not reported"
+            )
+        case .countedRunning:
+            isUncertain = true
+            advice = String(
+                localized: "Keep the phone near the patch: the next status settles it.",
+                comment: "uncertain delivery advice for a cancel"
+            )
+        case .awaitingRecord,
+             .stillRunning,
+             .settled:
+            isUncertain = false
+            advice = nil
+        }
+
+        return UncertainDeliveryNotice(
+            id: "\(delivery.kind.rawValue)-\(delivery.sentAt.timeIntervalSince1970)-\(delivery.notedAt.timeIntervalSince1970)",
+            title: title,
+            cause: cause,
+            status: status,
+            advice: advice,
+            isSettled: delivery.isSettled,
+            isUncertain: isUncertain
+        )
+    }
+
+    func clearSettledUncertainDeliveries() {
+        pumpManager?.clearSettledUncertainDeliveries()
     }
 
     private func getLifecycleState(state: MedtrumPumpState) -> PatchLifecycleState {

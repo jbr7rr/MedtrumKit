@@ -90,6 +90,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.awaitingRecord.count, 0, "the host stored the final")
         XCTAssertEqual(pumpManager.recordStore.records.first?.outcome?.hasPrefix("finalized bolus"), true)
         XCTAssertEqual(delegate.errors.count, 0)
+        XCTAssertTrue(uncertain.isEmpty, "nothing was uncertain")
     }
 
     /// 2026-10-17 10:43:07 - 10:45:47 (log 16, patch 270): an SMB of 0.05 U over a slow link - the patch delivers it, and
@@ -293,6 +294,170 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.bolusDose?.recordSequence, 937, "the next runs on")
         let cancelled = try XCTUnwrap(pumpManager.state.awaitingRecord.first { $0.startDate == running?.startDate })
         XCTAssertEqual(cancelled.deliveredUnits, 0.2, accuracy: 0.001, "raised by its completion")
+    }
+
+    /// An answered bolus whose completion never comes: ended unseen at its deadline, counted in full - shown as uncertain
+    /// - until its record settles it
+    func testBolusEndedUnseenIsShownUncertainUntilItsRecordSettlesIt() {
+        runTinyBolusSetup()
+        link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+        XCTAssertTrue(uncertain.isEmpty)
+
+        advanceClock(by: 5 * Self.minute)
+        deliverTinyBolusFullStatus()
+
+        XCTAssertNil(pumpManager.state.bolusDose)
+        XCTAssertEqual(uncertain.map(\.kind), [.bolus])
+        XCTAssertEqual(uncertain.first?.cause, .endNotSeen)
+        XCTAssertEqual(uncertain.first?.phase, .countedInFull)
+
+        link.script(
+            CommandType.GET_RECORD,
+            fragments: "33634c010000aa2c01ff9e75aef7ec00a90301a0",
+            "33634c02000000f907ab1701000100000000001e",
+            "33634c03000000000000000000000000a3507873",
+            "33634c040a3e52"
+        )
+        syncRecords()
+
+        XCTAssertEqual(uncertain.first?.phase, .settled(.byRecord))
+        XCTAssertEqual(uncertain.first?.delivered ?? 0, 0.05, accuracy: 0.001)
+        XCTAssertEqual(uncertain.first?.record, 937)
+    }
+
+    /// An unanswered bolus a progress notification then confirms, cancelled at 0.1 U: the host counts the 0.1 U, not
+    /// the full amount - and the notice says so
+    func testUnansweredBolusCancelledAfterItsProgressIsShownCountedAsReported() {
+        let state = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 489, reservoir: 119.9)
+        state.basalDose = runningTempBasal(rate: 0.65, startedAgo: 10 * Self.minute, duration: 30 * Self.minute)
+        state.basalState = .tempBasal
+        makeManager(state)
+
+        link.script(CommandType.SET_BOLUS, .timeout)
+        guard case .uncertainDelivery? = commandBolus(1.0) else {
+            XCTFail("Not uncertain")
+            return
+        }
+        XCTAssertEqual(uncertain.first?.phase, .countedInFull)
+
+        link.notify("2022100002005c090000000000") // 0.1 U
+        link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+        guard case .success? = commandCancelBolus() else {
+            XCTFail("Cancel failed")
+            return
+        }
+        settle()
+
+        XCTAssertEqual(uncertain.map(\.cause), [.unanswered])
+        XCTAssertEqual(uncertain.first?.phase, .countedAs(0.1))
+    }
+
+    /// The patch deactivated while a bolus runs: final at once from its last amount, shown so
+    func testBolusRunningAsThePatchIsDeactivatedIsShownSettledFromOurEstimate() {
+        runTinyBolusSetup()
+        link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+
+        pumpManager.forceDeactivatePatch()
+        settle()
+
+        XCTAssertEqual(uncertain.map(\.cause), [.patchDeactivated])
+        XCTAssertEqual(uncertain.first?.phase, .settled(.byEstimate))
+    }
+
+    /// State saved as a dose was finalized, before its uncertain delivery was settled, and one whose dose is gone: both
+    /// settled as the state is read back - what is not known not claimed. A final dose is not noted.
+    func testUncertainDeliveriesLeftUnsettledAreSettledAsTheStateIsReadBack() throws {
+        runTinyBolusSetup()
+        let finalized = UnfinalizedDose(units: 1, duration: 40, activationType: .automatic, insulinType: nil, startDate: Date.now.addingTimeInterval(-600))
+        finalized.noteCommand(sentAt: finalized.startDate, uptime: nil, sequence: 936)
+        let gone = UnfinalizedDose(units: 2, duration: 80, activationType: .automatic, insulinType: nil, startDate: Date.now.addingTimeInterval(-300))
+        gone.noteCommand(sentAt: gone.startDate, uptime: nil, sequence: 936)
+        pumpManager.withDoseReportLock {
+            pumpManager.noteUncertainDelivery(.bolus, .endNotSeen, of: finalized)
+            pumpManager.noteUncertainDelivery(.bolus, .unanswered, of: gone)
+        }
+
+        finalized.finish(.completionNotSeen, endedAt: nil)
+        XCTAssertTrue(finalized.finalize(deliveredUnits: 0.5, endDate: nil))
+        pumpManager.state.mutateAwaitingRecord { $0.append(finalized) }
+        XCTAssertEqual(uncertain.map(\.phase), [.countedInFull, .countedInFull])
+
+        let readBack = MedtrumPumpState(rawValue: pumpManager.state.rawValue)
+        let phases = readBack.uncertainDeliveries.map(readBack.phase(of:))
+        XCTAssertEqual(phases, [.settled(.final), .settled(.untracked)])
+        XCTAssertEqual(readBack.uncertainDeliveries.first?.delivered ?? 0, 0.5, accuracy: 0.001)
+
+        let late = UnfinalizedDose(units: 3, duration: 120, activationType: .automatic, insulinType: nil, startDate: Date.now)
+        late.finish(.completionNotSeen, endedAt: nil)
+        XCTAssertTrue(late.finalize(deliveredUnits: 3, endDate: nil))
+        pumpManager.withDoseReportLock {
+            pumpManager.noteUncertainDelivery(.bolus, .endNotSeen, of: late)
+        }
+        XCTAssertEqual(uncertain.count, 2, "a final dose is not noted: nothing would settle it")
+    }
+
+    /// Saved with the state and read back; the settled ones cleared by the user, the others kept; no more than
+    /// `uncertainDeliveriesKept`, the oldest settled going first
+    func testUncertainDeliveriesAreSavedClearedAndCapped() {
+        runTinyBolusSetup()
+        let settled = UnfinalizedDose(
+            units: 1,
+            duration: 40,
+            activationType: .automatic,
+            insulinType: nil,
+            startDate: Date.now.addingTimeInterval(-600)
+        )
+        settled.noteCommand(sentAt: settled.startDate, uptime: nil, sequence: 936)
+        let pending = UnfinalizedDose(
+            units: 2,
+            duration: 80,
+            activationType: .automatic,
+            insulinType: nil,
+            startDate: Date.now.addingTimeInterval(-60)
+        )
+        pending.noteCommand(sentAt: pending.startDate, uptime: nil, sequence: 936)
+        pumpManager.withDoseReportLock {
+            pumpManager.noteUncertainDelivery(.bolus, .endNotSeen, of: settled)
+            pumpManager.noteUncertainDelivery(.bolus, .unanswered, of: pending)
+            pumpManager.noteUncertainDelivery(.bolus, .endNotSeen, of: pending)
+        }
+        XCTAssertEqual(uncertain.map(\.cause), [.endNotSeen, .unanswered], "once per dose, the first cause")
+        // Tracked, still running: not settled as the state is read back
+        pumpManager.state.mutateAwaitingRecord { $0.append(pending) }
+
+        // Its record never read: final from our estimate once it has waited the most
+        settled.finish(.completionNotSeen, endedAt: nil)
+        pumpManager.state.mutateAwaitingRecord { $0.append(settled) }
+        advanceClock(by: MedtrumPumpManager.awaitingRecordMaximumWait + Self.minute)
+        pumpManager.finalizeOverdueAwaitingDoses()
+        XCTAssertEqual(uncertain.first?.phase, .settled(.byEstimate))
+        XCTAssertEqual(uncertain.first?.delivered ?? 0, 1, accuracy: 0.001, "counted in full")
+
+        let readBack = MedtrumPumpState(rawValue: pumpManager.state.rawValue)
+        XCTAssertEqual(readBack.uncertainDeliveries, pumpManager.state.uncertainDeliveries)
+
+        pumpManager.clearSettledUncertainDeliveries()
+        XCTAssertEqual(uncertain.map(\.phase), [.countedInFull])
+
+        for index in 0 ..< MedtrumPumpManager.uncertainDeliveriesKept + 5 {
+            let dose = UnfinalizedDose(
+                units: 1,
+                duration: 40,
+                activationType: .automatic,
+                insulinType: nil,
+                startDate: Date.now.addingTimeInterval(TimeInterval(index * 60))
+            )
+            pumpManager.withDoseReportLock {
+                pumpManager.noteUncertainDelivery(.bolus, .endNotSeen, of: dose)
+            }
+        }
+        XCTAssertEqual(uncertain.count, MedtrumPumpManager.uncertainDeliveriesKept)
+        XCTAssertFalse(
+            pumpManager.state.uncertainDeliveries.contains { abs($0.sentAt.timeIntervalSince(pending.startDate)) < 1 },
+            "none settled: the oldest went"
+        )
     }
 
     /// Patch 236 with 1.25 U/h running, every record up to 936 read - `testTinyBolusEndsOnItsCompletionAndIsFinalizedByItsRecordNumber`
@@ -586,6 +751,9 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertNotNil(pumpManager.state.bolusDose, "a full status never confirms nor ends it before its deadline")
         XCTAssertEqual(pumpManager.state.bolusDose?.deliveredUnits ?? -1, 0, accuracy: 0.001)
         XCTAssertTrue(pumpManager.status.deliveryIsUncertain)
+        XCTAssertEqual(uncertain.map(\.kind), [.bolus])
+        XCTAssertEqual(uncertain.first?.cause, .unanswered)
+        XCTAssertEqual(uncertain.first?.phase, .countedInFull)
 
         // 2:53 after the command, past its deadline of 0.3 U at 0.5 U/min and 2 min: the next full status ends it
         advanceClock(by: 173)
@@ -626,6 +794,9 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(delegate.alerts.count, 0)
         XCTAssertEqual(delegate.errors.count, 1)
         XCTAssertFalse(pumpManager.status.deliveryIsUncertain)
+        XCTAssertEqual(uncertain.count, 1)
+        XCTAssertEqual(uncertain.first?.phase, .settled(.neverRan))
+        XCTAssertEqual(uncertain.first?.delivered, 0)
     }
 
     /// The same unanswered SetBolus, had the patch run it: its record is the next one after the 823 known when it went
@@ -660,6 +831,10 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.recordStore.records.first?.outcome?.hasPrefix("finalized bolus"), true)
         XCTAssertEqual(delegate.alerts.count, 0)
         XCTAssertEqual(delegate.errors.count, 1)
+        XCTAssertEqual(uncertain.count, 1)
+        XCTAssertEqual(uncertain.first?.cause, .unanswered)
+        XCTAssertEqual(uncertain.first?.phase, .settled(.byRecord))
+        XCTAssertEqual(uncertain.first?.delivered ?? 0, 0.3, accuracy: 0.001)
     }
 
     /// A SetBolus answer garbled on the air is no answer either: the patch may have run it, as with none at all - here it
@@ -1001,6 +1176,9 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
         XCTAssertTrue(pumpManager.status.deliveryIsUncertain)
         XCTAssertEqual(delegate.batches.count, 0)
+        XCTAssertEqual(uncertain.map(\.kind), [.bolus])
+        XCTAssertEqual(uncertain.first?.cause, .appRestarted)
+        XCTAssertEqual(uncertain.first?.phase, .countedInFull)
 
         guard case let .deviceState(error)? = commandBolus(1.0), case .isBolussing? = error as? MedtrumConnectError else {
             XCTFail("Another bolus was not refused as bolusing")

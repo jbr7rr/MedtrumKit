@@ -621,6 +621,9 @@ public extension MedtrumPumpManager {
                     "Bolus of \(units) U went out unanswered (\(writeError?.localizedDescription ?? "-")): it may be " +
                         "delivering. Counted in full until the patch shows it, or its record says otherwise - not sent again"
                 )
+                self.doseReportLock.withLock {
+                    self.noteUncertainDelivery(.bolus, .unanswered, of: doseEntry)
+                }
                 self.warnOfUncertainBolus(doseEntry)
                 completion(.uncertainDelivery)
                 return
@@ -1529,6 +1532,8 @@ public extension MedtrumPumpManager {
         state.patchSessionEnded = true
         state.lastSync = Date.now
         state.basalState = .suspended
+        // Every dose of the session is final: none left to settle what is not
+        state.settleOrphanedUncertainDeliveries(at: now())
         notifyStateDidChange()
 
         emitPumpEvents(events)
@@ -1882,6 +1887,7 @@ public extension MedtrumPumpManager {
 
             var events = runningTempBasal()
             events.append(contentsOf: awaitRecord(doseEntry, .completionNotSeen, endedAt: nil))
+            noteUncertainDelivery(.bolus, .endNotSeen, of: doseEntry)
             state.bolusDose = nil
             state.lastSync = Date.now
             emitPumpEvents(events)
@@ -2020,6 +2026,7 @@ public extension MedtrumPumpManager {
                     }
 
                     state.bolusDose = dose
+                    noteUncertainDelivery(.bolus, .appRestarted, of: dose)
                     log.error(
                         "The app stopped while the bolus of \(pending.units) U sent at \(pending.sentAt) awaited its " +
                             "answer: it may be delivering. Counted in full until the patch shows it, or its record says " +
@@ -2055,6 +2062,8 @@ public extension MedtrumPumpManager {
             if state.bolusDose === dose, !running.isFinished {
                 emitPumpEvents([NewPumpEvent.bolus(dose: dose.doseEntry(of: running, isMutable: true))], replacePendingEvents: false)
             }
+            // The app gone before it was noted, or by a build that did not note it
+            noteUncertainDelivery(.bolus, .unanswered, of: dose)
             return dose
         }
 
@@ -2116,8 +2125,11 @@ public extension MedtrumPumpManager {
 
         // Final at once: its record can no longer be read. At the last amount reported - one the patch never
         // confirmed counts in full.
-        guard doseEntry.finish(.interrupted, endedAt: nil, at: now()), let event = finalize(doseEntry, deliveredUnits: nil)
-        else {
+        guard doseEntry.finish(.interrupted, endedAt: nil, at: now()) else {
+            return []
+        }
+        noteUncertainDelivery(.bolus, .patchDeactivated, of: doseEntry)
+        guard let event = finalize(doseEntry, deliveredUnits: nil, .byEstimate) else {
             return []
         }
 
@@ -2532,14 +2544,84 @@ public extension MedtrumPumpManager {
         }
     }
 
+    /// The settings screen keeps this many of them, the oldest settled going first
+    static let uncertainDeliveriesKept = 20
+
+    /// `dose` became uncertain, as `kind` - for the settings screen, see `UncertainDelivery`. Once per dose and kind: the
+    /// first cause stays. Only under `doseReportLock`.
+    internal func noteUncertainDelivery(_ kind: UncertainDelivery.Kind, _ cause: UncertainDelivery.Cause, of dose: UnfinalizedDose) {
+        // Final, nothing would settle it
+        guard !dose.isFinalized else {
+            return
+        }
+
+        let key = UncertainDelivery.DoseKey(dose)
+        let delivery = UncertainDelivery(
+            kind: kind,
+            cause: cause,
+            sentAt: key.sentAt,
+            amount: dose.value,
+            duration: dose.type == .tempBasal ? dose.estimatedEndDate.timeIntervalSince(dose.startDate) : nil,
+            notedAt: now()
+        )
+        state.mutateUncertainDeliveries { deliveries in
+            guard !deliveries.contains(where: { $0.kind == kind && $0.isOf(key) && !$0.isSettled }) else {
+                return
+            }
+            deliveries.append(delivery)
+            while deliveries.count > Self.uncertainDeliveriesKept {
+                deliveries.remove(at: deliveries.firstIndex(where: \.isSettled) ?? 0)
+            }
+        }
+    }
+
+    /// The uncertain deliveries of `dose` not settled yet are, as `outcome` - with its final, if it has one. Only under
+    /// `doseReportLock`.
+    private func settleUncertainDeliveries(of dose: UnfinalizedDose, _ outcome: UncertainDelivery.Outcome) {
+        let key = UncertainDelivery.DoseKey(dose)
+        let final = dose.snapshot
+        let settledAt = now()
+        state.mutateUncertainDeliveries { deliveries in
+            for index in deliveries.indices where !deliveries[index].isSettled && deliveries[index].isOf(key) {
+                deliveries[index].outcome = outcome
+                deliveries[index].settledAt = settledAt
+                switch outcome {
+                case .byRecord, .byEstimate:
+                    deliveries[index].delivered = final.finalDeliveredUnits
+                    deliveries[index].record = outcome == .byRecord && dose.type == .bolus ? final.recordSequence : nil
+                case .neverRan:
+                    deliveries[index].delivered = 0
+                case .notConfirmed, .final, .untracked:
+                    break
+                }
+            }
+        }
+    }
+
+    /// The user is done with the settled ones
+    public func clearSettledUncertainDeliveries() {
+        doseReportLock.withLock {
+            state.mutateUncertainDeliveries { $0.removeAll(where: \.isSettled) }
+        }
+        notifyStateDidChange()
+    }
+
     /// Fixes the final report of `dose` - once: nil if it has one already - and keeps it in `awaitingRecord`, to go out
     /// with every batch until the host confirms storing it. Only under `doseReportLock`; the caller hands the final
-    /// over before letting go of it. `deliveredUnits`: the record's amount, or nil for our own estimate.
-    private func finalize(_ dose: UnfinalizedDose, deliveredUnits: Double?, endDate: Date? = nil) -> NewPumpEvent? {
+    /// over before letting go of it. `deliveredUnits`: the record's amount, or nil for our own estimate. `outcome`: how,
+    /// for the uncertain deliveries of it.
+    private func finalize(
+        _ dose: UnfinalizedDose,
+        deliveredUnits: Double?,
+        endDate: Date? = nil,
+        _ outcome: UncertainDelivery.Outcome
+    ) -> NewPumpEvent? {
         guard dose.finalize(deliveredUnits: deliveredUnits, endDate: endDate, at: now()) else {
             log.warning("The \(dose.type.rawValue) of \(dose.startDate) is finalized already, not reporting it again")
             return nil
         }
+
+        settleUncertainDeliveries(of: dose, outcome)
 
         state.mutateAwaitingRecord { doses in
             guard !doses.contains(where: { $0 === dose }) else {
@@ -2559,7 +2641,7 @@ public extension MedtrumPumpManager {
 
     /// Finalizes `dose` and hands the final to the host at once. Only under `doseReportLock`.
     private func emitFinal(_ dose: UnfinalizedDose, deliveredUnits: Double, endDate: Date? = nil) {
-        guard let event = finalize(dose, deliveredUnits: deliveredUnits, endDate: endDate) else {
+        guard let event = finalize(dose, deliveredUnits: deliveredUnits, endDate: endDate, .byRecord) else {
             return
         }
         emitPumpEvents([event])
@@ -2757,7 +2839,8 @@ public extension MedtrumPumpManager {
                 let end = unconfirmedTempBasalEnd(pending)
                 if RecordSyncer.fallbackRule(since: end, caughtUp: isCaughtUp(after: end), now: checkedAt) == .noRecord {
                     dropUnconfirmedTempBasal(
-                        because: "no status showed it running and \(RecordSyncer.FallbackRule.noRecord.description) at the latest"
+                        because: "no status showed it running and \(RecordSyncer.FallbackRule.noRecord.description) at the latest",
+                        neverRan: true
                     )
                     settled += 1
                 }
@@ -2803,7 +2886,7 @@ public extension MedtrumPumpManager {
             }
 
             let neverRan = unansweredBolusNeverRan(dose)
-            guard let event = finalize(dose, deliveredUnits: neverRan ? 0 : nil) else {
+            guard let event = finalize(dose, deliveredUnits: neverRan ? 0 : nil, neverRan ? .neverRan : .byEstimate) else {
                 continue
             }
 
@@ -3144,7 +3227,12 @@ public extension MedtrumPumpManager {
                         "\(dose.observedEndDate.map { "\($0)" } ?? "-")"
                 )
                 // Our start, the patch's duration: the identity stays on our clock
-                if let final = finalize(dose, deliveredUnits: parts.delivered, endDate: dose.startDate.addingTimeInterval(parts.duration)) {
+                if let final = finalize(
+                    dose,
+                    deliveredUnits: parts.delivered,
+                    endDate: dose.startDate.addingTimeInterval(parts.duration),
+                    .byRecord
+                ) {
                     events.append(final)
                 }
                 for sequence in parts.sequences {
@@ -3256,7 +3344,7 @@ public extension MedtrumPumpManager {
         let restarted = Self.crossesPatchMidnight(from: start, to: end, utcOffset: utcOffset)
         let estimate = dose.tempBasalEstimate(of: snapshot, restarted: restarted)
 
-        guard let event = finalize(dose, deliveredUnits: estimate.units) else {
+        guard let event = finalize(dose, deliveredUnits: estimate.units, .byEstimate) else {
             return nil
         }
 
@@ -3290,8 +3378,10 @@ public extension MedtrumPumpManager {
         doseReportLock.withLock {
             if let superseded = state.unconfirmedTempBasal {
                 log.warning("The unconfirmed temp basal of \(superseded.value) U/h sent \(superseded.sentAt.map { "\($0)" } ?? "-") is superseded")
+                settleUncertainDeliveries(of: superseded, .notConfirmed)
             }
             state.unconfirmedTempBasal = dose
+            noteUncertainDelivery(.tempBasal, .unanswered, of: dose)
             // Those skipped before were written before it went out
             state.skippedRecordSequences = []
             // The patch may be running it: the next temp basal cancels first
@@ -3364,12 +3454,13 @@ public extension MedtrumPumpManager {
     }
 
     /// Drops the unconfirmed temp basal, never reported. Only under `doseReportLock`.
-    private func dropUnconfirmedTempBasal(because reason: String) {
+    private func dropUnconfirmedTempBasal(because reason: String, neverRan: Bool = false) {
         guard let dose = state.unconfirmedTempBasal else {
             return
         }
 
         log.warning("Dropping the temp basal of \(dose.value) U/h whose command went unanswered, \(reason)")
+        settleUncertainDeliveries(of: dose, neverRan ? .neverRan : .notConfirmed)
         state.unconfirmedTempBasal = nil
     }
 
@@ -3590,7 +3681,15 @@ public extension MedtrumPumpManager {
     /// A cancel of the running temp basal went out at `sentAt` and no answer came back: the patch may have stopped it.
     /// It stays running and counted until a status says otherwise.
     private func noteUnansweredCancel(sentAt: Date) {
-        guard state.basalDose.markStopUnanswered(at: sentAt) else {
+        // Marked and noted together: a status finalizing it in between would leave the note unsettled
+        let marked = doseReportLock.withLock { () -> Bool in
+            guard state.basalDose.markStopUnanswered(at: sentAt) else {
+                return false
+            }
+            noteUncertainDelivery(.tempBasalCancel, .unanswered, of: state.basalDose)
+            return true
+        }
+        guard marked else {
             return
         }
 

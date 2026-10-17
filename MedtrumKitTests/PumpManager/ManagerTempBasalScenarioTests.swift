@@ -314,6 +314,9 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
 
         XCTAssertNotNil(pumpManager.state.unconfirmedTempBasal, "a segment from before its command says nothing of it")
         XCTAssertTrue(pumpManager.status.deliveryIsUncertain)
+        XCTAssertEqual(uncertain.map(\.kind), [.tempBasal])
+        XCTAssertEqual(uncertain.first?.cause, .unanswered)
+        XCTAssertEqual(uncertain.first?.phase, .notReported)
         XCTAssertEqual(pumpManager.state.basalState, .tempBasal, "it may be running: the next temp basal cancels first")
 
         // The temp basal the cancel ended has its record, read by the sync after the commands; nothing else was written
@@ -338,6 +341,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(delegate.statusUpdates.last?.status.deliveryIsUncertain, false)
         XCTAssertTrue(reports(of: .tempBasal).allSatisfy { $0.unitsPerHour > 0.1 }, "the zero temp basal never reached the host")
         XCTAssertEqual(delegate.errors.count, 0)
+        XCTAssertEqual(uncertain.map(\.phase), [.settled(.neverRan)])
     }
 
     /// The same unanswered set, the patch running it with no status showing it for 20 min, every record read: it may
@@ -429,6 +433,8 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(zero.first?.isMutable, false)
         XCTAssertEqual(zero.first.map { $0.endDate.timeIntervalSince($0.startDate) } ?? 0, 1199, accuracy: 0.001)
         XCTAssertEqual(pumpManager.recordStore.records.first?.outcome?.hasPrefix("finalized unconfirmed temp basal"), true)
+        XCTAssertEqual(uncertain.map(\.phase), [.settled(.byRecord)])
+        XCTAssertEqual(uncertain.first?.delivered, 0)
     }
 
     /// The same, the cancel's answer carrying no new record: it is dropped 15 min after the cancel with every record
@@ -831,6 +837,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertNil(pumpManager.state.unconfirmedTempBasal)
         XCTAssertFalse(pumpManager.status.deliveryIsUncertain)
         XCTAssertEqual(pumpManager.state.basalState, .tempBasal)
+        XCTAssertEqual(uncertain.map(\.phase), [.awaitingRecord], "it ran: final once its record is read")
 
         let confirmed = pumpManager.state.basalDose
         XCTAssertEqual(confirmed.type, .tempBasal)
@@ -1916,6 +1923,59 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(final?.deliveredUnits ?? 0, 0.2, accuracy: 0.001, "the record's, not 0.25 U by rate × duration")
         XCTAssertEqual(reports(of: .tempBasal).count, 1)
         XCTAssertNil(pumpManager.pendingTempBasalEnd)
+    }
+
+    /// The cancel of our temp basal unanswered: counted as running until a full status shows whether it stopped - here
+    /// it did not. Shown so, then settled by its record as it ends.
+    func testUnansweredCancelIsShownUncertainUntilTheTempBasalsRecordSettlesIt() throws {
+        let tempBasal = runTempBasalOfOurs()
+
+        link.script(CommandType.CANCEL_TEMP_BASAL, .timeout)
+        guard case .uncertainDelivery? = commandTempBasal(0.5, duration: 30 * Self.minute) else {
+            XCTFail("Not uncertain")
+            return
+        }
+        settle()
+        XCTAssertEqual(uncertain.map(\.kind), [.tempBasalCancel])
+        XCTAssertEqual(uncertain.first?.phase, .countedRunning)
+
+        link.deliverFullStatus(
+            notification: PatchBytes.basalNotification(type: .ABSOLUTE_TEMP, sequence: 130, patchId: 251, start: Self.ourStart, rate: 1.2),
+            duringReconnect: false
+        )
+        settle()
+        XCTAssertEqual(uncertain.first?.phase, .stillRunning)
+
+        scriptCancelAndSet()
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+        XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
+        settle()
+
+        let old = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.startDate == tempBasal.startDate }).first)
+        XCTAssertEqual(old.deliveredUnits ?? 0, 0.35, accuracy: 0.001)
+        XCTAssertEqual(uncertain.map(\.phase), [.settled(.byRecord)])
+        XCTAssertEqual(uncertain.first?.delivered ?? 0, 0.35, accuracy: 0.001)
+    }
+
+    /// The same unanswered cancel, then a cancel answered whose record cannot be read: final from our estimate - shown
+    /// so, not as settled by its record
+    func testUnansweredCancelOfATempBasalFinalizedFromOurEstimateIsShownSo() {
+        runTempBasalOfOurs()
+
+        link.script(CommandType.CANCEL_TEMP_BASAL, .timeout)
+        guard case .uncertainDelivery? = commandTempBasal(0.5, duration: 30 * Self.minute) else {
+            XCTFail("Not uncertain")
+            return
+        }
+        settle()
+
+        scriptCancelAndSet()
+        link.script(CommandType.GET_RECORD, .timeout)
+        XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
+        settle()
+
+        XCTAssertEqual(uncertain.map(\.phase), [.settled(.byEstimate)])
+        XCTAssertEqual(uncertain.first?.delivered ?? 0, 0.4, accuracy: 0.001, "our estimate")
     }
 
     /// The record of a temp basal that is final, read again - the cursor saved before it moved past it - by a sync:

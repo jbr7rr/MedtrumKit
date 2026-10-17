@@ -68,6 +68,53 @@ struct MedtrumKitSettings: View {
         )
     }
 
+    /// What the warnings of uncertain delivery were about, and how each was settled
+    private var uncertainDeliveries: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Uncertain delivery", comment: "title for the uncertain delivery notice")
+                .font(Font.subheadline.weight(.bold))
+
+            ForEach(viewModel.uncertainDeliveries) { notice in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(notice.title)
+                        .font(Font.footnote.weight(.semibold))
+                    Text(notice.cause)
+                        .font(.footnote)
+                    Text(notice.status)
+                        .font(.footnote)
+                        .foregroundColor(notice.isUncertain ? .orange : .secondary)
+                    if let advice = notice.advice {
+                        Text(advice)
+                            .font(.footnote)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button {
+                    viewModel.toPumpRecords()
+                } label: {
+                    Text("Patch Records")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                if viewModel.uncertainDeliveries.contains(where: \.isSettled) {
+                    Button {
+                        viewModel.clearSettledUncertainDeliveries()
+                    } label: {
+                        Text("Clear settled", comment: "button clearing the settled uncertain deliveries")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(.top, 4)
+        }
+        .padding(.vertical, 8)
+    }
+
     var body: some View {
         List {
             Section {
@@ -164,6 +211,10 @@ struct MedtrumKitSettings: View {
                         .buttonStyle(.bordered)
                         .disabled(viewModel.isClearingAlert)
                     }.padding(.vertical, 8)
+                }
+
+                if !viewModel.uncertainDeliveries.isEmpty {
+                    uncertainDeliveries
                 }
             }
 
