@@ -769,9 +769,28 @@ public extension MedtrumPumpManager {
             guard !self.state.pumpState.isRunning else {
                 // The patch activated, but its answer was lost: the session it starts is not started yet
                 if self.state.patchSessionEnded {
-                    // Its id is not known: the first status after this sets it
+                    // Its id is not taken from what the connect synced, which can be stale with no session: the first
+                    // status after this sets it, and payloads are not checked against an id until then. It may have
+                    // suspended since - the connect synced its status, and notifications keep it current while connected.
                     self.log.warning("Patch already activated, but its session was not started - starting it")
-                    self.startPatchSession(patchId: Data(), at: Date.now)
+                    let start = Date.now
+                    // It activated before now: at the start time the connect synced, if that is the new patch's. The
+                    // previous patch's - kept since, or synced before it disconnected - is from before its deactivation.
+                    let activatedAt: Date
+                    if let syncedActivation = self.state.patchActivatedAt,
+                       let deactivatedAt = self.state.previousPatch?.deactivatedAt,
+                       syncedActivation > deactivatedAt, syncedActivation <= start
+                    {
+                        activatedAt = syncedActivation
+                    } else {
+                        activatedAt = start
+                    }
+                    self.startPatchSession(
+                        patchId: Data(),
+                        at: start,
+                        activatedAt: activatedAt,
+                        isDelivering: self.state.pumpState.isDelivering
+                    )
                 }
 
                 self.log.info("Patch already activated!")
@@ -803,7 +822,8 @@ public extension MedtrumPumpManager {
                     return
                 }
 
-                self.startPatchSession(patchId: data.patchId, at: Date.now)
+                let start = Date.now
+                self.startPatchSession(patchId: data.patchId, at: start, activatedAt: start, isDelivering: true)
 
                 self.log.info("Patch activated!")
                 completion(.success)
@@ -847,10 +867,13 @@ public extension MedtrumPumpManager {
         bluetooth.disconnect(force: true)
     }
 
-    /// The new patch delivers on its schedule from `start`
-    private func startPatchSession(patchId: Data, at start: Date) {
+    /// The new patch delivers on its schedule from `start` - unless it is not delivering: then the suspend reported stays
+    /// outstanding, for the first status that shows it delivering to resume. Its expiry counts from `activatedAt`.
+    private func startPatchSession(patchId: Data, at start: Date, activatedAt: Date, isDelivering: Bool) {
         if state.expiryMode == .default {
-            emitAlert(alertType: .patchExpiredNotification(after: state.notificationAfterActivation))
+            // Issued now, due a set time after the activation
+            let delay = max(0, state.notificationAfterActivation - start.timeIntervalSince(activatedAt))
+            emitAlert(alertType: .patchExpiredNotification(after: delay))
         }
 
         var events: [NewPumpEvent] = []
@@ -864,31 +887,39 @@ public extension MedtrumPumpManager {
             events.append(contentsOf: finalizeInterruptedBolus())
         }
 
-        let resumeDose = UnfinalizedDose(
-            resumeStartTime: start,
-            insulinType: state.insulinType
-        )
         events.append(NewPumpEvent.replacedPump(date: start))
-        if state.basalDose.type == .suspend {
-            // Only a suspend that was reported gets a resume: a host can take one without it as suspended before it
-            events.append(NewPumpEvent.resume(dose: resumeDose.toDoseEntry()))
-        } else if !state.patchSessionEnded {
-            let basalDose = UnfinalizedDose(
-                basalRate: state.currentBaseBasalRate,
-                insulinType: state.insulinType,
-                startDate: start
+        if isDelivering {
+            let resumeDose = UnfinalizedDose(
+                resumeStartTime: start,
+                insulinType: state.insulinType
             )
-            events.append(NewPumpEvent.basal(dose: basalDose.toDoseEntry()))
+            if state.basalDose.type == .suspend {
+                // Only a suspend that was reported gets a resume: a host can take one without it as suspended before it
+                events.append(NewPumpEvent.resume(dose: resumeDose.toDoseEntry()))
+            } else if !state.patchSessionEnded {
+                let basalDose = UnfinalizedDose(
+                    basalRate: state.currentBaseBasalRate,
+                    insulinType: state.insulinType,
+                    startDate: start
+                )
+                events.append(NewPumpEvent.basal(dose: basalDose.toDoseEntry()))
+            }
+
+            state.basalDose = resumeDose
+            // What commands check: the old patch may have left it suspended or running a temp basal, and it would
+            // stay so until the first status that shows the new patch's basal
+            state.basalState = .active
+        } else {
+            // A resume now would count the time until the patch resumes as delivered. The suspend outstanding - the old
+            // session's, or one the status that showed it suspended recorded - stays, for the first status
+            // that shows it delivering to resume.
+            state.basalState = .suspended
         }
 
         state.patchSessionEnded = false
         state.initialReservoir = nil
         state.patchId = patchId
-        state.patchActivatedAt = start
-        state.basalDose = resumeDose
-        // What commands check: the old patch may have left it suspended or running a temp basal, and it would
-        // stay so until the first status that shows the new patch's basal
-        state.basalState = .active
+        state.patchActivatedAt = activatedAt
         state.lastSync = Date.now
         notifyStateDidChange()
 
@@ -916,9 +947,8 @@ public extension MedtrumPumpManager {
         // the patch can't have resumed: a suspend can end on its own, unseen while out of range, so it takes a state the
         // patch never leaves, one it never delivered in or no longer does, or a current one that shows it not delivering.
         // Otherwise the suspend is reported now.
-        let isDelivering = state.pumpState.isRunning && !state.pumpState.isSuspended
         let hasStopped = state.basalDose.type == .suspend &&
-            (state.pumpState.isTerminated || state.pumpState.isSetup || (statusIsCurrent && !isDelivering))
+            (state.pumpState.isTerminated || state.pumpState.isSetup || (statusIsCurrent && !state.pumpState.isDelivering))
         let events = hasStopped ? finalizeInterruptedBolus() : stoppedDelivery(at: stoppedAt)
 
         state.patchId = Data()

@@ -11,7 +11,10 @@ enum StateSyncer {
         fullSync: Bool
     ) {
         let syncDate = Date.now
-        let syncResponse = syncResponse.validated(expectedPatchId: state.patchId.toUInt64())
+        // No session: the id kept can be stale - the previous patch's, or one never started - and would reject the new
+        // patch's payloads. The storage gate below decides which id to keep then.
+        let expectedPatchId = state.patchSessionEnded ? 0 : state.patchId.toUInt64()
+        let syncResponse = syncResponse.validated(expectedPatchId: expectedPatchId)
 
         StateSyncer.updatePumpState(syncResponse: syncResponse, pumpManager: pumpManager)
 
@@ -122,8 +125,8 @@ enum StateSyncer {
         }
 
         if let storage = syncResponse.storage {
-            // No session: the old patch can report its id until it disconnects, which rejects the new one's payloads. A
-            // running patch with another id is the new one, its session not started.
+            // No session: the old patch can report its id until it disconnects. A running patch with another id is the new
+            // one, its session not started.
             let patchId = UInt64(storage.patchId).toData(length: 4)
             if !state.patchSessionEnded || (syncResponse.state.isRunning && patchId != state.previousPatch?.patchId) {
                 state.patchId = patchId

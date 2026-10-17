@@ -164,6 +164,9 @@ extension PatchState {
 
     var isTerminated: Bool { phase == .terminated }
 
+    /// Running and not suspended: on its schedule, or a temp basal
+    var isDelivering: Bool { isRunning && !isSuspended }
+
     var isSuspended: Bool {
         switch self {
         case .autoSuspended,
