@@ -228,7 +228,12 @@ enum StateSyncer {
             } else if !fullSync,
                       !pumpManager.completeBolus(delivered: bolus.delivered, receivedAt: receivedAt, receivedUptime: receivedUptime)
             {
-                pumpManager.raiseCancelledBolus(delivered: bolus.delivered)
+                pumpManager.noteCompletionWithNoBolusRunning(
+                    delivered: bolus.delivered,
+                    record: syncResponse.storage.map { Int($0.sequence) },
+                    receivedAt: receivedAt,
+                    receivedUptime: receivedUptime
+                )
             }
         }
 

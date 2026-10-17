@@ -32,6 +32,10 @@ public class MedtrumPumpManager: DeviceManager {
     /// A temp basal that ended, reported once its records are read - see `TempBasalEnd`. Only under `doseReportLock`.
     private var pendingTempBasalEndStorage: TempBasalEnd?
 
+    /// The completion of the bolus sent and not yet answered - see `noteCompletionWithNoBolusRunning`. Only under
+    /// `doseReportLock`.
+    private var earlyBolusCompletion: EarlyBolusCompletion?
+
     /// A bolus whose command went unanswered in an earlier run, the host not yet warned of it - see
     /// `reportBolusFromLastRun`. Only under `doseReportLock`.
     private var bolusFromLastRun: UnfinalizedDose?
@@ -534,6 +538,7 @@ public extension MedtrumPumpManager {
             let sequenceAtSend = max(self.state.currentSequenceNumber, self.state.answeredBolusRecords.max() ?? 0)
 
             // On disk before it goes out: killed before its answer, the app comes back with it - see `pendingBolus`
+            self.doseReportLock.withLock { self.earlyBolusCompletion = nil }
             self.state.pendingBolus = PendingBolus(
                 units: units,
                 sentAt: sentAt,
@@ -556,6 +561,15 @@ public extension MedtrumPumpManager {
                 // On disk before the command fails: killed after it, the app must not come back with a bolus that never
                 // ran
                 self.state.pendingBolus = nil
+                if let early = self.doseReportLock.withLock({ () -> EarlyBolusCompletion? in
+                    defer { self.earlyBolusCompletion = nil }
+                    return self.earlyBolusCompletion
+                }) {
+                    self.log.error(
+                        "A completion of \(early.delivered) U, record \(early.record.map { "#\($0)" } ?? "-"), came " +
+                            "while the bolus that failed was sent: dropped"
+                    )
+                }
                 self.handOverState(before: "failing the bolus")
                 completion(.communication(writeError))
                 return
@@ -579,13 +593,28 @@ public extension MedtrumPumpManager {
             }
 
             // Running and reported in one step - see `doseReportLock` - and no longer pending: the state the host saves
-            // as it takes the report has the one, not the other
-            self.doseReportLock.withLock {
+            // as it takes the report has the one, not the other. A completion that came before the answer is taken now.
+            let early = self.doseReportLock.withLock { () -> EarlyBolusCompletion? in
                 self.state.bolusDose = doseEntry
                 self.state.pendingBolus = nil
                 self.emitPumpEvents([NewPumpEvent.bolus(unfinalizedDose: doseEntry)], replacePendingEvents: false)
+                defer { self.earlyBolusCompletion = nil }
+                return self.earlyBolusCompletion
             }
             self.notifyStateDidChange()
+
+            // Over before its answer came. Unanswered, it stays uncertain - counted in full, and warned of - whatever
+            // came meanwhile: its record settles it.
+            if let early {
+                if outcome == .accepted {
+                    self.completeBolusEarly(doseEntry, early)
+                } else {
+                    self.log.warning(
+                        "A completion of \(early.delivered) U, record \(early.record.map { "#\($0)" } ?? "-"), came " +
+                            "before the bolus went unanswered: counted in full until its record"
+                    )
+                }
+            }
 
             guard outcome == .accepted else {
                 self.log.error(
@@ -1651,7 +1680,12 @@ public extension MedtrumPumpManager {
     /// so it is the running bolus's own, with what it delivered - a tiny one included, which completes before any
     /// progress. A full status's completion is not this: it repeats the last bolus's for hours. Returns whether the
     /// running bolus took it.
-    @discardableResult func completeBolus(delivered: Double, receivedAt: Date, receivedUptime: TimeInterval) -> Bool {
+    @discardableResult func completeBolus(
+        delivered: Double,
+        receivedAt: Date,
+        receivedUptime: TimeInterval,
+        endedAt: Date? = nil
+    ) -> Bool {
         let completed = doseReportLock.withLock { () -> Bool in
             guard let doseEntry = state.bolusDose else {
                 return false
@@ -1669,7 +1703,7 @@ public extension MedtrumPumpManager {
             }
 
             var events = runningTempBasal()
-            events.append(contentsOf: awaitRecord(doseEntry, .completed, deliveredUnits: delivered, endedAt: Date.now))
+            events.append(contentsOf: awaitRecord(doseEntry, .completed, deliveredUnits: delivered, endedAt: endedAt ?? Date.now))
             state.bolusDose = nil
             state.lastSync = Date.now
             emitPumpEvents(events)
@@ -1704,16 +1738,111 @@ public extension MedtrumPumpManager {
         return true
     }
 
+    struct EarlyBolusCompletion {
+        let delivered: Double
+        /// The newest record the notification names, if it does: the bolus's own, written as it completed
+        let record: Int?
+        let receivedAt: Date
+        let receivedUptime: TimeInterval
+    }
+
+    /// A completion notification with no bolus running to take it, received at `receivedAt`, naming `record` as the
+    /// newest if it does. The bolus sent and not yet answered's - the patch delivers a small one before it answers -
+    /// if the record is past every one known when it went out, or no cancelled bolus is there to take it: kept for it,
+    /// taken once it runs (`completeBolusEarly`). Otherwise the completion of the bolus a cancel just ended
+    /// (`raiseCancelledBolus`).
+    func noteCompletionWithNoBolusRunning(delivered: Double, record: Int?, receivedAt: Date, receivedUptime: TimeInterval) {
+        let registeredSince = doseReportLock.withLock { () -> Bool in
+            // Registered since `completeBolus` looked: its answer, handled on this queue, woke the command meanwhile
+            guard state.bolusDose == nil else {
+                return true
+            }
+
+            if let pending = state.pendingBolus, isCompletion(record: record, of: pending) {
+                log.info(
+                    "Completion of \(delivered) U, record \(record.map { "#\($0)" } ?? "-"), before the answer to the " +
+                        "bolus of \(pending.units) U sent at \(pending.sentAt): kept for it"
+                )
+                earlyBolusCompletion = EarlyBolusCompletion(
+                    delivered: delivered,
+                    record: record,
+                    receivedAt: receivedAt,
+                    receivedUptime: receivedUptime
+                )
+                return false
+            }
+
+            raiseCancelledBolus(delivered: delivered)
+            return false
+        }
+
+        if registeredSince, !completeBolus(delivered: delivered, receivedAt: receivedAt, receivedUptime: receivedUptime) {
+            raiseCancelledBolus(delivered: delivered)
+        }
+    }
+
+    /// Whether a completion naming `record`, if it does, is that of the bolus `pending` - sent, not yet answered: past
+    /// every record known when it went out, no earlier bolus's. Unless one a cancel ended moments ago went unanswered,
+    /// its number unknown; with no record, unless one a cancel ended moments ago is there to take it.
+    private func isCompletion(record: Int?, of pending: PendingBolus) -> Bool {
+        let cancelled = recentlyCancelledBolus()
+        guard let record else {
+            return cancelled == nil
+        }
+        return record > pending.sequenceAtSend && (cancelled.map { $0.snapshot.recordSequence != nil } ?? true)
+    }
+
+    /// `dose`, just registered, completed before its answer came - as `early` says, unless it is not its completion: it
+    /// names another record than the answer gave, says more was delivered than it was for, or came before it went out.
+    /// Then it is a cancelled bolus's, if any. Returns whether it ended `dose`.
+    @discardableResult private func completeBolusEarly(_ dose: UnfinalizedDose, _ early: EarlyBolusCompletion) -> Bool {
+        // Its completion came again since, and ended it
+        guard !dose.snapshot.isFinished else {
+            return true
+        }
+
+        var notIts: String?
+        if let record = early.record, let answered = dose.snapshot.recordSequence, record != answered {
+            notIts = "it names record #\(record), the bolus is #\(answered)"
+        } else if early.delivered > dose.value + Self.bolusCompletionTolerance {
+            notIts = "the bolus was for \(dose.value) U"
+        } else if !completeBolus(
+            delivered: early.delivered,
+            receivedAt: early.receivedAt,
+            receivedUptime: early.receivedUptime,
+            endedAt: early.receivedAt
+        ) {
+            notIts = "it came before the bolus went out"
+        }
+
+        guard let notIts else {
+            log.info("The bolus of \(dose.startDate) completed before its answer came: \(early.delivered) U")
+            return true
+        }
+
+        log.warning("The completion of \(early.delivered) U before the answer is not the bolus of \(dose.startDate)'s: \(notIts)")
+        raiseCancelledBolus(delivered: early.delivered)
+        return false
+    }
+
+    /// Half a 0.05 U step
+    private static let bolusCompletionTolerance = 0.025
+
+    /// The bolus a cancel ended moments ago, still waiting on its record - its completion is yet to come
+    private func recentlyCancelledBolus() -> UnfinalizedDose? {
+        let cutoff = Date.now.addingTimeInterval(-Self.cancelledBolusCompletionWindow)
+        return state.awaitingRecord.last(where: { dose in
+            let snapshot = dose.snapshot
+            return dose.type == .bolus && snapshot.finishReason == .cancelled && !snapshot.isFinalized &&
+                (snapshot.finishedAt ?? .distantPast) > cutoff
+        })
+    }
+
     /// A completion notification with no bolus running to take it: the patch's completion of the bolus a cancel just
     /// ended, with what it really delivered. Raises the amount the cancel kept, never lowers it.
     func raiseCancelledBolus(delivered: Double) {
         doseReportLock.withLock {
-            let cutoff = Date.now.addingTimeInterval(-Self.cancelledBolusCompletionWindow)
-            guard let cancelled = state.awaitingRecord.last(where: { dose in
-                let snapshot = dose.snapshot
-                return dose.type == .bolus && snapshot.finishReason == .cancelled && !snapshot.isFinalized &&
-                    (snapshot.finishedAt ?? .distantPast) > cutoff
-            }) else {
+            guard let cancelled = recentlyCancelledBolus() else {
                 return
             }
 
