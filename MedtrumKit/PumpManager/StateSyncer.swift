@@ -140,8 +140,7 @@ enum StateSyncer {
             case .ABSOLUTE_TEMP,
                  .RELATIVE_TEMP:
                 // `sequence` does NOT identify the segment running now - it is the last record the patch has
-                // written, and the running segment is only numbered once it ends
-                state.basalState = .tempBasal
+                // written, and the running segment is only numbered once it ends. The basal state is set there.
                 pumpManager.followTempBasalSegment(
                     basal,
                     fullSync: fullSync,
@@ -179,27 +178,36 @@ enum StateSyncer {
                 }
 
             default:
-                // One begun before the unconfirmed temp basal's command - or seen before it went out - says nothing of
-                // whether the patch runs it: the next temp basal still cancels first
-                let endsUnconfirmed = pumpManager.noteSegmentAfterUnconfirmedTempBasal(
-                    startingAt: basal.startTime,
-                    receivedAt: receivedAt,
-                    receivedUptime: receivedUptime
-                )
+                // In one step with what it ends, and with the basal state: a command's own, set under the same lock -
+                // the temp basal it started, or the unconfirmed one it kept - is never overwritten by what a status
+                // decided before it
+                let resumed = pumpManager.withDoseReportLock { () -> (events: [NewPumpEvent], endedTempBasal: Bool)? in
+                    // One begun before the unconfirmed temp basal's command - or seen before it went out - says nothing
+                    // of whether the patch runs it: the next temp basal still cancels first
+                    let endsUnconfirmed = pumpManager.noteSegmentAfterUnconfirmedTempBasal(
+                        startingAt: basal.startTime,
+                        receivedAt: receivedAt,
+                        receivedUptime: receivedUptime
+                    )
 
-                // The patch is delivering on its schedule again, since the start of the segment it shows. Nil: this
-                // status says nothing of the basal running, which stays as it is.
-                if let resumed = resumeSchedule(
-                    pumpManager: pumpManager,
-                    basal: basal,
-                    receivedAt: receivedAt,
-                    receivedUptime: receivedUptime
-                ) {
-                    events.append(contentsOf: resumed.events)
-                    endedTempBasal = resumed.endedTempBasal
+                    // The patch is delivering on its schedule again, since the start of the segment it shows. Nil: this
+                    // status says nothing of the basal running, which stays as it is.
+                    guard let resumed = resumeSchedule(
+                        pumpManager: pumpManager,
+                        basal: basal,
+                        receivedAt: receivedAt,
+                        receivedUptime: receivedUptime
+                    ) else {
+                        return nil
+                    }
                     if endsUnconfirmed {
                         state.basalState = .active
                     }
+                    return resumed
+                }
+                if let resumed {
+                    events.append(contentsOf: resumed.events)
+                    endedTempBasal = resumed.endedTempBasal
                 }
             }
         }
@@ -241,8 +249,17 @@ enum StateSyncer {
         // that we are in touch with the patch
         let isUsable = !syncResponse.invalidPayload && !syncResponse.truncated
 
-        // A full status past the running bolus's deadline, showing no bolus delivering: we lost its end
+        // A full status showing no bolus delivering, naming the running bolus's record written - or past its deadline:
+        // we lost its end
         if fullSync, isUsable, syncResponse.bolus?.completed != false {
+            if let bolus = syncResponse.bolus, let storage = syncResponse.storage {
+                pumpManager.completeBolusByItsRecord(
+                    delivered: bolus.delivered,
+                    newestRecord: Int(storage.sequence),
+                    receivedAt: receivedAt,
+                    receivedUptime: receivedUptime
+                )
+            }
             pumpManager.checkBolusDone(receivedAt: receivedAt, receivedUptime: receivedUptime)
         }
 
@@ -309,7 +326,7 @@ enum StateSyncer {
                 endedAt: eventTime,
                 patchEnd: patchTime,
                 lastRecord: storage.map { Int($0.sequence) },
-                then: [suspended]
+                then: (suspendDose, suspended)
             )
             state.basalDose = suspendDose
 
@@ -363,7 +380,7 @@ enum StateSyncer {
                     endedAt: endedAt,
                     patchEnd: basal.startTime,
                     lastRecord: Int(basal.sequence),
-                    then: [scheduled]
+                    then: (basalDose, scheduled)
                 )
                 state.basalDose = basalDose
 

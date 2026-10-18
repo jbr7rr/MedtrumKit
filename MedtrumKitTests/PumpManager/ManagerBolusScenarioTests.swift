@@ -296,8 +296,8 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(cancelled.deliveredUnits, 0.2, accuracy: 0.001, "raised by its completion")
     }
 
-    /// An answered bolus whose completion never comes: ended unseen at its deadline, counted in full - shown as uncertain
-    /// - until its record settles it
+    /// An answered bolus whose completion never comes: ended unseen at its deadline - by a full status that does not
+    /// name its record - counted in full - shown as uncertain - until its record settles it
     func testBolusEndedUnseenIsShownUncertainUntilItsRecordSettlesIt() {
         runTinyBolusSetup()
         link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
@@ -305,7 +305,10 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertTrue(uncertain.isEmpty)
 
         advanceClock(by: 5 * Self.minute)
-        deliverTinyBolusFullStatus()
+        link.deliverFullStatus(notification: "200200800100", duringReconnect: false)
+        settle()
+        link.notify("200001" + "a903ec00")
+        settle()
 
         XCTAssertNil(pumpManager.state.bolusDose)
         XCTAssertEqual(uncertain.map(\.kind), [.bolus])
@@ -351,6 +354,119 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         XCTAssertEqual(uncertain.map(\.cause), [.unanswered])
         XCTAssertEqual(uncertain.first?.phase, .countedAs(0.1))
+    }
+
+    /// The SetBolus of 0.3 U unanswered, cancelled before any progress came, then the patch's completion of it: 0.1 U,
+    /// naming record 824 - past the 823 known when it went out, claimed by no answer, no other bolus out. Its own: the
+    /// host counts the 0.1 U, not the full 0.3 U, until its record. Still uncertain, and warned of once.
+    func testCancelledUnansweredBolusIsCountedAsItsOwnCompletionSays() {
+        startUnansweredBolus()
+        let started = delegate.batches.first?.events.first?.dose
+
+        link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+        guard case .success? = commandCancelBolus() else {
+            XCTFail("Cancel failed")
+            return
+        }
+        settle()
+        XCTAssertNil(reports(of: .bolus).last?.deliveredUnits, "counted in full")
+        XCTAssertEqual(uncertain.first?.phase, .countedInFull)
+
+        link.notify(Self.completion(delivered: 2, record: 824, patch: "f700"))
+        settle()
+
+        let awaiting = reports(of: .bolus).last
+        XCTAssertEqual(awaiting?.syncIdentifier, started?.syncIdentifier)
+        XCTAssertEqual(awaiting?.isMutable, true, "mutable until its record")
+        XCTAssertEqual(awaiting?.deliveredUnits ?? 0, 0.1, accuracy: 0.001)
+        XCTAssertEqual(uncertain.map(\.cause), [.unanswered])
+        XCTAssertEqual(uncertain.first?.phase, .countedAs(0.1))
+        XCTAssertEqual(delegate.errors.count, 1, "warned once")
+
+        // Its record settles it
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 824, patchId: 247, start: pumpManager.state.pumpTime, amount: 0.3, delivered: 0.1)
+        )
+        syncRecords()
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.1, accuracy: 0.001)
+        XCTAssertEqual(uncertain.first?.phase, .settled(.byRecord))
+        XCTAssertEqual(delegate.alerts.count, 0)
+    }
+
+    /// The same completion naming record 823, the newest known when the bolus went out: not provably its own - its
+    /// amount is raised, but it counts in full until its record
+    func testCancelledUnansweredBolusIsCountedInFullWithACompletionNotProvablyItsOwn() {
+        startUnansweredBolus()
+
+        link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+        guard case .success? = commandCancelBolus() else {
+            XCTFail("Cancel failed")
+            return
+        }
+        settle()
+
+        link.notify(Self.completion(delivered: 2, record: 823, patch: "f700"))
+        settle()
+
+        XCTAssertEqual(pumpManager.state.awaitingRecord.first?.deliveredUnits ?? 0, 0.1, accuracy: 0.001, "raised")
+        XCTAssertNil(reports(of: .bolus).last?.deliveredUnits, "counted in full")
+        XCTAssertEqual(uncertain.first?.phase, .countedInFull)
+    }
+
+    /// An answered bolus whose completion is lost with the link: the reconnect's full status names record 937, the one
+    /// its answer gave it, written - and shows the last bolus completed at 0.05 U. It is over: ended there, at that
+    /// amount, not held until its deadline - the next bolus goes out, no warning of uncertain delivery. Its record
+    /// finalizes it.
+    func testAnsweredBolusWhoseCompletionWasLostEndsOnTheFullStatusNamingItsRecord() {
+        runTinyBolusSetup()
+        link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+        let started = delegate.batches.first?.events.first?.dose
+        XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
+
+        // Well before its deadline
+        advanceClock(by: 30)
+        link.deliverFullStatus([
+            "2f034401000020ee0d80010080000006a803ec2a",
+            "2f03440200f607ab17193000e0052b33a817c5a8",
+            "2f0344033b59a903ec00b5d602001905735c"
+        ], duringReconnect: true)
+        settle()
+
+        XCTAssertNil(pumpManager.state.bolusDose)
+        XCTAssertEqual(pumpManager.state.bolusState, .noBolus)
+        let awaiting = reports(of: .bolus).last
+        XCTAssertEqual(awaiting?.syncIdentifier, started?.syncIdentifier)
+        XCTAssertEqual(awaiting?.isMutable, true, "mutable until its record")
+        XCTAssertEqual(awaiting?.deliveredUnits ?? 0, 0.05, accuracy: 0.001)
+        XCTAssertEqual(delegate.errors.count, 0)
+        XCTAssertTrue(uncertain.isEmpty)
+
+        link.script(
+            CommandType.GET_RECORD,
+            fragments: "33634c010000aa2c01ff9e75aef7ec00a90301a0",
+            "33634c02000000f907ab1701000100000000001e",
+            "33634c03000000000000000000000000a3507873",
+            "33634c040a3e52"
+        )
+        syncRecords()
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.05, accuracy: 0.001)
+    }
+
+    /// A full status of an answered bolus still running - record 937 not written yet, 936 the newest - repeating the
+    /// last bolus's completion: says nothing of it, which runs on
+    func testFullStatusRepeatingTheLastCompletionBeforeTheBolussRecordIsWrittenLeavesItRunning() {
+        runTinyBolusSetup()
+        link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+
+        link.deliverFullStatus(notification: "200201" + "800100" + "a803ec00", duringReconnect: false)
+        settle()
+
+        XCTAssertNotNil(pumpManager.state.bolusDose)
+        XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
     }
 
     /// The patch deactivated while a bolus runs: final at once from its last amount, shown so
@@ -508,10 +624,11 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         return running
     }
 
-    /// A completion notification of `delivered` steps of 0.05 U, naming `record` of patch 236 as the newest
-    private static func completion(delivered: UInt8, record: Int) -> String {
+    /// A completion notification of `delivered` steps of 0.05 U, naming `record` of patch 236 - or `patch`, its low two
+    /// bytes in hex - as the newest
+    private static func completion(delivered: UInt8, record: Int, patch: String = "ec00") -> String {
         "200211" + "80" + String(format: "%02x", delivered) + "00" +
-            String(format: "%02x%02x", record & 0xFF, record >> 8) + "ec00" + "0000000000"
+            String(format: "%02x%02x", record & 0xFF, record >> 8) + patch + "0000000000"
     }
 
     /// 2026-07-31 01:41:10 - 01:42:29 (`user.txt:11229-11295`), patch 236: 2 U while a 2.5 U/h temp basal runs.

@@ -140,11 +140,17 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertNil(commandBolus(0.05))
         delegate.batchReply = .acknowledge
 
-        link.deliverFullStatus([
-            "2f034401000020ee0d80010080000006a803ec2a",
-            "2f03440200f607ab17193000e0052b33a817c5a8",
-            "2f0344033b59a903ec00b5d602001905735c"
-        ])
+        // A full status showing the temp basal running - and nothing of the bolus's record, 937, not written yet
+        link.deliverFullStatus(
+            notification: PatchBytes.basalNotification(
+                type: .ABSOLUTE_TEMP,
+                sequence: 936,
+                patchId: 236,
+                start: Self.patchTime(397_084_662),
+                rate: 1.25
+            ),
+            duringReconnect: false
+        )
         settle()
 
         let batch = delegate.batches.last
@@ -293,8 +299,14 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertNil(commandResume())
         settle()
 
+        // With the suspend again - and the temp basal's final - which the state saved with their batch had yet to be
+        // confirmed: the same reports
         let resumed = try XCTUnwrap(delegate.batches.last)
-        XCTAssertEqual(resumed.events.first?.dose?.type, .resume)
+        XCTAssertTrue(resumed.events.contains { $0.dose?.type == .resume })
+        XCTAssertEqual(
+            resumed.events.filter { $0.dose?.type == .suspend }.map(\.raw),
+            suspended.events.filter { $0.dose?.type == .suspend }.map(\.raw)
+        )
         makeManager(MedtrumPumpState(rawValue: try roundTripped(XCTUnwrap(resumed.savedState))))
 
         XCTAssertEqual(pumpManager.state.basalDose.type, .resume)

@@ -999,7 +999,8 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
             thenNotify: ["4501133c96ac170302ed00100000000000000000"]
         )
         // The status names 515 the newest record: the temp basal's (514, `records-aug3.txt`) ending at the suspend,
-        // then an ALARM - read in the command, once it has its answer
+        // then an ALARM. The first is read in the command, once it has its answer: it settles the temp basal, and the
+        // ALARM is left to the sync.
         link.script(CommandType.GET_RECORD, PatchBytes.basalRecord(
             sequence: 514,
             patchId: 237,
@@ -1013,7 +1014,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertNil(commandSuspend())
         settle()
 
-        XCTAssertEqual(link.writtenCommands, [CommandType.SUSPEND_PUMP, CommandType.GET_RECORD, CommandType.GET_RECORD])
+        XCTAssertEqual(link.writtenCommands, [CommandType.SUSPEND_PUMP, CommandType.GET_RECORD])
         XCTAssertEqual(link.writes.first?.encoded(sequence: 0x05), "071c0500031e6500")
         let suspendedAt = Self.patchTime(397_186_620).addingTimeInterval(-skew)
 
@@ -1029,7 +1030,10 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(ended?.isMutable, false, "a suspend ends it for good; its record says how much it delivered")
         XCTAssertEqual(ended?.deliveredUnits ?? 0, 0.05, accuracy: 0.001)
         XCTAssertEqual(ended?.endDate.timeIntervalSince1970 ?? 0, suspendedAt.timeIntervalSince1970, accuracy: 0.01)
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 514)
+        syncRecords()
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 515)
+        XCTAssertEqual(delegate.batches.count, 1)
 
         link.script(CommandType.RESUME_PUMP, fragments: "121d06000000010c000302ed004196ac17c000")
         XCTAssertNil(commandResume())
@@ -1081,8 +1085,8 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(ended?.isMutable, false)
         XCTAssertEqual(ended?.startDate, tempBasal.startDate)
         XCTAssertEqual(ended?.endDate.timeIntervalSince1970 ?? 0, resumedAt.timeIntervalSince1970, accuracy: 0.5)
-        // 0.6 U/h for 266 s, by rate × duration
-        XCTAssertEqual(ended?.deliveredUnits ?? 0, 0.0, accuracy: 0.001)
+        // 0.6 U/h for 266 s, by rate × duration: 0.044 U, to the nearest 0.05 U
+        XCTAssertEqual(ended?.deliveredUnits ?? 0, 0.05, accuracy: 0.001)
     }
 
     /// A status showing a suspend, received before the running temp basal's command went out, says nothing of it: the
@@ -2125,7 +2129,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 131, "132 is left for the next sync")
     }
 
-    /// The record the cancel named times out: the read waits for what is left of its 10 s, not a write's 30 s
+    /// The record the cancel named times out: the read waits no longer than a record may take, not a write's 30 s
     func testReadThatTimesOutTakesNoMoreThanItsBudget() {
         runTempBasalOfOurs()
         link.onTimeout = { [unowned self] waited in advanceClock(by: waited) }
@@ -2137,13 +2141,13 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(final?.deliveredUnits ?? 0, 0.4, accuracy: 0.001, "by our estimate")
     }
 
-    /// The cancel names 132: 131 takes 11 s to come back, and 132 is not asked for - our estimate stands in. 131 is kept
-    /// as any record read is.
+    /// The cancel names 132: 131 takes all of the budget to come back, and 132 is not asked for - our estimate stands in.
+    /// 131 is kept as any record read is.
     func testReadStopsWhereItsBudgetRunsOutKeepingWhatItRead() {
         runTempBasalOfOurs()
         scriptCancelAndSet(cancelRecord: 132)
         link.script(CommandType.GET_RECORD, .fragments(PatchBytes.otherRecord(type: 10, sequence: 131, patchId: 251))) { [unowned self] in
-            advanceClock(by: 11)
+            advanceClock(by: MedtrumPumpManager.tempBasalEndReadBudget + 1)
         }
         XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
         settle()
@@ -2271,19 +2275,29 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(writer.exclusively(within: nil) { $0 }, PeripheralManager.writeTimeout)
     }
 
-    /// The host is slow to take the state before the read: the time that takes is not taken from the read's budget
+    /// The host is slow to take the state before the read - 2.5 s: the time that takes is not taken from the read's
+    /// budget. The cancel names 132, and 131 takes 9 s to come back: 132 is given all the 10 s a record may take - with
+    /// the hand-over counted, only the 8.5 s left.
     func testHandOverBeforeTheReadIsNotCountedInItsBudget() {
         runTempBasalOfOurs()
-        link.script(CommandType.CANCEL_TEMP_BASAL, cancelAnswer())
-        link.script(CommandType.SET_TEMP_BASAL, .fragments(setAnswer())) { [unowned self] in
-            delegate.queue.async { Thread.sleep(forTimeInterval: 1) }
+        link.script(CommandType.CANCEL_TEMP_BASAL, cancelAnswer(record: 132))
+        link.script(CommandType.SET_TEMP_BASAL, .fragments(setAnswer(record: 133))) { [unowned self] in
+            delegate.queue.async { Thread.sleep(forTimeInterval: 2.5) }
         }
-        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+        link.script(CommandType.GET_RECORD, .fragments(PatchBytes.otherRecord(type: 10, sequence: 131, patchId: 251))) { [unowned self] in
+            advanceClock(by: 9)
+        }
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(sequence: 132, delivered: 0.35))
         XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
         settle()
 
-        XCTAssertEqual(link.writtenCommands, [CommandType.CANCEL_TEMP_BASAL, CommandType.SET_TEMP_BASAL, CommandType.GET_RECORD])
-        XCTAssertGreaterThan(written(CommandType.GET_RECORD)?.timeout ?? 0, MedtrumPumpManager.tempBasalEndReadBudget - 0.5)
+        XCTAssertEqual(
+            link.writtenCommands,
+            [CommandType.CANCEL_TEMP_BASAL, CommandType.SET_TEMP_BASAL, CommandType.GET_RECORD, CommandType.GET_RECORD]
+        )
+        XCTAssertLessThanOrEqual(link.writes.first { $0.commandType == CommandType.GET_RECORD }?.timeout ?? .infinity, 10)
+        XCTAssertGreaterThan(written(CommandType.GET_RECORD)?.timeout ?? 0, MedtrumPumpManager.tempBasalEndRecordTimeout - 0.5)
+        XCTAssertEqual(delegate.batches.first?.events.first?.dose?.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
     }
 
     /// A suspend while a temp basal runs, the patch's status of it not in yet: no record of the temp basal's end is
@@ -2345,8 +2359,9 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         restarted.emitPumpEvents([])
         host.queue.sync {}
 
+        // The scheduled basal between the two, held back with the old one's final, goes out after all
         let events = try XCTUnwrap(host.batches.first?.events.compactMap(\.dose))
-        XCTAssertEqual(events.map(\.unitsPerHour), [1.2, 0.5])
+        XCTAssertEqual(events.map(\.unitsPerHour), [1.2, 0.7, 0.5])
         XCTAssertEqual(events.first?.isMutable, false)
         XCTAssertEqual(events.last?.isMutable, true)
     }
@@ -2522,7 +2537,616 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         let final = delegate.batches.first?.events.first?.dose
         XCTAssertEqual(final?.isMutable, false)
         XCTAssertEqual(final?.startDate, tempBasal.startDate)
-        XCTAssertEqual(final?.deliveredUnits ?? 0, 0.1, accuracy: 0.001, "its rate × duration: 0.6 U/h × 897 s")
+        XCTAssertEqual(final?.deliveredUnits ?? 0, 0.15, accuracy: 0.001, "its rate × duration: 0.6 U/h × 897 s")
+    }
+
+    // MARK: - Saved before the set goes out
+
+    /// Killed as the set of 0.5 U/h after the answered cancel of the 1.2 U/h one awaited its answer: the state the host
+    /// saved before it went out has it pending. The next run keeps it unconfirmed - the old one ended at the cancel, final
+    /// from our estimate - and the reconnect's status showing it running has it reported from its start on: not taken for
+    /// a temp basal none of ours is, the old one not left to run on at its rate.
+    func testTempBasalAwaitingItsAnswerWhenTheAppWasKilledIsReportedOnceTheReconnectShowsIt() throws {
+        let tempBasal = runTempBasalOfOurs()
+        let atWrite = Locked<PumpManager.RawStateValue?>(nil)
+        link.script(CommandType.CANCEL_TEMP_BASAL, cancelAnswer())
+        link.script(CommandType.SET_TEMP_BASAL, .timeout) { [unowned self] in
+            atWrite.value = delegate.savedState
+        }
+        XCTAssertTrue(isUncertainDelivery(commandTempBasal(0.5, duration: 30 * Self.minute)))
+        settle()
+
+        let saved = try XCTUnwrap(atWrite.value, "nothing handed over before the write")
+        let pending = try XCTUnwrap(
+            (saved["pendingTempBasal"] as? PendingTempBasal.RawValue).flatMap(PendingTempBasal.init(rawValue:))
+        )
+        XCTAssertEqual(pending.unitsPerHour, 0.5)
+        XCTAssertEqual(pending.duration, 30 * Self.minute)
+        XCTAssertEqual(pending.sequenceAtSend, 131)
+        XCTAssertEqual(pending.priorSegmentStart, Self.ourEnd)
+        XCTAssertNotNil(pending.cancelledAt)
+        XCTAssertNil(pumpManager.state.pendingTempBasal, "cleared as its outcome came in")
+        XCTAssertNil(delegate.savedState?["pendingTempBasal"])
+
+        try restart(from: saved)
+
+        let unconfirmed = try XCTUnwrap(pumpManager.state.unconfirmedTempBasal)
+        XCTAssertNil(pumpManager.state.pendingTempBasal)
+        XCTAssertEqual(unconfirmed.value, 0.5)
+        XCTAssertEqual(unconfirmed.sentAt, pending.sentAt)
+        XCTAssertEqual(unconfirmed.confirmation, .uncertain)
+        XCTAssertEqual(pumpManager.state.basalDose.type, .basal, "the cancel ended the old one")
+        XCTAssertEqual(pumpManager.state.basalState, .tempBasal, "it may be running: the next temp basal cancels first")
+        XCTAssertTrue(pumpManager.status.deliveryIsUncertain)
+        XCTAssertEqual(uncertain.map(\.kind), [.tempBasal])
+        XCTAssertEqual(uncertain.first?.cause, .appRestarted)
+        XCTAssertEqual(uncertain.first?.phase, .notReported)
+        let ended = try XCTUnwrap(pumpManager.state.awaitingRecord.first { $0.startDate == tempBasal.startDate })
+        XCTAssertTrue(ended.isFinalized)
+        XCTAssertEqual(ended.observedEndDate, pending.cancelledAt)
+
+        // The reconnect: the patch runs it
+        link.deliverFullStatus(notification: newTempBasalRunning(), duringReconnect: true)
+        settle()
+
+        XCTAssertNil(pumpManager.state.unconfirmedTempBasal)
+        XCTAssertFalse(pumpManager.status.deliveryIsUncertain)
+        XCTAssertEqual(pumpManager.state.basalDose.value, 0.5)
+        XCTAssertEqual(pumpManager.state.basalDose.pumpStartTime, Self.ourEnd.addingTimeInterval(1))
+        // Then the full status's own
+        XCTAssertEqual(delegate.batches.count, 2)
+        let doses = delegate.batches.first?.events.compactMap(\.dose) ?? []
+        let old = doses.first { $0.startDate == tempBasal.startDate }
+        XCTAssertEqual(old?.isMutable, false)
+        XCTAssertEqual(old?.deliveredUnits ?? 0, 0.4, accuracy: 0.001, "by our estimate, to the cancel")
+        let new = doses.first { $0.type == .tempBasal && $0.unitsPerHour == 0.5 }
+        XCTAssertEqual(new?.isMutable, true)
+        XCTAssertEqual(delegate.errors.count, 0, "not taken for a temp basal none of ours is")
+    }
+
+    /// The same with nothing running before - no cancel: the set of 0.5 U/h over the schedule, the app killed before its
+    /// answer. The next run keeps it unconfirmed, and a status showing it running has it reported.
+    func testTempBasalOverTheScheduleAwaitingItsAnswerWhenTheAppWasKilledIsReportedOnceAStatusShowsIt() throws {
+        let state = activePatchState(patchId: 251, scheduledRate: 0.7, sequence: 130, reservoir: 150)
+        state.lastSegmentStart = Self.ourStart
+        alignPatchClock(state, patchTime: Self.ourEnd)
+        makeManager(state)
+
+        let atWrite = Locked<PumpManager.RawStateValue?>(nil)
+        link.script(CommandType.SET_TEMP_BASAL, .timeout) { [unowned self] in
+            atWrite.value = delegate.savedState
+        }
+        XCTAssertTrue(isUncertainDelivery(commandTempBasal(0.5, duration: 30 * Self.minute)))
+        settle()
+
+        let saved = try XCTUnwrap(atWrite.value, "nothing handed over before the write")
+        let pending = try XCTUnwrap(
+            (saved["pendingTempBasal"] as? PendingTempBasal.RawValue).flatMap(PendingTempBasal.init(rawValue:))
+        )
+        XCTAssertNil(pending.cancelledAt)
+
+        try restart(from: saved)
+        XCTAssertEqual(pumpManager.state.unconfirmedTempBasal?.value, 0.5)
+        XCTAssertEqual(pumpManager.state.basalDose.type, .basal)
+        XCTAssertTrue(pumpManager.status.deliveryIsUncertain)
+
+        link.notify(newTempBasalRunning())
+        settle()
+
+        XCTAssertNil(pumpManager.state.unconfirmedTempBasal)
+        XCTAssertEqual(pumpManager.state.basalDose.value, 0.5)
+        let reported = reports(of: .tempBasal)
+        XCTAssertEqual(reported.count, 1)
+        XCTAssertEqual(reported.first?.unitsPerHour ?? 0, 0.5, accuracy: 0.001)
+        XCTAssertEqual(reported.first?.isMutable, true)
+        XCTAssertEqual(delegate.errors.count, 0)
+    }
+
+    /// A SetTempBasal turned down, saved pending before it went out: off the saved state before it fails - a restart
+    /// from that runs nothing
+    func testRejectedSetLeavesNothingPending() throws {
+        makeManager(activePatchState(patchId: 251, scheduledRate: 0.7, sequence: 130, reservoir: 150))
+        let atWrite = Locked<PumpManager.RawStateValue?>(nil)
+        link.script(CommandType.SET_TEMP_BASAL, .failure(.invalidResponse(code: 8))) { [unowned self] in
+            atWrite.value = delegate.savedState
+        }
+        guard case .communication? = commandTempBasal(0.5, duration: 30 * Self.minute) else {
+            XCTFail("The set did not fail")
+            return
+        }
+        settle()
+
+        XCTAssertNotNil(atWrite.value?["pendingTempBasal"])
+        XCTAssertNil(pumpManager.state.pendingTempBasal)
+        XCTAssertNil(delegate.savedState?["pendingTempBasal"])
+        try restart(from: delegate.savedState)
+        XCTAssertNil(pumpManager.state.unconfirmedTempBasal)
+        XCTAssertFalse(pumpManager.status.deliveryIsUncertain)
+    }
+
+    /// A status showing a temp basal of 1.5 U/h no dose of ours is - none running, none sent, none unconfirmed, none
+    /// that ended - from after the latest segment known: what it delivers is counted nowhere. The host is warned of
+    /// uncertain delivery, once for the segment, and the settings say it is not counted.
+    func testTempBasalNoneOfOursAStatusShowsIsWarnedOfOnce() {
+        let state = activePatchState(patchId: 251, scheduledRate: 0.7, sequence: 130, reservoir: 150)
+        state.lastSegmentStart = Self.ourStart
+        alignPatchClock(state, patchTime: Self.ourEnd)
+        makeManager(state)
+
+        let unknown = PatchBytes.basalNotification(
+            type: .ABSOLUTE_TEMP,
+            sequence: 130,
+            patchId: 251,
+            start: Self.ourEnd.addingTimeInterval(-60),
+            rate: 1.5
+        )
+        link.notify(unknown)
+        settle()
+
+        XCTAssertEqual(uncertainDeliveryErrors, 1)
+        XCTAssertEqual(uncertain.map(\.kind), [.tempBasal])
+        XCTAssertEqual(uncertain.first?.cause, .unknownSegment)
+        XCTAssertEqual(uncertain.first?.phase, .settled(.notCounted))
+        XCTAssertEqual(pumpManager.state.uncertainDeliveries.first?.amount ?? 0, 1.5, accuracy: 0.001)
+        XCTAssertEqual(pumpManager.state.basalState, .tempBasal, "the next temp basal cancels first")
+        XCTAssertEqual(pumpManager.state.basalDose.type, .basal)
+
+        // Shown again, by a notification and a full status
+        link.notify(unknown)
+        link.deliverFullStatus(notification: unknown, duringReconnect: false)
+        settle()
+        XCTAssertEqual(uncertainDeliveryErrors, 1, "warned once")
+        XCTAssertEqual(uncertain.count, 1)
+        XCTAssertTrue(reports(of: .tempBasal).isEmpty)
+    }
+
+    /// The new temp basal's segment, shown while its set awaits its answer - the set being written - and the old one's,
+    /// shown after the new one runs: both ours, neither warned of
+    func testTempBasalsOfOursShownAsTheyChangeAreNotWarnedOf() {
+        let tempBasal = runTempBasalOfOurs()
+        link.script(CommandType.CANCEL_TEMP_BASAL, cancelAnswer())
+        link.script(CommandType.SET_TEMP_BASAL, .fragments(setAnswer()), thenNotify: [newTempBasalRunning()])
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+        XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
+        settle()
+        XCTAssertEqual(pumpManager.state.basalDose.value, 0.5)
+
+        link.notify(PatchBytes.basalNotification(type: .ABSOLUTE_TEMP, sequence: 130, patchId: 251, start: Self.ourStart, rate: 1.2))
+        settle()
+
+        XCTAssertEqual(delegate.errors.count, 0)
+        XCTAssertTrue(uncertain.isEmpty)
+        XCTAssertTrue(pumpManager.state.basalDose !== tempBasal)
+        XCTAssertEqual(pumpManager.state.basalDose.value, 0.5)
+    }
+
+    // MARK: - Held behind a temp basal's records
+
+    /// The patch suspends while 1.2 U/h runs - its status naming 131, the temp basal's record, read off the queue
+    /// statuses arrive on - and the app is killed during the read: the state saved then has the suspend running, its
+    /// report held back with the temp basal. The next run reports it after all, with the temp basal final from our
+    /// estimate: the resume that follows is never one with no suspend before it.
+    func testSuspendHeldBehindATempBasalsRecordIsReportedAfterARestartDuringTheRead() throws {
+        let tempBasal = try suspendRestartingDuringTheRead()
+
+        link.notify(PatchBytes.basalNotification(
+            type: .STANDARD,
+            sequence: 131,
+            patchId: 251,
+            start: Self.ourEnd.addingTimeInterval(300),
+            rate: 0.7
+        ))
+        settle()
+
+        let batches = delegate.batches.map { $0.events.compactMap(\.dose) }
+        let suspendAt = batches.firstIndex { $0.contains { $0.type == .suspend } }
+        let resumeAt = batches.firstIndex { $0.contains { $0.type == .resume } }
+        XCTAssertNotNil(suspendAt, "the suspend never reached the host")
+        XCTAssertNotNil(resumeAt)
+        XCTAssertLessThanOrEqual(suspendAt ?? .max, resumeAt ?? -1)
+        let doses = batches.joined()
+        XCTAssertEqual(doses.filter { $0.type == .suspend }.count, 1)
+        let suspend = doses.first { $0.type == .suspend }
+        let resume = doses.first { $0.type == .resume }
+        XCTAssertLessThan(suspend?.startDate ?? .distantFuture, resume?.startDate ?? .distantPast)
+        let final = doses.first { $0.type == .tempBasal && $0.startDate == tempBasal.startDate }
+        XCTAssertEqual(final?.isMutable, false)
+        XCTAssertEqual(final?.deliveredUnits ?? 0, 0.4, accuracy: 0.001, "by our estimate")
+        XCTAssertTrue(pumpManager.state.heldBasalDoses.isEmpty)
+    }
+
+    /// The same restart, its first batch one the host could not store: the suspend goes out again with the next, with
+    /// the temp basal's final - and is done with once the host stores them
+    func testSuspendHeldBehindATempBasalsRecordGoesOutAgainUntilTheHostStoresIt() throws {
+        let tempBasal = try suspendRestartingDuringTheRead()
+
+        delegate.batchReply = .fail(NSError(domain: "host", code: 1))
+        pumpManager.emitPumpEvents([])
+        settle()
+        XCTAssertEqual(pumpManager.state.heldBasalDoses.map(\.dose.type), [.suspend], "kept: the host did not store it")
+
+        delegate.batchReply = .acknowledge
+        pumpManager.emitPumpEvents([])
+        settle()
+
+        XCTAssertEqual(delegate.batches.count, 2)
+        for batch in delegate.batches {
+            let doses = batch.events.compactMap(\.dose)
+            XCTAssertEqual(doses.filter { $0.type == .suspend }.count, 1)
+            XCTAssertEqual(doses.first { $0.startDate == tempBasal.startDate }?.isMutable, false, "with the temp basal's final")
+        }
+        XCTAssertTrue(pumpManager.state.heldBasalDoses.isEmpty)
+        XCTAssertNil(delegate.savedState?["heldBasalDoses"])
+    }
+
+    /// The same restart, the host failing every batch for a day: what was held back after the temp basal is given up
+    /// on as an unconfirmed final is - not sent with every batch for good
+    func testHeldBackDosesTheHostNeverConfirmsAreGivenUpOnAsFinalsAre() throws {
+        try suspendRestartingDuringTheRead()
+
+        delegate.batchReply = .fail(NSError(domain: "host", code: 1))
+        pumpManager.emitPumpEvents([])
+        settle()
+        XCTAssertEqual(pumpManager.state.heldBasalDoses.map(\.dose.type), [.suspend])
+
+        advanceClock(by: MedtrumPumpManager.unconfirmedFinalMaximumAge + Self.minute)
+        pumpManager.emitPumpEvents([])
+        settle()
+
+        XCTAssertTrue(pumpManager.state.heldBasalDoses.isEmpty)
+        XCTAssertFalse(delegate.batches.last?.events.contains { $0.dose?.type == .suspend } ?? true)
+    }
+
+    /// What was held back goes out again with a batch sent while the one that carried it awaits its answer - as a matter
+    /// of course, not warned of. Once that one is not stored, it is.
+    func testHeldBackDoseSentAgainIsWarnedOfOnlyAfterABatchTheHostCouldNotStore() {
+        runTempBasalOfOurs()
+        MedtrumLogger.pumpManager = pumpManager
+        defer { MedtrumLogger.pumpManager = nil }
+        let resent = { [unowned self] in
+            delegate.logEntries.filter { $0.message.contains("Reporting again what followed a temp basal") }.count
+        }
+
+        delegate.batchReply = .hold
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+        link.notify(haltNotification(.suspended, at: Self.ourEnd, newestRecord: 131))
+        settle()
+        pumpManager.emitPumpEvents([])
+        settle()
+
+        XCTAssertEqual(delegate.batches.count, 2)
+        XCTAssertTrue(delegate.batches.allSatisfy { $0.events.contains { $0.dose?.type == .suspend } })
+        XCTAssertEqual(resent(), 0, "warned of while its batch awaited its answer")
+
+        delegate.releaseHeldBatches(error: NSError(domain: "host", code: 1))
+        settle()
+        pumpManager.emitPumpEvents([])
+        settle()
+
+        XCTAssertEqual(delegate.batches.last?.events.contains { $0.dose?.type == .suspend }, true)
+        XCTAssertEqual(resent(), 1)
+        delegate.releaseHeldBatches()
+        settle()
+    }
+
+    /// Killed during the read, restarted a day later: the temp basal's final from our estimate is fixed only now, and
+    /// the suspend held back with it goes out with it - not given up on for having been held a day ago
+    func testHeldBackDoseOfARestartADayAfterTheKillGoesOutWithItsTempBasalsFinal() throws {
+        let tempBasal = try suspendRestartingDuringTheRead(after: MedtrumPumpManager.unconfirmedFinalMaximumAge + Self.minute)
+
+        pumpManager.emitPumpEvents([])
+        settle()
+
+        let doses = delegate.batches.last?.events.compactMap(\.dose) ?? []
+        XCTAssertEqual(doses.first { $0.startDate == tempBasal.startDate }?.isMutable, false)
+        XCTAssertTrue(doses.contains { $0.type == .suspend }, "the suspend was given up on")
+        XCTAssertTrue(pumpManager.state.heldBasalDoses.isEmpty, "stored")
+    }
+
+    /// The wall clock drifts against the monotonic one - the one not frequency-corrected - half a second between each of
+    /// many statuses. A status of the old temp basal received before a suspend the user set, handled after it, is still
+    /// one from before the suspend: not warned of.
+    func testStatusFromBeforeASuspendIsStaleWhateverTheWallClockDrift() {
+        runTempBasalOfOurs()
+        // The wall clock half a second further behind with each
+        func deliver(_ hex: String, drift: Int, receivedAgo: TimeInterval = 0) {
+            let packet = NotificationPacket()
+            packet.totalData = FakeMedtrumLink.bytes(hex)
+            var status = packet.parseResponse()
+            status.receivedAt = status.receivedAt.addingTimeInterval(-receivedAgo - 0.5 * Double(drift))
+            status.receivedUptime += uptimeOffset.value - receivedAgo
+            link.onQueue {
+                self.pumpManager.handleStatus(status, duringReconnect: false, fullSync: false)
+            }
+        }
+        for drift in 0 ..< 12 {
+            deliver("200001" + "8200fb00", drift: drift)
+        }
+        settle()
+
+        pumpManager.state.basalDose = UnfinalizedDose(suspendStartTime: Date.now)
+        pumpManager.state.basalState = .suspended
+        deliver(
+            PatchBytes.basalNotification(type: .ABSOLUTE_TEMP, sequence: 130, patchId: 251, start: Self.ourStart, rate: 1.0),
+            drift: 12,
+            receivedAgo: 5
+        )
+        settle()
+
+        XCTAssertEqual(delegate.errors.count, 0)
+        XCTAssertTrue(uncertain.isEmpty)
+    }
+
+    /// The wall clock set back an hour after the scheduled basal began: a temp basal none of ours is, shown since, is
+    /// still warned of - not taken for a status from before that basal, by the wall clock alone
+    func testTempBasalNoneOfOursShownAfterTheWallClockWentBackIsWarnedOf() {
+        let state = activePatchState(patchId: 251, scheduledRate: 0.7, sequence: 130, reservoir: 150)
+        state.lastSegmentStart = Self.ourStart
+        state.basalDose = UnfinalizedDose(basalRate: 0.7, insulinType: nil, startDate: Date.now)
+        alignPatchClock(state, patchTime: Self.ourEnd)
+        makeManager(state)
+        confirmRecordSequence()
+
+        let packet = NotificationPacket()
+        packet.totalData = FakeMedtrumLink.bytes(PatchBytes.basalNotification(
+            type: .ABSOLUTE_TEMP,
+            sequence: 130,
+            patchId: 251,
+            start: Self.ourEnd.addingTimeInterval(-60),
+            rate: 1.5
+        ))
+        var status = packet.parseResponse()
+        status.receivedAt = status.receivedAt.addingTimeInterval(-Self.hour)
+        link.onQueue {
+            self.pumpManager.handleStatus(status, duringReconnect: false, fullSync: false)
+        }
+        settle()
+
+        XCTAssertEqual(uncertainDeliveryErrors, 1)
+        XCTAssertEqual(uncertain.first?.cause, .unknownSegment)
+    }
+
+    /// The patch splits 1.2 U/h at patch-local midnight, 10 min in, and an occlusion stops it later: its status names
+    /// 133, without the time of the halt - as the patch sends it. Its first half (131) ends at midnight, with success:
+    /// not where it ended, which is not known - read on, its second half (132) is the one the halt ended, and both make
+    /// its final. The alarm after them is left to the sync.
+    func testTempBasalSplitAtPatchMidnightAHaltEndedIsFinalizedFromBothHalvesWithNoTimeOfTheHalt() {
+        let tempBasal = runTempBasalOfOurs()
+        let midnight = Self.ourStart.addingTimeInterval(600)
+        pumpManager.state.patchUTCOffset = 24 * Self.hour - midnight.timeIntervalSince1970.truncatingRemainder(dividingBy: 24 * Self.hour)
+
+        link.script(CommandType.GET_RECORD, PatchBytes.basalRecord(
+            sequence: 131,
+            patchId: 251,
+            type: .ABSOLUTE_TEMP,
+            start: Self.ourStart,
+            end: midnight,
+            rate: 1.2,
+            delivered: 0.15
+        ))
+        link.script(CommandType.GET_RECORD, PatchBytes.basalRecord(
+            sequence: 132,
+            patchId: 251,
+            type: .ABSOLUTE_TEMP,
+            start: midnight,
+            end: Self.ourEnd,
+            rate: 1.2,
+            delivered: 0.15,
+            endReason: .STOP_OCCLUSION
+        ))
+        link.notify(haltNotification(.occlusion, at: nil, newestRecord: 133))
+        settle()
+
+        XCTAssertEqual(link.writtenCommands, [CommandType.GET_RECORD, CommandType.GET_RECORD])
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 132)
+        let final = finals(of: reports(of: .tempBasal).first { $0.startDate == tempBasal.startDate })
+        XCTAssertEqual(final.count, 1)
+        XCTAssertEqual(final.first?.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "both halves, not the first alone")
+    }
+
+    /// The state the host saves is taken in one step with what changes the doses: a save asked for while they change
+    /// waits for them, and has the change whole
+    func testStateIsSavedInOneStepWithWhatChangesTheDoses() {
+        runTempBasalOfOurs()
+        let saved = Locked<PumpManager.RawStateValue?>(nil)
+        let saving = DispatchSemaphore(value: 0)
+
+        pumpManager.withDoseReportLock {
+            DispatchQueue.global().async { [unowned self] in
+                saving.signal()
+                saved.value = pumpManager.rawState
+            }
+            saving.wait()
+            XCTAssertFalse(giveTime(timeout: 0.3) { saved.value != nil }, "saved while the doses changed")
+            pumpManager.state.basalDose = UnfinalizedDose(suspendStartTime: Date.now)
+        }
+
+        XCTAssertTrue(giveTime { saved.value != nil })
+        XCTAssertEqual(saved.value.map(MedtrumPumpState.init(rawValue:))?.basalDose.type, .suspend)
+    }
+
+    /// A status of the running temp basal received before a suspend the user just set, handled after it: the patch is
+    /// suspended - commands are refused - and it is not taken for a temp basal none of ours is
+    func testTempBasalStatusFromBeforeASuspendLeavesItSuspended() {
+        runTempBasalOfOurs()
+        pumpManager.state.basalDose = UnfinalizedDose(suspendStartTime: Date.now)
+        pumpManager.state.basalState = .suspended
+
+        notify(
+            PatchBytes.basalNotification(type: .ABSOLUTE_TEMP, sequence: 130, patchId: 251, start: Self.ourStart, rate: 1.2),
+            receivedAgo: 5
+        )
+
+        XCTAssertEqual(pumpManager.state.basalState, .suspended)
+        XCTAssertEqual(delegate.errors.count, 0)
+        XCTAssertTrue(uncertain.isEmpty)
+    }
+
+    /// The patch deactivated as 1.2 U/h runs - its temp basal final - and a late status of it after: the old patch's,
+    /// its session over, not a temp basal of this one none of ours is
+    func testOldPatchsTempBasalShownAfterItsSessionEndedIsNotWarnedOf() {
+        runTempBasalOfOurs()
+        pumpManager.forceDeactivatePatch()
+        settle()
+        let errors = delegate.errors.count
+
+        link.notify(PatchBytes.basalNotification(type: .ABSOLUTE_TEMP, sequence: 130, patchId: 251, start: Self.ourStart, rate: 1.2))
+        settle()
+
+        XCTAssertEqual(delegate.errors.count, errors)
+        XCTAssertFalse(uncertain.contains { $0.cause == .unknownSegment })
+        XCTAssertEqual(pumpManager.state.basalState, .suspended)
+    }
+
+    /// The patch suspends while 1.2 U/h runs - its status naming 131, the temp basal's record, read off the queue
+    /// statuses arrive on - and the app is killed during the read, restarting from the state saved then. Returns the
+    /// temp basal.
+    @discardableResult private func suspendRestartingDuringTheRead(after downtime: TimeInterval = 0) throws -> UnfinalizedDose {
+        let tempBasal = runTempBasalOfOurs()
+        let savedDuringRead = Locked<PumpManager.RawStateValue?>(nil)
+        link.script(CommandType.GET_RECORD, .fragments(recordOfOurTempBasal(delivered: 0.35))) { [unowned self] in
+            savedDuringRead.value = pumpManager.rawState
+        }
+        link.notify(haltNotification(.suspended, at: Self.ourEnd, newestRecord: 131))
+        settle()
+
+        // The run itself: one batch, the temp basal final from its record, then the suspend - none held any longer
+        XCTAssertEqual(delegate.batches.count, 1)
+        XCTAssertEqual(delegate.batches.first?.events.map(\.dose?.type), [.tempBasal, .suspend])
+        XCTAssertTrue(pumpManager.state.heldBasalDoses.isEmpty)
+        XCTAssertNil(delegate.savedState?["heldBasalDoses"])
+
+        // Killed during the read, restarted `downtime` later
+        advanceClock(by: downtime)
+        try restart(from: try XCTUnwrap(savedDuringRead.value))
+        XCTAssertEqual(pumpManager.state.basalDose.type, .suspend)
+        XCTAssertEqual(pumpManager.state.heldBasalDoses.map(\.dose.type), [.suspend])
+        return tempBasal
+    }
+
+    // MARK: - Read as it ends, over a slow link
+
+    /// 2026-10-18 05:55 (`logs1018/today.txt:9166`, patch 271): an occlusion while 1.2 U/h runs, its status - the
+    /// state and the newest record only, 133, no time of the halt, as the patch sends it - after the temp basal's own
+    /// record (131, ended by the occlusion) and two alarms. Its own read, ended by the halt, it is settled: the alarms
+    /// are left to the sync, and do not run the read out of time before the final is made.
+    func testTempBasalAnOcclusionEndedIsSettledByItsOwnRecordLeavingTheRecordsAfterItToTheSync() {
+        let tempBasal = runTempBasalOfOurs()
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35, endReason: .STOP_OCCLUSION))
+        link.notify(haltNotification(.occlusion, at: nil, newestRecord: 133))
+        settle()
+
+        XCTAssertEqual(link.writtenCommands, [CommandType.GET_RECORD])
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 131)
+        let final = finals(of: reports(of: .tempBasal).first { $0.startDate == tempBasal.startDate })
+        XCTAssertEqual(final.count, 1)
+        XCTAssertEqual(final.first?.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+        XCTAssertEqual(pumpManager.state.basalDose.type, .suspend)
+
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 132, patchId: 251))
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 133, patchId: 251))
+        syncRecords()
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 133)
+        XCTAssertEqual(finals(of: final.first).count, 1)
+    }
+
+    /// The patch split 1.2 U/h at patch-local midnight, 10 min in: the cancel names 132, its second half, and each record
+    /// takes 9 s to come back on a slow link. Both are read - the budget is two records' worth - and make its final.
+    func testTempBasalSplitAtPatchMidnightIsFinalizedFromBothHalvesOverASlowLink() {
+        let tempBasal = runTempBasalOfOurs()
+        let midnight = Self.ourStart.addingTimeInterval(600)
+        pumpManager.state.patchUTCOffset = 24 * Self.hour - midnight.timeIntervalSince1970.truncatingRemainder(dividingBy: 24 * Self.hour)
+
+        scriptCancelAndSet(cancelRecord: 132)
+        link.script(CommandType.GET_RECORD, .fragments(PatchBytes.basalRecord(
+            sequence: 131,
+            patchId: 251,
+            type: .ABSOLUTE_TEMP,
+            start: Self.ourStart,
+            end: midnight,
+            rate: 1.2,
+            delivered: 0.15
+        ))) { [unowned self] in
+            advanceClock(by: 9)
+        }
+        link.script(CommandType.GET_RECORD, .fragments(PatchBytes.basalRecord(
+            sequence: 132,
+            patchId: 251,
+            type: .ABSOLUTE_TEMP,
+            start: midnight,
+            end: Self.ourEnd,
+            rate: 1.2,
+            delivered: 0.15
+        ))) { [unowned self] in
+            advanceClock(by: 9)
+        }
+        XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
+        settle()
+
+        XCTAssertEqual(
+            link.writtenCommands,
+            [CommandType.CANCEL_TEMP_BASAL, CommandType.SET_TEMP_BASAL, CommandType.GET_RECORD, CommandType.GET_RECORD]
+        )
+        XCTAssertLessThanOrEqual(link.writes.last?.timeout ?? .infinity, MedtrumPumpManager.tempBasalEndRecordTimeout)
+        let final = delegate.batches.first?.events.first?.dose
+        XCTAssertEqual(final?.startDate, tempBasal.startDate)
+        XCTAssertEqual(final?.isMutable, false)
+        XCTAssertEqual(final?.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "from both halves, not 0.4 U by rate × duration")
+        XCTAssertEqual(final.map { $0.endDate.timeIntervalSince($0.startDate) } ?? 0, 20 * Self.minute, accuracy: 0.001)
+    }
+
+    // MARK: - Turned down
+
+    /// The basal state left active while a temp basal of ours runs - a status's write landing after the command's own:
+    /// the next set goes out without a cancel, and the patch turns it down. Nothing was cancelled: the temp basal runs
+    /// on, not ended at the rejection.
+    func testRejectedSetWithNoCancelLeavesTheTempBasalRunning() {
+        let tempBasal = runTempBasalOfOurs()
+        pumpManager.state.basalState = .active
+
+        link.script(CommandType.SET_TEMP_BASAL, .failure(.invalidResponse(code: 8)))
+        guard case .communication? = commandTempBasal(0.5, duration: 30 * Self.minute) else {
+            XCTFail("The set did not fail")
+            return
+        }
+        settle()
+
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_TEMP_BASAL])
+        XCTAssertTrue(pumpManager.state.basalDose === tempBasal)
+        XCTAssertFalse(tempBasal.isFinished)
+        XCTAssertEqual(delegate.batches.count, 0)
+    }
+
+    /// The cancel answered, the set turned down: the patch runs the schedule from the cancel - the temp basal before
+    /// ended there, final from the record the cancel named
+    func testRejectedSetAfterTheCancelEndsTheTempBasalAtTheCancel() {
+        let tempBasal = runTempBasalOfOurs()
+        link.script(CommandType.CANCEL_TEMP_BASAL, cancelAnswer())
+        link.script(CommandType.SET_TEMP_BASAL, .failure(.invalidResponse(code: 8)))
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+        guard case .communication? = commandTempBasal(0.5, duration: 30 * Self.minute) else {
+            XCTFail("The set did not fail")
+            return
+        }
+        settle()
+
+        XCTAssertEqual(delegate.batches.first?.events.map(\.dose?.type), [.tempBasal, .basal])
+        let final = delegate.batches.first?.events.first?.dose
+        XCTAssertEqual(final?.startDate, tempBasal.startDate)
+        XCTAssertEqual(final?.deliveredUnits ?? 0, 0.35, accuracy: 0.001)
+        XCTAssertEqual(pumpManager.state.basalDose.type, .basal)
+        XCTAssertEqual(pumpManager.state.basalState, .active)
+    }
+
+    /// The patch's notification that it halted delivery, in state `state`, naming `newestRecord` - of patch 251 - the
+    /// newest record written: with when it halted, `at`, as after a suspend we asked for - or without, nil, as the patch
+    /// sends one for a halt of its own (`logs1018/today.txt:9166`)
+    private func haltNotification(_ state: PatchState, at: Date?, newestRecord: Int) -> String {
+        let storage = UInt64(newestRecord).toData(length: 2) + UInt64(251).toData(length: 2)
+        guard let at else {
+            return (Data([state.rawValue, 0x00, 0x01]) + storage).hexEncodedString()
+        }
+        return (Data([state.rawValue, 0x01, 0x01]) + at.toMedtrumSeconds() + storage).hexEncodedString()
     }
 
     /// Where our temp basal started, on the patch clock, and where the cancel ended it 20 min later
@@ -2562,7 +3186,12 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         link.script(CommandType.SET_TEMP_BASAL, setAnswer(patchId: patchId, record: cancelRecord + 1))
     }
 
-    private func recordOfOurTempBasal(patchId: UInt64 = 251, sequence: Int = 131, delivered: Double) -> [String] {
+    private func recordOfOurTempBasal(
+        patchId: UInt64 = 251,
+        sequence: Int = 131,
+        delivered: Double,
+        endReason: BasalEndReason = .SUCCESS
+    ) -> [String] {
         PatchBytes.basalRecord(
             sequence: sequence,
             patchId: patchId,
@@ -2570,7 +3199,8 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
             start: Self.ourStart,
             end: Self.ourEnd,
             rate: 1.2,
-            delivered: delivered
+            delivered: delivered,
+            endReason: endReason
         )
     }
 
@@ -2707,12 +3337,12 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 118)
 
         // What the host is told: the temp basal before ended at the cancel, final from our estimate - 0.2 U/h × 10 min,
-        // floored - then the schedule, and nothing of the new one
+        // to the nearest 0.05 U - then the schedule, and nothing of the new one
         XCTAssertEqual(delegate.batches.count, 1)
         XCTAssertEqual(delegate.batches.first?.events.map(\.dose?.type), [.tempBasal, .basal])
         XCTAssertEqual(delegate.batches.first?.events.first?.dose?.startDate, previous.startDate)
         XCTAssertEqual(delegate.batches.first?.events.first?.dose?.isMutable, false)
-        XCTAssertEqual(delegate.batches.first?.events.first?.dose?.deliveredUnits ?? 1, 0, accuracy: 0.001)
+        XCTAssertEqual(delegate.batches.first?.events.first?.dose?.deliveredUnits ?? 1, 0.05, accuracy: 0.001)
         XCTAssertEqual(pumpManager.state.basalDose.type, .basal)
 
         // A sync reads it later: it changes nothing

@@ -529,6 +529,11 @@ extension MedtrumKitSettingsViewModel {
                 localized: "The patch session ended during the bolus.",
                 comment: "uncertain delivery cause: the patch session ended"
             )
+        case .unknownSegment:
+            cause = String(
+                localized: "A status showed the patch running a temp basal the app has no record of.",
+                comment: "uncertain delivery cause: a temp basal running that the app did not know of"
+            )
         }
 
         let status: String
@@ -622,6 +627,11 @@ extension MedtrumKitSettingsViewModel {
                 localized: "No longer tracked.",
                 comment: "uncertain delivery status: its dose no longer tracked"
             )
+        case .settled(.notCounted):
+            status = String(
+                localized: "Not counted: what it delivered is not known.",
+                comment: "uncertain delivery status: an unknown temp basal, not counted"
+            )
         }
 
         let advice: String?
@@ -645,6 +655,12 @@ extension MedtrumKitSettingsViewModel {
             advice = String(
                 localized: "Keep the phone near the patch: the next status settles it.",
                 comment: "uncertain delivery advice for a cancel"
+            )
+        case .settled(.notCounted):
+            isUncertain = true
+            advice = String(
+                localized: "Check the patch's basal. Setting or cancelling a temp basal from the app replaces it.",
+                comment: "uncertain delivery advice for an unknown temp basal"
             )
         case .awaitingRecord,
              .stillRunning,

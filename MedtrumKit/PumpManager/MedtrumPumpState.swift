@@ -79,6 +79,102 @@ public struct PendingBolus: RawRepresentable, Equatable {
     }
 }
 
+/// A SetTempBasal on its way to the patch, as `PendingBolus`: saved before it is written, gone once its outcome is in.
+/// Found in the state of a new run, it went out and the app was gone before its answer - the patch may be running it,
+/// and the cancel before it ended the temp basal running till then (`MedtrumPumpManager.takeOverPendingTempBasal`).
+public struct PendingTempBasal: RawRepresentable, Equatable {
+    public typealias RawValue = [String: Any]
+
+    public let unitsPerHour: Double
+    public let duration: TimeInterval
+    public let automatic: Bool
+    public let sentAt: Date
+    /// The newest record number known when it went out (`UnfinalizedDose.State.sequenceAtSend`)
+    public let sequenceAtSend: Int
+    /// The latest start of a segment the patch was known to run then, on its clock
+    /// (`UnfinalizedDose.State.priorSegmentStart`)
+    public let priorSegmentStart: Date?
+    /// When the answered cancel that went out first ended the temp basal running before it - nil, none went out
+    public let cancelledAt: Date?
+
+    public init(
+        unitsPerHour: Double,
+        duration: TimeInterval,
+        automatic: Bool,
+        sentAt: Date,
+        sequenceAtSend: Int,
+        priorSegmentStart: Date?,
+        cancelledAt: Date?
+    ) {
+        self.unitsPerHour = unitsPerHour
+        self.duration = duration
+        self.automatic = automatic
+        self.sentAt = sentAt
+        self.sequenceAtSend = sequenceAtSend
+        self.priorSegmentStart = priorSegmentStart
+        self.cancelledAt = cancelledAt
+    }
+
+    public init?(rawValue: RawValue) {
+        guard let unitsPerHour = rawValue["unitsPerHour"] as? Double, let duration = rawValue["duration"] as? TimeInterval,
+              let automatic = rawValue["automatic"] as? Bool, let sentAt = rawValue["sentAt"] as? Date,
+              let sequenceAtSend = rawValue["sequenceAtSend"] as? Int
+        else {
+            return nil
+        }
+        self.init(
+            unitsPerHour: unitsPerHour,
+            duration: duration,
+            automatic: automatic,
+            sentAt: sentAt,
+            sequenceAtSend: sequenceAtSend,
+            priorSegmentStart: rawValue["priorSegmentStart"] as? Date,
+            cancelledAt: rawValue["cancelledAt"] as? Date
+        )
+    }
+
+    public var rawValue: RawValue {
+        var raw: RawValue = [
+            "unitsPerHour": unitsPerHour,
+            "duration": duration,
+            "automatic": automatic,
+            "sentAt": sentAt,
+            "sequenceAtSend": sequenceAtSend
+        ]
+        raw["priorSegmentStart"] = priorSegmentStart
+        raw["cancelledAt"] = cancelledAt
+        return raw
+    }
+}
+
+/// A dose held back after a temp basal whose records are being read - see `MedtrumPumpState.heldBasalDoses` - and
+/// since when
+public struct HeldBasalDose {
+    public let dose: UnfinalizedDose
+    /// When it was held back: what its expiry counts from, as a final's does from when it was fixed - never before the
+    /// temp basal's final, fixed once it goes out, can expire
+    public let heldAt: Date
+
+    public init(dose: UnfinalizedDose, heldAt: Date) {
+        self.dose = dose
+        self.heldAt = heldAt
+    }
+
+    /// The dose's own raw value, with when it was held. Saved without it by the build before: held as it is read back.
+    init?(rawValue: UnfinalizedDose.RawValue, readAt: Date) {
+        guard let dose = UnfinalizedDose(rawValue: rawValue) else {
+            return nil
+        }
+        self.init(dose: dose, heldAt: rawValue["heldAt"] as? Date ?? readAt)
+    }
+
+    var rawValue: UnfinalizedDose.RawValue {
+        var raw = dose.rawValue
+        raw["heldAt"] = heldAt
+        return raw
+    }
+}
+
 /// A dose the driver could not be sure of - what the warning of uncertain delivery was about - for the settings
 /// screen: why, and, once it is final, how it was settled. Kept until the user clears it.
 public struct UncertainDelivery: RawRepresentable, Equatable {
@@ -101,6 +197,8 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
         case appRestarted
         /// The patch was deactivated during the bolus
         case patchDeactivated
+        /// A status showed the patch running a temp basal that is none of ours: one the app was gone before saving, say
+        case unknownSegment
     }
 
     public enum Outcome: String {
@@ -117,6 +215,8 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
         case final
         /// Its dose is no longer tracked
         case untracked
+        /// A temp basal the driver has no dose of, seen running: what it delivers is not counted
+        case notCounted
     }
 
     /// Where it is now, for a dose not settled taken from the state - see `MedtrumPumpState.phase(of:)`
@@ -313,6 +413,13 @@ public class MedtrumPumpState: RawRepresentable {
 
         // Absent in state written before boluses were saved ahead of their command: none
         pendingBolus = (rawValue["pendingBolus"] as? PendingBolus.RawValue).flatMap(PendingBolus.init(rawValue:))
+        // Absent in state written before temp basals were saved ahead of their command, or before what followed a temp
+        // basal being read was: none
+        pendingTempBasal = (rawValue["pendingTempBasal"] as? PendingTempBasal.RawValue).flatMap(PendingTempBasal.init(rawValue:))
+        let readAt = Date.now
+        heldBasalDoses = (rawValue["heldBasalDoses"] as? [UnfinalizedDose.RawValue] ?? []).compactMap {
+            HeldBasalDose(rawValue: $0, readAt: readAt)
+        }
 
         if let rawDoseEntry = rawValue["bolusDose"] as? UnfinalizedDose.RawValue {
             bolusDose = UnfinalizedDose(rawValue: rawDoseEntry)
@@ -386,6 +493,8 @@ public class MedtrumPumpState: RawRepresentable {
         useSilentTones = false
         lowReservoirWarning = nil
         pendingBolus = nil
+        pendingTempBasal = nil
+        heldBasalDoses = []
         bolusDose = nil
         unconfirmedTempBasal = nil
         awaitingRecordStorage = Locked([])
@@ -464,10 +573,16 @@ public class MedtrumPumpState: RawRepresentable {
         value["initialReservoir"] = initialReservoir
         // The running doses before the ones waiting: a dose is added to `awaitingRecord` before it stops being the
         // running one, so read in this order it is saved in one of them at least - see `init(rawValue:)`. The pending
-        // bolus first of all: it is cleared after its dose is registered.
+        // bolus and temp basal first of all: each is cleared after its dose is registered. What is held back after a
+        // temp basal being read after the running basal: kept before the dose that followed that temp basal runs. The
+        // manager saves the state under its `doseReportLock` besides (`MedtrumPumpManager.rawState`).
         value["pendingBolus"] = pendingBolus?.rawValue
+        value["pendingTempBasal"] = pendingTempBasal?.rawValue
         value["bolusDose"] = bolusDose?.rawValue
         value["basalDose"] = basalDose.rawValue
+        if !heldBasalDoses.isEmpty {
+            value["heldBasalDoses"] = heldBasalDoses.map(\.rawValue)
+        }
         value["unconfirmedTempBasal"] = unconfirmedTempBasal?.rawValue
         value["awaitingRecord"] = awaitingRecord.map(\.rawValue)
         value["uncertainDeliveries"] = uncertainDeliveries.map(\.rawValue)
@@ -628,6 +743,20 @@ public class MedtrumPumpState: RawRepresentable {
     /// step if there is one.
     public var pendingBolus: PendingBolus?
 
+    /// The SetTempBasal being written, saved - and handed to the host - before it goes out, as `pendingBolus`: an app
+    /// killed before its answer comes back with it here, and keeps it as a temp basal whose command went unanswered
+    /// (`MedtrumPumpManager.takeOverPendingTempBasal`). Cleared as its outcome is in, after its dose is in place if there
+    /// is one. Changed under `MedtrumPumpManager.doseReportLock`.
+    public var pendingTempBasal: PendingTempBasal?
+
+    /// What followed a temp basal whose records are being read - a suspend, a resume, the scheduled basal - its report
+    /// held back until the temp basal's final goes out (`MedtrumPumpManager.TempBasalEnd`), saved until the host
+    /// confirms storing a batch that carried it: an app killed meanwhile reports them after all, in its first batch,
+    /// with that temp basal final from our estimate - and a batch the host could not store has them go out again, with
+    /// that final. A temp basal that followed is not kept here: it runs, and goes out with every batch. Empty otherwise.
+    /// Changed under `MedtrumPumpManager.doseReportLock`.
+    public var heldBasalDoses: [HeldBasalDose]
+
     /// A temp basal whose command went out unanswered: kept here, unreported, until a status shows the patch running it
     /// - it then runs - or its record turns up - its final, or a part of it, then finalized from our estimate - or every
     /// record the patch told of 15 min past when it ended at the latest was read, none that could be its skipped -
@@ -752,7 +881,17 @@ public class MedtrumPumpState: RawRepresentable {
     // basalState is the basalState from the patch itself
     // Preventing acting on an out-dated basalDose
     public var basalState: BasalState
-    public var basalDose: UnfinalizedDose
+    public var basalDose: UnfinalizedDose {
+        didSet {
+            basalDoseSince = monotonicClock()
+        }
+    }
+
+    /// When `basalDose` was put in place in this run, on the manager's monotonic clock: a status received before then
+    /// says nothing of it. Nil for one read back with the state. Never saved: another run's monotonic clock is not ours.
+    var basalDoseSince: TimeInterval?
+    /// The manager's monotonic clock (`MedtrumPumpManager.uptime`) - only tests move it
+    var monotonicClock: () -> TimeInterval = { .continuousUptime }
     public var basalSchedule: BasalSchedule
 
     public var basalDeliveryState: PumpManagerStatus.BasalDeliveryState {
@@ -854,7 +993,9 @@ public class MedtrumPumpState: RawRepresentable {
             "* patchId: \(patchId.hexEncodedString())",
             "* recordSequence: \(syncedSequenceNumber)/\(currentSequenceNumber) (synced/pump)",
             "* awaitingRecord: \(awaitingRecord.map { "\($0.type.rawValue)@\($0.startDate)\($0.isFinalized ? " (final)" : "")" }.joined(separator: ", "))",
-            "* unconfirmedTempBasal: \(unconfirmedTempBasal.map { "\($0.value) U/h sent \($0.sentAt.map { "\($0)" } ?? "-")" } ?? "-")"
+            "* unconfirmedTempBasal: \(unconfirmedTempBasal.map { "\($0.value) U/h sent \($0.sentAt.map { "\($0)" } ?? "-")" } ?? "-")",
+            "* pendingTempBasal: \(pendingTempBasal.map { "\($0.unitsPerHour) U/h sent \($0.sentAt)" } ?? "-")",
+            "* heldBasalDoses: \(heldBasalDoses.map { "\($0.dose.type.rawValue)@\($0.dose.startDate)" }.joined(separator: ", "))"
         ].joined(separator: "\n")
     }
 }

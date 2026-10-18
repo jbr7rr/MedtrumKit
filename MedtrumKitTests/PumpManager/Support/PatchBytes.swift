@@ -39,10 +39,11 @@ enum PatchBytes {
         start: Date,
         end: Date,
         rate: Double,
-        delivered: Double
+        delivered: Double,
+        endReason: BasalEndReason = .SUCCESS
     ) -> [String] {
         var payload = start.toMedtrumSeconds() + end.toMedtrumSeconds()
-        payload += Data([type.rawValue, 0])
+        payload += Data([type.rawValue, endReason.rawValue])
         payload += steps(rate) + steps(delivered)
         payload += Data(count: 7)
         return answer(command: CommandType.GET_RECORD, body: recordHeader(type: 2, sequence: sequence, patchId: patchId) + payload)

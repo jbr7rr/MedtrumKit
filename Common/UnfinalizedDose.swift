@@ -621,6 +621,21 @@ public class UnfinalizedDose {
         }
     }
 
+    /// The completion the patch sends after a cancel, shown to be this bolus's own: raises its amount as
+    /// `raiseAfterEnd`, and confirms it if its command went unanswered - the patch says what it delivered of it, so it no
+    /// longer counts in full. Only once it ended, until its final. Returns whether it changed it.
+    @discardableResult func confirmAfterEnd(delivered: Double) -> Bool {
+        transition { state -> Bool in
+            guard state.isFinished, !state.isFinalized else {
+                return false
+            }
+            let raised = state.raiseAfterEnd(to: delivered)
+            let confirmed = state.confirmation != .confirmed
+            state.confirmation = .confirmed
+            return raised || confirmed
+        }
+    }
+
     /// Fixes the final report of this finished bolus or temp basal - once: returns false, changing nothing, if it has one.
     /// `deliveredUnits` nil: by our own estimate (`fallbackAmount`), taken in the same step. Only
     /// `MedtrumPumpManager.finalize` calls it, under `doseReportLock`.
@@ -848,8 +863,11 @@ public class UnfinalizedDose {
         return max(min(ended, estimatedEndDate), startDate)
     }
 
+    /// Its rate × how long it ran, in 0.05 U steps, to the nearest - not onto the table of rates, which would floor it and
+    /// cap it at the highest rate (a long temp basal delivers more than 30 U)
     private func estimatedTempBasalDelivery(until endDate: Date) -> Double {
-        roundBasalRate(value * (max(0, endDate.timeIntervalSince(startDate)) / .hours(1)))
+        let units = value * (max(0, endDate.timeIntervalSince(startDate)) / .hours(1))
+        return ((units / 0.05).rounded() * 0.05).rounded(toPlaces: 2)
     }
 
     private func bolusDoseEntry(isMutable: Bool, endDate: Date, deliveredUnits: Double?) -> DoseEntry {

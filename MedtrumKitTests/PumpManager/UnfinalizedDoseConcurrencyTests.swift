@@ -309,6 +309,22 @@ final class UnfinalizedDoseConcurrencyTests: XCTestCase {
 
     // MARK: - Persistence
 
+    /// A long temp basal finalized from our estimate: its rate × duration, in 0.05 U steps - 1.5 U/h for 24 h is 36 U,
+    /// not the 30 U the table of rates ends at - and to the nearest step
+    func testTempBasalEstimateIsNotCappedAtTheHighestRate() {
+        let day = UnfinalizedDose(tempRate: 1.5, duration: .minutes(24 * 60), insulinType: nil, automatic: false, startDate: t0)
+        let end = t0.addingTimeInterval(.minutes(24 * 60))
+        day.finish(.completed, endedAt: end, at: end)
+        XCTAssertEqual(day.fallbackDeliveredUnits, 36, accuracy: 0.0001)
+        XCTAssertTrue(day.finalize(deliveredUnits: nil, at: end))
+        XCTAssertEqual(day.finalEvent?.dose?.deliveredUnits ?? 0, 36, accuracy: 0.0001)
+
+        // 0.6 U/h for 897 s: 0.1495 U
+        let short = UnfinalizedDose(tempRate: 0.6, duration: .minutes(30), insulinType: nil, automatic: true, startDate: t0)
+        short.finish(.cancelled, endedAt: t0.addingTimeInterval(897), at: t0.addingTimeInterval(897))
+        XCTAssertEqual(short.fallbackDeliveredUnits, 0.15, accuracy: 0.0001)
+    }
+
     /// Our estimate of a temp basal whose records were not read: the last status of its segment, and its rate since -
     /// within [what that status showed, rate × duration], in 0.05 U steps - else, or once restarted, rate × duration
     func testTempBasalEstimateGoesFromTheLastStatusOfItsSegment() throws {

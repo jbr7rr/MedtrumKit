@@ -401,13 +401,24 @@ enum RecordSyncer {
 
                     store.setStatus(.syncing(sequence: sequence, upTo: last))
 
-                    switch readOnce(sequence, patchId: patchId, pumpManager: pumpManager, timeout: left) {
+                    let timeout = min(left, MedtrumPumpManager.tempBasalEndRecordTimeout)
+                    switch readOnce(sequence, patchId: patchId, pumpManager: pumpManager, timeout: timeout) {
                     case let .record(response):
                         guard response.sequence == sequence, isSamePatch(response.patchId, patchId.toUInt64()) else {
                             unread = "record \(sequence) came back as \(response.sequence) of patch \(response.patchId)"
                             break reading
                         }
                         records.append(response)
+
+                        // Its own records read, adding up to where it is shown to have ended: the ones after them say
+                        // nothing of it - left to the sync
+                        if sequence < last, pumpManager.settlesTempBasalEnd(ending, records: records) {
+                            logger.info(
+                                "Record(s) up to \(sequence) settle the temp basal of \(ending.dose.startDate), " +
+                                    "\(sequence + 1)...\(last) are left to the sync"
+                            )
+                            break reading
+                        }
 
                     case let .bad(problem):
                         unread = "record \(sequence): \(problem)"
