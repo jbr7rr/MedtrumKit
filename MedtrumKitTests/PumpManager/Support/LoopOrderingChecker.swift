@@ -27,15 +27,19 @@ import LoopKit
 ///    there from LoopKit, line by line: a 0-s scheduled basal moves nothing, a dose after a gap moves it to its start.
 ///
 /// And two iAPS needs kept, which Loop does not - oref0's `iob/history` (`FreeAPS/Resources/javascript/bundle/
-/// oref0-bridge.js`) pairs a suspend with the first resume strictly later than it, both as iAPS stores them: to the
-/// second, floored (`PumpHistoryEvent`, `truncatedToSecond`) - a resume in its suspend's second is not later:
-/// 7. No resume is stored before a suspend starting earlier than it - in that batch, or one before. A history whose
-///    earliest resume comes no later than its earliest suspend - or that has no suspend - was suspended since before it
-///    begins: with `suspend_zeros_iob` it zeroes every temp basal before that resume, and the scheduled basal from 8 h
-///    back ("suspended prior to history block").
-/// 8. The patch delivering once the batches are in (`finish(delivering:)`), no suspend stored is left with no resume
-///    stored strictly later: open, it runs to now, every temp basal after it zeroed ("suspended past end of history
-///    block").
+/// oref0-bridge.js`), simulated on what is stored after each batch (`oref0Pairing`): it sorts the suspends and the
+/// resumes, both as iAPS stores them - to the second, floored (`PumpHistoryEvent`, `truncatedToSecond`) - and pairs each
+/// suspend in turn with the first resume strictly later than it, the resume pointer moving forward only and never past
+/// the one it paired: a resume in its suspend's second is not later, and two suspends with none between pair with one.
+/// The first suspend left with none is open - suspended up to now - and those after it are dropped.
+/// 7. The pairing as stored, in that batch or after one before, is the patch's: no resume earlier than the first suspend,
+///    or with no suspend - suspended since before the history begins: with `suspend_zeros_iob` every temp basal before
+///    that resume zeroed, and the scheduled basal from 8 h back ("suspended prior to history block") - nor a resume no
+///    suspend pairs with - in its suspend's second, say, that suspend paired with a later one, or left open - nor a
+///    suspend paired with a resume later than the next suspend: what the patch delivered between them zeroed (a resume
+///    lost between them, or in the first one's second).
+/// 8. The patch delivering once the batches are in (`finish(delivering:)`), no suspend stored is left open: it runs to
+///    now, every temp basal after it zeroed ("suspended past end of history block").
 /// `iAPSRules` are checked on their own where the rest are not - see `MedtrumManagerTestCase.checksLoopOrdering`.
 struct LoopOrderingChecker {
     /// The rules iAPS needs kept
@@ -75,10 +79,9 @@ struct LoopOrderingChecker {
     private var mutableDurations: [Data: TimeInterval] = [:]
     /// What the host holds wrong stays wrong in every batch after: told once
     private var told: Set<String> = []
-    /// The earliest and the latest start of a suspend stored, and the latest of a resume
-    private var earliestSuspend: Date?
-    private var latestSuspend: Date?
-    private var latestResume: Date?
+    /// The suspends and the resumes stored, by identity, as iAPS stores them - see `stored`
+    private var suspends: [Data: Date] = [:]
+    private var resumes: [Data: Date] = [:]
 
     private(set) var violations: [Violation] = []
 
@@ -86,8 +89,10 @@ struct LoopOrderingChecker {
     /// `suspendedSince` before them, if given - and after them, the patch delivering or not, if told (rule 8)
     static func violations(in batches: [Batch], suspendedSince: Date? = nil, delivering: Bool? = nil) -> [Violation] {
         var checker = LoopOrderingChecker()
-        checker.earliestSuspend = suspendedSince.map(stored)
-        checker.latestSuspend = suspendedSince.map(stored)
+        if let suspendedSince {
+            // By the identity a suspend reported then has: the same one, stored again, is not another
+            checker.suspends[NewPumpEvent.suspend(dose: DoseEntry(suspendDate: suspendedSince)).raw] = stored(suspendedSince)
+        }
         batches.forEach { checker.apply($0) }
         if let delivering {
             checker.finish(delivering: delivering)
@@ -97,13 +102,13 @@ struct LoopOrderingChecker {
 
     /// The batches are in, the patch `delivering` or not: rule 8
     mutating func finish(delivering: Bool) {
-        guard delivering, let latestSuspend, !(latestResume.map { $0 > latestSuspend } ?? false) else {
+        guard delivering, let open = Self.oref0Pairing(suspends: Array(suspends.values), resumes: Array(resumes.values)).open else {
             return
         }
         fail(
             8,
-            "the suspend of \(latestSuspend) is stored with no resume after it, the patch delivering: iAPS takes it to run " +
-                "to now, and zeroes every temp basal after it"
+            "the suspend of \(open) is stored with no resume after it, the patch delivering: iAPS takes it to run to now, " +
+                "and zeroes every temp basal after it"
         )
     }
 
@@ -152,7 +157,7 @@ struct LoopOrderingChecker {
 
         checkWatermark()
         checkAlignment()
-        checkResumes(doses.map(\.dose))
+        checkResumes(doses)
     }
 
     /// `date` as iAPS stores a pump event's: to the second, floored
@@ -160,22 +165,64 @@ struct LoopOrderingChecker {
         Date(timeIntervalSinceReferenceDate: date.timeIntervalSinceReferenceDate.rounded(.down))
     }
 
-    private mutating func checkResumes(_ doses: [DoseEntry]) {
-        let suspends = doses.filter { $0.type == .suspend }.map { Self.stored($0.startDate) }
-        if let earliest = suspends.min(), let latest = suspends.max() {
-            earliestSuspend = min(earliestSuspend ?? earliest, earliest)
-            latestSuspend = max(latestSuspend ?? latest, latest)
+    /// oref0's pairing of `suspends` with `resumes`, as stored - see rule 7: each suspend paired, in order, with its
+    /// resume - up to the first left open, if any - and the resumes no suspend paired with
+    static func oref0Pairing(suspends: [Date], resumes: [Date]) -> (paired: [(suspend: Date, resume: Date)], open: Date?, unpaired: [Date]) {
+        let suspends = suspends.sorted()
+        let resumes = resumes.sorted()
+        var paired: [(suspend: Date, resume: Date)] = []
+        var used = Set<Int>()
+        var next = 0
+        for suspend in suspends {
+            while next < resumes.count, !(resumes[next] > suspend) {
+                next += 1
+            }
+            guard next < resumes.count else {
+                return (paired, suspend, resumes.indices.filter { !used.contains($0) }.map { resumes[$0] })
+            }
+            paired.append((suspend, resumes[next]))
+            used.insert(next)
         }
-        if let resume = doses.filter({ $0.type == .resume }).map({ Self.stored($0.startDate) }).max() {
-            latestResume = max(latestResume ?? resume, resume)
+        return (paired, nil, resumes.indices.filter { !used.contains($0) }.map { resumes[$0] })
+    }
+
+    private mutating func checkResumes(_ doses: [(raw: Data, dose: DoseEntry)]) {
+        for (raw, dose) in doses {
+            switch dose.type {
+            case .suspend:
+                suspends[raw] = Self.stored(dose.startDate)
+            case .resume:
+                resumes[raw] = Self.stored(dose.startDate)
+            default:
+                break
+            }
         }
-        // Strictly: one at the same instant is not paired with it
-        for resume in doses where resume.type == .resume && !(earliestSuspend.map { $0 < Self.stored(resume.startDate) } ?? false) {
+        let suspends = Array(self.suspends.values).sorted()
+        let resumes = Array(self.resumes.values).sorted()
+        guard !resumes.isEmpty else {
+            return
+        }
+
+        let pairing = Self.oref0Pairing(suspends: suspends, resumes: resumes)
+        if let first = resumes.first, suspends.first.map({ first < $0 }) ?? true {
             fail(
                 7,
-                "the resume of \(resume.startDate) is stored with no suspend in an earlier second: with none, iAPS takes " +
-                    "the patch suspended since before its history, and zeroes the basal before the resume - with one in " +
-                    "its second only, it leaves that one open (rule 8)"
+                "the resume of \(first) is stored with no suspend before it: iAPS takes the patch suspended since before its " +
+                    "history, and zeroes the basal before the resume"
+            )
+        }
+        for resume in pairing.unpaired where suspends.first.map({ $0 <= resume }) ?? false {
+            fail(
+                7,
+                "the resume of \(resume) is paired with no suspend - in its suspend's second, as iAPS stores them: that " +
+                    "suspend is paired with a later resume, or left open"
+            )
+        }
+        for (index, pair) in pairing.paired.enumerated() where index + 1 < suspends.count && pair.resume > suspends[index + 1] {
+            fail(
+                7,
+                "the suspend of \(pair.suspend) is paired with the resume of \(pair.resume), past the next suspend of " +
+                    "\(suspends[index + 1]): what was delivered between them zeroed"
             )
         }
     }

@@ -166,6 +166,9 @@ public class UnfinalizedDose {
         /// out - the one a later command's answer reports, or one a status shows - on the patch clock: a segment of this
         /// temp basal started before it, and if it ran at all it ended by then
         public fileprivate(set) var laterSegmentStart: Date?
+        /// Of a temp basal whose command went unanswered: a status showed its segment, from this start on the patch
+        /// clock - late, the segment over by then: it ran, and its record settles it
+        public fileprivate(set) var shownRunningFrom: Date?
         /// A cancel of this temp basal went out and no answer came back: the patch may have stopped it
         public fileprivate(set) var stopUnansweredAt: Date?
         /// Of a temp basal whose command went unanswered: the start of the basal the host was told ran when it went out -
@@ -385,6 +388,7 @@ public class UnfinalizedDose {
         state.possibleRecord = rawValue["possibleRecord"] as? Int
         state.priorSegmentStart = rawValue["priorSegmentStart"] as? Date
         state.laterSegmentStart = rawValue["laterSegmentStart"] as? Date
+        state.shownRunningFrom = rawValue["shownRunningFrom"] as? Date
         state.stopUnansweredAt = rawValue["stopUnansweredAt"] as? Date
         state.basalBefore = rawValue["basalBefore"] as? Date
         state.basalBeforeOnPatch = rawValue["basalBeforeOnPatch"] as? Date
@@ -441,6 +445,7 @@ public class UnfinalizedDose {
         raw["possibleRecord"] = state.possibleRecord
         raw["priorSegmentStart"] = state.priorSegmentStart
         raw["laterSegmentStart"] = state.laterSegmentStart
+        raw["shownRunningFrom"] = state.shownRunningFrom
         raw["stopUnansweredAt"] = state.stopUnansweredAt
         raw["basalBefore"] = state.basalBefore
         raw["basalBeforeOnPatch"] = state.basalBeforeOnPatch
@@ -518,6 +523,14 @@ public class UnfinalizedDose {
     func noteLaterSegment(startingAt start: Date) {
         transition { state in
             state.laterSegmentStart = min(state.laterSegmentStart ?? start, start)
+        }
+    }
+
+    /// A status showed the segment of this unanswered temp basal from `start` - late: see `State.shownRunningFrom`. The
+    /// first one shown is kept.
+    func noteShownRunning(from start: Date) {
+        transition { state in
+            state.shownRunningFrom = state.shownRunningFrom ?? start
         }
     }
 

@@ -167,6 +167,7 @@ enum RecordSyncer {
         defer { end() }
 
         let syncedBefore = state.syncedSequenceNumber
+        let currentBefore = state.currentSequenceNumber
 
         // A bolus record is only written once the bolus is over, and while it runs the link belongs to its
         // notifications - and to a cancel. The before-stop read runs inside the stop command.
@@ -174,6 +175,11 @@ enum RecordSyncer {
             logger.debug("Not reading records (\(trigger.rawValue)): a bolus is running")
         } else if trigger != .beforeStop, pumpManager.isCommandActive {
             logger.debug("Not reading records (\(trigger.rawValue)): a command is in flight")
+            // Turned away, it read nothing: no run of the cooldown's - a bolus's command, its answer naming the record,
+            // would have the dose wait a minute for it. The next heartbeat tries again.
+            if trigger == .awaitingDoses {
+                runState.mutate { $0.lastAwaitingDosesRun = .distantPast }
+            }
         } else {
             // A temp basal that ended has its records read first: read here, they would make no final of it
             _ = pumpManager.withCommandLockIfFree {
@@ -181,7 +187,7 @@ enum RecordSyncer {
                     MedtrumPumpManager.tempBasalEndReadBudget
                 ))
             }
-            readNewRecords(pumpManager: pumpManager, trigger: trigger, through: through)
+            let failed = readNewRecords(pumpManager: pumpManager, trigger: trigger, through: through)
 
             // Read up to the temp basals' last records - matched as theirs no further. A bolus's after them, the loop's
             // right behind the temp basal, is read on now, as a heartbeat's sync would: one would come a minute later at
@@ -190,6 +196,18 @@ enum RecordSyncer {
             if trigger == .tempBasalEnds, let through, state.syncedSequenceNumber >= through, pumpManager.awaitsRecordsWritten {
                 logger.info("Reading on past record \(through), for the doses waiting on theirs")
                 readNewRecords(pumpManager: pumpManager, trigger: .tempBasalEnds, through: nil)
+            }
+
+            // A bolus's answer named its record past the newest the patch had told of as this run began - its completion
+            // came with the record before it, the heartbeat naming its own a moment later (device 2026-10-20 00:52:56):
+            // unread, it is no run of the cooldown's, and the next heartbeat reads it, not one a minute later. So for a
+            // run stopped short of it by a command taking the link, or by the run's cap: not one stopped by a read
+            // failing - that waits for the cooldown.
+            if trigger == .awaitingDoses, !failed, let named = pumpManager.newestRecordNamedForAwaitingDose,
+               named > currentBefore, named > state.syncedSequenceNumber
+            {
+                logger.info("Record \(named), named by the answer of a dose waiting on it, was not told of yet: the next heartbeat reads it")
+                runState.mutate { $0.lastAwaitingDosesRun = .distantPast }
             }
         }
 
@@ -218,15 +236,15 @@ enum RecordSyncer {
 
     /// Reads forward from the cursor, reconciling each record. AndroidAPS's policy: a lost link or a timeout ends the
     /// run, the record is read again next time; an unreadable record is asked for once more and then skipped; two
-    /// skipped in a row end the run.
-    private static func readNewRecords(pumpManager: MedtrumPumpManager, trigger: Trigger, through: Int?) {
+    /// skipped in a row end the run. Returns whether the run ended so - on a read failing.
+    @discardableResult private static func readNewRecords(pumpManager: MedtrumPumpManager, trigger: Trigger, through: Int?) -> Bool {
         let state = pumpManager.state
         let current = state.currentSequenceNumber
         let patchId = state.patchId
 
         guard current > 0 else {
             logger.debug("No record sequence known yet, nothing to sync")
-            return
+            return false
         }
 
         // `currentSequenceNumber` is the last record the patch has *written*, and it is complete: a
@@ -242,13 +260,13 @@ enum RecordSyncer {
         let synced = state.syncedSequenceNumber
         guard synced < current else {
             logger.debug("Records up to date (sequence \(current))")
-            return
+            return false
         }
 
         let last = min(current, synced + trigger.maxRecords, through ?? .max)
         guard synced < last else {
             logger.debug("Records up to \(last) read already")
-            return
+            return false
         }
         logger.info("Syncing records \(synced + 1)...\(last) (patch is at \(current), \(trigger.rawValue))")
 
@@ -261,7 +279,7 @@ enum RecordSyncer {
             // They share the link: whatever is left is read next time
             if trigger != .beforeStop, pumpManager.isCommandActive || state.bolusDose != nil {
                 logger.info("Stopping at record \(sequence), a command needs the link")
-                return
+                return false
             }
 
             // The cursor can run ahead of this loop, following a record that came back with a later number
@@ -272,7 +290,7 @@ enum RecordSyncer {
             // The session ended meanwhile: its records are moot
             guard state.patchId == patchId else {
                 logger.warning("The patch session changed during the record sync, stopping")
-                return
+                return false
             }
 
             store.setStatus(.syncing(sequence: sequence, upTo: last))
@@ -291,26 +309,26 @@ enum RecordSyncer {
             }
             guard let result = result ?? nil else {
                 logger.info("Stopping at record \(sequence), a command holds the link")
-                return
+                return false
             }
 
             // The session ended while it was read - a base reset, a stop: not this session's to keep
             guard state.patchId == patchId else {
                 logger.warning("The patch session changed while record \(sequence) was read, stopping")
-                return
+                return false
             }
 
             switch result {
             case let .linkLost(error):
                 logger.warning("Aborting record sync at \(sequence): \(error.errorDescription)")
                 store.setStatus(.failed("Aborted at \(sequence): \(error.errorDescription)"))
-                return
+                return true
 
             case let .bad(problem) where trigger == .tempBasalEnds:
                 // Asked for once only: the next sync asks again, and skips it if it has to
                 logger.warning("Stopping at record \(sequence), unreadable: \(problem)")
                 store.setStatus(.failed("Record \(sequence): \(problem)"))
-                return
+                return true
 
             case let .bad(problem):
                 badInARow += 1
@@ -324,7 +342,7 @@ enum RecordSyncer {
 
                 if badInARow >= maxBadRecordsInARow {
                     logger.error("Giving up on record sync after \(badInARow) bad records in a row")
-                    return
+                    return true
                 }
 
             case let .record(response):
@@ -336,6 +354,8 @@ enum RecordSyncer {
         if last < current {
             logger.info("Stopped at \(last), \(current - last) records left for the next sync")
         }
+
+        return false
     }
 
     /// Reconciles a record read off the patch - unless it was applied already (`outcome`) - stores it for the debug

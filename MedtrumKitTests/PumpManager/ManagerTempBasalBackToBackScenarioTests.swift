@@ -918,7 +918,8 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
     // MARK: - Reading after the command
 
     /// A suspend command after a chain, its status not in: no record of the running one's end is known, but the command
-    /// was answered - the chain's records are read in it, the running one goes final from our estimate
+    /// was answered - the chain's records are read in it, up to 132, the newest told of before it - the running one's
+    /// end among them, had the patch ended it unseen - and the running one goes final from our estimate
     func testSuspendCommandAfterAChainReadsItsRecords() throws {
         runFirst()
         scriptReplacement(of: 1)
@@ -928,6 +929,9 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
 
         link.script(CommandType.SUSPEND_PUMP, fragments: "071c050000001800")
         link.script(CommandType.GET_RECORD, recordOfFirst(delivered: 0.35))
+        link.script(CommandType.GET_RECORD, PatchBytes.basalRecord(
+            sequence: 132, patchId: Self.patchId, type: .STANDARD, start: Self.end1, end: Self.end1.addingTimeInterval(1), rate: 0.7, delivered: 0
+        ))
         XCTAssertNil(commandSuspend())
         settle()
 
@@ -1211,7 +1215,8 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(batch[0].deliveredUnits ?? 0, 0.2, accuracy: 0.001, line: line)
     }
 
-    /// A resume, its answer naming the segment the patch resumed with: 0.2 U by our estimate, 1.2 U/h × 600 s
+    /// A resume, its answer naming the segment the patch resumed with, and 131 the newest record: the temp basal's, written
+    /// as the patch suspended unseen - read in the command, 0.15 U from it, not 0.2 U by our estimate, 1.2 U/h × 600 s
     func testTempBasalAResumeEndedEndsWhereTheResumeStartedWithThePatchClockAnHourAhead() throws {
         try assertResumeEndsItWhereTheResumeStarted(patchAhead: 3600)
     }
@@ -1225,6 +1230,10 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
         link.script(CommandType.RESUME_PUMP, PatchBytes.segmentAnswer(
             command: CommandType.RESUME_PUMP, type: .STANDARD, rate: 0.7, sequence: 131, patchId: Self.patchId, start: Self.stoppedAt
         ))
+        link.script(CommandType.GET_RECORD, PatchBytes.basalRecord(
+            sequence: 131, patchId: Self.patchId, type: .ABSOLUTE_TEMP, start: Self.start1, end: Self.stoppedAt, rate: 1.2,
+            delivered: 0.15, endReason: .SUSPEND_MANUAL
+        ))
         XCTAssertNil(commandResume(), line: line)
         settle()
 
@@ -1232,7 +1241,7 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(batch.map(\.type), [.tempBasal, .basal], "the schedule after it: no suspend was reported", line: line)
         XCTAssertEqual(batch[0].endDate.timeIntervalSince(first.startDate), 600, accuracy: 0.001, line: line)
         XCTAssertEqual(batch[0].endDate, batch[1].startDate, line: line)
-        XCTAssertEqual(batch[0].deliveredUnits ?? 0, 0.2, accuracy: 0.001, line: line)
+        XCTAssertEqual(batch[0].deliveredUnits ?? 0, 0.15, accuracy: 0.001, "from its record", line: line)
     }
 
     // MARK: - Loop's watermark
@@ -1537,7 +1546,8 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
             [tempBasal(600, 900, rate: 0.5, mutable: false)],
             [tempBasal(800, 2600, rate: 1.2, mutable: true)]
         ]), [1, 2, 6])
-        // 7: a resume with no suspend before it - stored ahead of it, or with none; one in the same batch is fine
+        // 7: oref0's pairing broken - a resume with no suspend before it, stored ahead of it or with none (one in the
+        // same batch is fine), one no suspend pairs with, or a suspend paired with a resume past the next suspend
         func suspend(_ at: TimeInterval) -> NewPumpEvent {
             NewPumpEvent.suspend(dose: DoseEntry(suspendDate: t0.addingTimeInterval(at)))
         }
@@ -1552,6 +1562,14 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(rules([[suspend(300.2), resume(300.7)]]), [7], "in the same second, as iAPS stores them: not paired")
         XCTAssertEqual(rules([[suspend(300.7), resume(301.2)]]), [], "in the next second")
         XCTAssertEqual(Set(LoopOrderingChecker.violations(in: [LoopOrderingChecker.Batch(events: [resume(600)])], suspendedSince: t0).map(\.rule)), [])
+        // Not only the earliest suspend and the latest: S1 and R1 in one second, between S0/R0 and S2/R2 - oref0 pairs S1
+        // with R2, past S2, R1 with none: what ran from R1 to S2 zeroed. The same with R1 lost.
+        XCTAssertEqual(rules([[suspend(300), resume(600)], [suspend(900.2), resume(900.7)], [suspend(1200), resume(1500)]]), [7])
+        XCTAssertEqual(rules([[suspend(300), resume(600)], [suspend(900)], [suspend(1200), resume(1500)]]), [7])
+        XCTAssertEqual(rules([[suspend(300), resume(600)], [suspend(900.7), resume(901.2)], [suspend(1200), resume(1500)]]), [])
+        XCTAssertEqual(rules([[suspend(300), resume(600)], [suspend(900), resume(1200)]]), [])
+        // A suspend in its resume's second - the patch suspended again at once - is paired with the next resume: fine
+        XCTAssertEqual(rules([[suspend(300), resume(600.2)], [suspend(600.7)], [resume(900)]]), [])
         // 8: the patch delivering, a suspend with no resume strictly after it
         func rulesDelivering(_ batches: [[NewPumpEvent]], _ delivering: Bool = true, suspendedSince: Date? = nil) -> Set<Int> {
             Set(LoopOrderingChecker.violations(
@@ -1564,7 +1582,11 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(rulesDelivering([[suspend(300.2), resume(300.7)]]), [7, 8], "in the same second: left open")
         XCTAssertEqual(rulesDelivering([[suspend(300.7), resume(301.2)]]), [])
         XCTAssertEqual(rulesDelivering([[suspend(300), resume(600)], [suspend(900)]]), [8])
-        XCTAssertEqual(rulesDelivering([[suspend(300)], [suspend(900), resume(1200)]]), [], "both paired with the one resume")
+        XCTAssertEqual(rulesDelivering([[suspend(300), resume(600)], [suspend(900.2), resume(900.7)]]), [7, 8], "S1 in R1's second: open")
+        // Both paired with the one resume: right only if the patch never resumed between them - a resume lost there
+        // looks the same
+        XCTAssertEqual(rulesDelivering([[suspend(300)], [suspend(900), resume(1200)]]), [7])
+        XCTAssertEqual(rulesDelivering([[suspend(300)], [suspend(900)]]), [8], "the first left open, the second dropped")
         XCTAssertEqual(rulesDelivering([[resume(600)]], suspendedSince: t0), [])
         XCTAssertEqual(rulesDelivering([[tempBasal(0, 600, rate: 1.2, mutable: true)]], suspendedSince: t0), [8])
         // A batch the host could not store changes nothing

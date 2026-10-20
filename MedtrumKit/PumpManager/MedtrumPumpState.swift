@@ -395,6 +395,8 @@ public class MedtrumPumpState: RawRepresentable {
         } else {
             pumpState = .none
         }
+        // Not kept by earlier versions: then unknown
+        lastShownNotDeliveringAt = rawValue["lastShownNotDeliveringAt"] as? Date
 
         // Not kept by earlier versions: then only a patch being set up has no session
         patchSessionEnded = rawValue["patchSessionEnded"] as? Bool ?? pumpState.isSetup
@@ -526,6 +528,7 @@ public class MedtrumPumpState: RawRepresentable {
         pumpTimeSyncedAt = Date()
         patchUTCOffset = nil
         pumpState = .none
+        lastShownNotDeliveringAt = nil
         patchSessionEnded = true
 
         maxHourlyInsulin = 20
@@ -578,6 +581,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["pumpTimeSyncedAt"] = pumpTimeSyncedAt
         value["patchUTCOffset"] = patchUTCOffset
         value["pumpState"] = pumpState.rawValue
+        value["lastShownNotDeliveringAt"] = lastShownNotDeliveringAt
         value["patchSessionEnded"] = patchSessionEnded
         value["maxHourlyInsulin"] = maxHourlyInsulin
         value["maxDailyInsulin"] = maxDailyInsulin
@@ -720,6 +724,9 @@ public class MedtrumPumpState: RawRepresentable {
     public var patchUTCOffset: TimeInterval?
 
     public var pumpState: PatchState
+    /// When a status of the patch last showed it not delivering - the one `pumpState` is from, while that shows it so.
+    /// Unlike `lastSync`, which a command's answer moves too, telling nothing of the patch's state. Nil until shown.
+    public var lastShownNotDeliveringAt: Date?
     /// No patch session is running: the last one ended, or none started yet
     public var patchSessionEnded: Bool
     public var initialReservoir: Double?
@@ -772,7 +779,9 @@ public class MedtrumPumpState: RawRepresentable {
     /// that final. A temp basal that followed is not kept here: it runs, and goes out with every batch. Kept here too: a
     /// suspend held back for the records of the temp basal whose command went unanswered
     /// (`MedtrumPumpManager.holdForUnconfirmedRead`), and what is held with it - a resume, a suspend - in the order they
-    /// go out. Empty otherwise. Changed under `MedtrumPumpManager.doseReportLock`.
+    /// go out. And every other suspend and resume reported, until the host confirms storing it: handed over once, a kill
+    /// before the host stored it would lose it for good (`MedtrumPumpManager.keepUntilStored`). Empty otherwise. Changed
+    /// under `MedtrumPumpManager.doseReportLock`.
     public var heldBasalDoses: [HeldBasalDose]
 
     /// A temp basal whose command went out unanswered: kept here, unreported, until a status shows the patch running it

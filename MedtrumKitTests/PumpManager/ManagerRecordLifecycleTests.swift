@@ -367,6 +367,7 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         )
         tempBasal.noteCommand(sentAt: t0, uptime: nil, sequence: 118, priorSegmentStart: t0.addingTimeInterval(-10))
         tempBasal.noteLaterSegment(startingAt: t0.addingTimeInterval(300))
+        tempBasal.noteShownRunning(from: t0.addingTimeInterval(1))
         XCTAssertTrue(tempBasal.setPumpStartTime(t0.addingTimeInterval(2)))
         XCTAssertTrue(tempBasal.markStopUnanswered(at: t0.addingTimeInterval(250)))
         XCTAssertTrue(tempBasal.disableRecordMatch())
@@ -380,7 +381,7 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
             "finalDeliveredUnits", "finalEndDate", "finalizedAt"
         ]))
         XCTAssertTrue(Set(tempBasal.rawValue.keys).isSuperset(of: [
-            "priorSegmentStart", "laterSegmentStart", "stopUnansweredAt", "recordMatchDisabled"
+            "priorSegmentStart", "laterSegmentStart", "shownRunningFrom", "stopUnansweredAt", "recordMatchDisabled"
         ]))
 
         for dose in [uncertain, bolus, tempBasal] {
@@ -400,6 +401,7 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         state.unconfirmedTempBasal = tempBasal
         state.patchUTCOffset = 7200
         state.sequenceConfirmedAt = t0.addingTimeInterval(400)
+        state.lastShownNotDeliveringAt = t0.addingTimeInterval(450)
         state.skippedRecordSequences = [120]
         state.answeredBolusRecords = [123]
         let pending = PendingBolus(units: 1.5, sentAt: t0.addingTimeInterval(500), sequenceAtSend: 124, automatic: true)
@@ -410,6 +412,7 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertEqual(restored.unconfirmedTempBasal?.rawValue as NSDictionary?, tempBasal.rawValue as NSDictionary)
         XCTAssertEqual(restored.patchUTCOffset, 7200)
         XCTAssertEqual(restored.sequenceConfirmedAt, t0.addingTimeInterval(400))
+        XCTAssertEqual(restored.lastShownNotDeliveringAt, t0.addingTimeInterval(450))
         XCTAssertEqual(restored.skippedRecordSequences, [120])
         XCTAssertEqual(restored.answeredBolusRecords, [123])
         XCTAssertEqual(restored.pendingBolus, pending)
@@ -494,6 +497,7 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertNil(state.unconfirmedTempBasal)
         XCTAssertNil(state.patchUTCOffset)
         XCTAssertNil(state.sequenceConfirmedAt, "never told: not caught up until a status says so")
+        XCTAssertNil(state.lastShownNotDeliveringAt)
         XCTAssertEqual(state.skippedRecordSequences, [])
         XCTAssertEqual(state.answeredBolusRecords, [])
         XCTAssertNil(state.pendingBolus)

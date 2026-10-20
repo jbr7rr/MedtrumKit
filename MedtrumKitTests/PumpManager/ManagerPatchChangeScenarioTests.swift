@@ -64,6 +64,7 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(deactivate(), true)
 
         XCTAssertEqual(reports(of: .suspend).map(\.startDate), [haltedAt])
+        XCTAssertEqual(reports(of: .resume).count, 0)
         XCTAssertEqual(pumpManager.state.basalDose.type, .suspend)
         XCTAssertEqual(pumpManager.state.basalDose.startDate, haltedAt)
         XCTAssertEqual(pumpManager.state.previousPatch?.patchId, Self.oldPatchId.toData(length: 4))
@@ -84,7 +85,7 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
     }
 
     /// Suspended by a command, the status current while connected: deactivating reports no second suspend. Forced, out
-    /// of reach, the suspend may have ended on its own since: then it does.
+    /// of reach, the suspend may have ended on its own since: then it does - the first one resumed before it.
     func testDeactivatingASuspendedPatchReportsASuspendOnlyWhenForced() throws {
         makeManager(activePatchState(patchId: Self.oldPatchId, scheduledRate: Self.scheduledRate, sequence: 10, reservoir: 50))
         link.notify(PatchBytes.suspendNotification(suspendedAt: Self.patchSecond(Date.now.addingTimeInterval(-10 * Self.minute))))
@@ -94,12 +95,98 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
 
         XCTAssertEqual(deactivate(), true)
         XCTAssertEqual(reports(of: .suspend).count, 1)
+        XCTAssertEqual(reports(of: .resume).count, 0)
 
+        // The next run's host has it
+        hostSuspendedSince = try XCTUnwrap(reports(of: .suspend).first?.startDate)
         try restart(from: suspended)
         pumpManager.forceDeactivatePatch()
         settle()
         XCTAssertEqual(reports(of: .suspend).count, 1, "the forced one's own")
+        XCTAssertEqual(delegate.batches.flatMap(\.events).compactMap(\.dose).map(\.type), [.resume, .suspend])
         XCTAssertGreaterThan(pumpManager.state.basalDose.startDate, Date.now.addingTimeInterval(-Self.minute))
+    }
+
+    /// Suspended 10 min ago, the patch last heard from 4 min ago still suspended, then forced out of reach: it may have
+    /// resumed since. Its suspend is resumed where it was last known suspended, and the session's own suspend follows in
+    /// a later second - a second suspend over the open one would have oref0 pair both with the next patch's resume, and
+    /// zero the time from the second one to it twice. The new patch's activation resumes the second one.
+    func testForcingASuspendedPatchResumesItsSuspendBeforeReportingAnother() throws {
+        let suspendedAt = Self.patchSecond(Date.now.addingTimeInterval(-10 * Self.minute))
+        let lastHeardAt = Date.now.addingTimeInterval(-4 * Self.minute)
+        makeManager(suspendedPatchState(since: suspendedAt, lastHeardAt: lastHeardAt, showing: .suspended))
+
+        let forcedAt = Date.now
+        pumpManager.forceDeactivatePatch()
+        settle()
+
+        let doses = delegate.batches.flatMap(\.events).compactMap(\.dose)
+        XCTAssertEqual(doses.map(\.type), [.resume, .suspend])
+        let resumedAt = try XCTUnwrap(doses.first?.startDate)
+        let suspendedAgainAt = try XCTUnwrap(doses.last?.startDate)
+        XCTAssertEqual(resumedAt, lastHeardAt, "where it was last known suspended")
+        XCTAssertGreaterThan(LoopOrderingChecker.stored(suspendedAgainAt), LoopOrderingChecker.stored(resumedAt), "in a later second")
+        XCTAssertGreaterThanOrEqual(suspendedAgainAt, forcedAt, "when forced")
+
+        XCTAssertEqual(activate(), true)
+        assertEachSuspendResumedOnItsOwn(storedBefore: suspendedAt)
+    }
+
+    /// The same with a command answered since that status - a basal profile set, which moves `lastSync` and shows
+    /// nothing of the patch's state: the suspend is resumed where that status showed it suspended, not at the answer.
+    /// The patch may have resumed on its own in between: what it delivered from then on would be zeroed in iAPS.
+    func testForcingASuspendedPatchResumesItsSuspendAtItsLastSuspendedStatusNotACommandsAnswer() throws {
+        let suspendedAt = Self.patchSecond(Date.now.addingTimeInterval(-10 * Self.minute))
+        makeManager(suspendedPatchState(since: suspendedAt, lastHeardAt: suspendedAt, showing: .suspended))
+        link.notify(Self.notification(state: .suspended))
+        settle()
+        let shownSuspendedAt = try XCTUnwrap(pumpManager.state.lastShownNotDeliveringAt)
+        XCTAssertGreaterThan(shownSuspendedAt, suspendedAt.addingTimeInterval(9 * Self.minute), "the status's")
+
+        link.script(CommandType.SET_BASAL_PROFILE, PatchBytes.segmentAnswer(
+            command: CommandType.SET_BASAL_PROFILE,
+            type: .SUSPEND_MANUAL,
+            rate: 0,
+            sequence: 10,
+            patchId: Self.oldPatchId,
+            start: suspendedAt
+        ))
+        let result: Result<BasalRateSchedule, Error>? = completion(of: "syncBasalRateSchedule") { done in
+            self.pumpManager.syncBasalRateSchedule(items: [RepeatingScheduleValue(startTime: 0, value: 0.7)], completion: done)
+        }
+        settle()
+        XCTAssertNotNil(try result?.get())
+        XCTAssertGreaterThan(pumpManager.state.lastSync, shownSuspendedAt, "the answer's")
+        XCTAssertEqual(pumpManager.state.lastShownNotDeliveringAt, shownSuspendedAt)
+
+        pumpManager.forceDeactivatePatch()
+        settle()
+
+        let doses = delegate.batches.flatMap(\.events).compactMap(\.dose)
+        XCTAssertEqual(doses.map(\.type), [.resume, .suspend])
+        XCTAssertEqual(doses.first?.startDate, shownSuspendedAt, "where its last status showed it suspended")
+
+        XCTAssertEqual(activate(), true)
+        assertEachSuspendResumedOnItsOwn(storedBefore: suspendedAt)
+    }
+
+    /// The same for a base reset, the last status of the patch from before its suspend - a suspend command's, its status
+    /// not in: resumed in the second after it, the reset's suspend where delivery stopped
+    func testBaseResetUnderASuspendedPatchResumesItsSuspendBeforeReportingAnother() throws {
+        let suspendedAt = Self.patchSecond(Date.now.addingTimeInterval(-10 * Self.minute)).addingTimeInterval(0.4)
+        makeManager(suspendedPatchState(since: suspendedAt, lastHeardAt: suspendedAt, showing: .active))
+        let stoppedAt = Date.now.addingTimeInterval(-Self.minute)
+
+        pumpManager.handleBaseReset(deliveryStoppedAt: stoppedAt)
+        settle()
+
+        let doses = delegate.batches.flatMap(\.events).compactMap(\.dose)
+        XCTAssertEqual(doses.map(\.type), [.resume, .suspend])
+        XCTAssertEqual(doses.first?.startDate, MedtrumPumpManager.earliestResume(after: suspendedAt))
+        XCTAssertEqual(doses.last?.startDate, stoppedAt)
+
+        XCTAssertEqual(activate(), true)
+        assertEachSuspendResumedOnItsOwn(storedBefore: suspendedAt)
     }
 
     /// Ended already, a forced deactivation keeps the previous patch the deactivation recorded
@@ -137,6 +224,48 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
         XCTAssertLessThanOrEqual(resumedAt.timeIntervalSince(try XCTUnwrap(patchReplacements.first?.date)), 1)
         XCTAssertFalse(pumpManager.state.patchSessionEnded)
         XCTAssertEqual(pumpManager.state.patchId, Self.newPatchId.toData(length: 4))
+    }
+
+    /// The deactivation's suspend, the app killed before the host stored it - the host "fails" its batch: kept with the
+    /// state, it goes out again with the next run's first batch, the activation's, ahead of its resume. Lost, the resume
+    /// would be one with none before it: iAPS takes the patch to have been suspended since before its history, and zeroes
+    /// every temp basal before the resume, and the scheduled basal from 8 h back.
+    func testDeactivationSuspendTheHostDidNotStoreGoesOutAgainWithTheActivationsResume() throws {
+        makeManager(activePatchState(patchId: Self.oldPatchId, scheduledRate: Self.scheduledRate, sequence: 10, reservoir: 50))
+        delegate.batchReply = .fail(NSError(domain: "host", code: 1))
+        XCTAssertEqual(deactivate(), true)
+        let suspend = try XCTUnwrap(reports(of: .suspend).first)
+
+        try restart(from: delegate.savedState)
+        XCTAssertEqual(activate(), true)
+
+        let batch = try XCTUnwrap(delegate.batches.first { $0.events.contains { $0.dose?.type == .resume } })
+        let doses = batch.events.compactMap(\.dose)
+        XCTAssertEqual(doses.map(\.type), [.suspend, .resume], "again, ahead of the resume")
+        XCTAssertEqual(doses.first?.syncIdentifier, suspend.syncIdentifier)
+    }
+
+    /// The activation's resume, the app killed before the host stored it: it goes out again with the next run's first
+    /// batch - a full status's. Lost, the deactivation's suspend would stay open: every temp basal after it zeroed.
+    func testActivationResumeTheHostDidNotStoreGoesOutAgainAfterARestart() throws {
+        makeManager(activePatchState(patchId: Self.oldPatchId, scheduledRate: Self.scheduledRate, sequence: 10, reservoir: 50))
+        XCTAssertEqual(deactivate(), true)
+        // Stored: the next run's host has it, not only this one's
+        hostSuspendedSince = try XCTUnwrap(reports(of: .suspend).first?.startDate)
+        delegate.batchReply = .fail(NSError(domain: "host", code: 1))
+        XCTAssertEqual(activate(), true)
+        let resume = try XCTUnwrap(reports(of: .resume).first)
+
+        try restart(from: delegate.savedState)
+        link.deliverFullStatus(
+            notification: Self.notification(state: .active, storage: (sequence: 1, patchId: Self.newPatchId)),
+            duringReconnect: false
+        )
+        settle()
+
+        let doses = try XCTUnwrap(delegate.batches.first?.events.compactMap(\.dose))
+        XCTAssertEqual(doses.filter { $0.type == .resume }.map(\.syncIdentifier), [resume.syncIdentifier], "again")
+        XCTAssertTrue(pumpManager.state.heldBasalDoses.isEmpty, "stored")
     }
 
     /// The first patch: nothing was reported before it - no suspend, so no resume
@@ -361,6 +490,33 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
     }
 
     // MARK: Driving
+
+    /// The old patch suspended since `since` - the host told so in a run before - its last status at `lastHeardAt`,
+    /// showing `state`
+    private func suspendedPatchState(since: Date, lastHeardAt: Date, showing state: PatchState) -> MedtrumPumpState {
+        let patch = activePatchState(patchId: Self.oldPatchId, scheduledRate: Self.scheduledRate, sequence: 10, reservoir: 50)
+        patch.basalDose = UnfinalizedDose(suspendStartTime: since)
+        patch.basalState = .suspended
+        patch.pumpState = state
+        patch.lastSync = lastHeardAt
+        if !state.isDelivering {
+            patch.lastShownNotDeliveringAt = lastHeardAt
+        }
+        hostSuspendedSince = since
+        return patch
+    }
+
+    /// As oref0 pairs them, the suspend from `storedBefore` and those reported since: each with a resume of its own, none
+    /// left open - see `LoopOrderingChecker`, rule 7
+    private func assertEachSuspendResumedOnItsOwn(storedBefore: Date, file: StaticString = #filePath, line: UInt = #line) {
+        let suspends = ([storedBefore] + reports(of: .suspend).map(\.startDate)).map(LoopOrderingChecker.stored)
+        let resumes = reports(of: .resume).map(\.startDate).map(LoopOrderingChecker.stored)
+        let pairing = LoopOrderingChecker.oref0Pairing(suspends: suspends, resumes: resumes)
+        XCTAssertNil(pairing.open, file: file, line: line)
+        XCTAssertEqual(pairing.paired.count, suspends.count, file: file, line: line)
+        XCTAssertEqual(Set(pairing.paired.map(\.resume)).count, suspends.count, "no two suspends paired with one resume", file: file, line: line)
+        XCTAssertEqual(pairing.unpaired, [], file: file, line: line)
+    }
 
     /// What the deactivation leaves: no session, the old patch's suspend reported 3 min ago
     private func endedSessionState() -> MedtrumPumpState {

@@ -93,6 +93,159 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertTrue(uncertain.isEmpty, "nothing was uncertain")
     }
 
+    /// 2026-10-20 00:52:53 - 00:54:05 (device test #2, patch 273): the answer names the bolus's record, 421, its
+    /// completion comes naming 420 the newest - the heartbeat's read takes up to 420 - and 421 is named a moment later.
+    /// That read counts for no cooldown: the next heartbeat reads 421, not one a minute later. Here with patch 236's bytes.
+    func testBolusRecordNamedPastTheNewestToldIsReadByTheNextHeartbeat() {
+        let state = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75.35)
+        state.syncedSequenceNumber = 935
+        state.basalDose = runningTempBasal(rate: 1.25, startedAgo: 3, duration: 30 * Self.minute, pumpStartTime: Self.patchTime(397_084_662))
+        state.basalState = .tempBasal
+        alignPatchClock(state, patchTime: Self.patchTime(397_084_665))
+        makeManager(state)
+
+        link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+        settle()
+        let started = reports(of: .bolus).first
+        XCTAssertEqual(pumpManager.state.bolusDose?.recordSequence, 937)
+
+        // Completed, naming 936 the newest
+        link.notify("202a0080010006a803ec00f607ab17191000e205")
+        settle()
+        XCTAssertNil(pumpManager.state.bolusDose)
+        XCTAssertEqual(pumpManager.state.currentSequenceNumber, 936)
+
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 936, patchId: 236))
+        syncRecords(.awaitingDoses)
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 936)
+        XCTAssertTrue(finals(of: started).isEmpty)
+
+        // The heartbeat naming 937, moments later
+        pumpManager.state.currentSequenceNumber = 937
+        confirmRecordSequence()
+        XCTAssertEqual(pumpManager.heartbeatSync(), .records)
+        link.script(
+            CommandType.GET_RECORD,
+            fragments: "33634c010000aa2c01ff9e75aef7ec00a90301a0",
+            "33634c02000000f907ab1701000100000000001e",
+            "33634c03000000000000000000000000a3507873",
+            "33634c040a3e52"
+        )
+        syncRecords(.awaitingDoses)
+
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 937)
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).first?.deliveredUnits ?? 0, 0.05, accuracy: 0.001, "from its record")
+    }
+
+    /// The same, the heartbeat's read of 936 failing: that run counts for the cooldown - one cut short does - and the next
+    /// heartbeat reads nothing. Every heartbeat would retry a failing link otherwise.
+    func testBolusRecordNamedPastTheNewestToldWaitsForTheCooldownAfterAFailedRead() {
+        let state = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75.35)
+        state.syncedSequenceNumber = 935
+        state.basalDose = runningTempBasal(rate: 1.25, startedAgo: 3, duration: 30 * Self.minute, pumpStartTime: Self.patchTime(397_084_662))
+        state.basalState = .tempBasal
+        alignPatchClock(state, patchTime: Self.patchTime(397_084_665))
+        makeManager(state)
+
+        link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+        settle()
+        link.notify("202a0080010006a803ec00f607ab17191000e205")
+        settle()
+        XCTAssertNil(pumpManager.state.bolusDose)
+
+        link.script(CommandType.GET_RECORD, .timeout)
+        syncRecords(.awaitingDoses)
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 935)
+
+        pumpManager.state.currentSequenceNumber = 937
+        confirmRecordSequence()
+        syncRecords(.awaitingDoses)
+
+        XCTAssertEqual(link.writtenCommands.filter { $0 == CommandType.GET_RECORD }.count, 1, "throttled")
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 935)
+    }
+
+    /// The same, the heartbeat's read stopped short of 936 by a command taking the link - a settings update - with no
+    /// read failing: that run counts for no cooldown either, and the next heartbeat reads 936 and 937.
+    func testBolusRecordNamedPastTheNewestToldIsReadByTheNextHeartbeatAfterACommandCutTheReadShort() {
+        let state = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75.35)
+        state.syncedSequenceNumber = 934
+        state.basalDose = runningTempBasal(rate: 1.25, startedAgo: 3, duration: 30 * Self.minute, pumpStartTime: Self.patchTime(397_084_662))
+        state.basalState = .tempBasal
+        alignPatchClock(state, patchTime: Self.patchTime(397_084_665))
+        makeManager(state)
+
+        link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+        settle()
+        let started = reports(of: .bolus).first
+        link.notify("202a0080010006a803ec00f607ab17191000e205")
+        settle()
+        XCTAssertNil(pumpManager.state.bolusDose)
+
+        // 935 read, then the command
+        let updated = expectation(description: "settings updated")
+        link.script(CommandType.SET_PATCH, PatchBytes.answer(command: CommandType.SET_PATCH, body: Data()))
+        link.script(CommandType.GET_RECORD, .fragments(PatchBytes.otherRecord(type: 3, sequence: 935, patchId: 236))) { [unowned self] in
+            pumpManager.updatePatchSettings { _ in updated.fulfill() }
+        }
+        syncRecords(.awaitingDoses)
+        wait(for: [updated], timeout: 5)
+        settle()
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 935)
+
+        pumpManager.state.currentSequenceNumber = 937
+        confirmRecordSequence()
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 936, patchId: 236))
+        link.script(
+            CommandType.GET_RECORD,
+            fragments: "33634c010000aa2c01ff9e75aef7ec00a90301a0",
+            "33634c02000000f907ab1701000100000000001e",
+            "33634c03000000000000000000000000a3507873",
+            "33634c040a3e52"
+        )
+        syncRecords(.awaitingDoses)
+
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 937, "not held up for the cooldown")
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).first?.deliveredUnits ?? 0, 0.05, accuracy: 0.001, "from its record")
+    }
+
+    /// The same, the heartbeat's run turned away by a command in flight - a settings update - reading nothing: it counts
+    /// for no cooldown, and the heartbeat after the command reads 936.
+    func testHeartbeatRunTurnedAwayByACommandInFlightLeavesNoCooldown() {
+        let state = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75.35)
+        state.syncedSequenceNumber = 935
+        state.basalDose = runningTempBasal(rate: 1.25, startedAgo: 3, duration: 30 * Self.minute, pumpStartTime: Self.patchTime(397_084_662))
+        state.basalState = .tempBasal
+        alignPatchClock(state, patchTime: Self.patchTime(397_084_665))
+        makeManager(state)
+
+        link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
+        XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+        settle()
+        link.notify("202a0080010006a803ec00f607ab17191000e205")
+        settle()
+        XCTAssertNil(pumpManager.state.bolusDose)
+
+        let updated = expectation(description: "settings updated")
+        link.script(CommandType.SET_PATCH, .fragments(PatchBytes.answer(command: CommandType.SET_PATCH, body: Data()))) { [unowned self] in
+            RecordSyncer.syncRecords(pumpManager: pumpManager, trigger: .awaitingDoses)
+        }
+        pumpManager.updatePatchSettings { _ in updated.fulfill() }
+        wait(for: [updated], timeout: 5)
+        settle()
+        XCTAssertEqual(link.writtenCommands.filter { $0 == CommandType.GET_RECORD }.count, 0, "turned away")
+
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 936, patchId: 236))
+        syncRecords(.awaitingDoses)
+
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 936, "not held up for the cooldown")
+    }
+
     /// 2026-10-17 10:43:07 - 10:45:47 (log 16, patch 270): an SMB of 0.05 U over a slow link - the patch delivers it, and
     /// sends its completion naming its record, before its answer comes. Kept for it: the bolus ends on that completion,
     /// not unseen at its deadline with a warning of uncertain delivery. Here with patch 236's bytes.

@@ -40,7 +40,7 @@ enum StateSyncer {
         let expectedPatchId = state.patchSessionEnded ? 0 : state.patchId.toUInt64()
         let syncResponse = syncResponse.validated(expectedPatchId: expectedPatchId)
 
-        StateSyncer.updatePumpState(syncResponse: syncResponse, pumpManager: pumpManager)
+        StateSyncer.updatePumpState(syncResponse: syncResponse, pumpManager: pumpManager, receivedAt: syncDate)
 
         let hasActivatedPatch = syncResponse.state.rawValue >= PatchState.active.rawValue
 
@@ -357,7 +357,7 @@ enum StateSyncer {
 
             let eventTime = patchTime.map {
                 pumpManager.suspendOnOurClock(of: dose, patchTime: $0, notAfter: receivedAt)
-            } ?? receivedAt
+            } ?? max(receivedAt, MedtrumPumpManager.earliestAfter(dose))
 
             let suspendDose = UnfinalizedDose(suspendStartTime: eventTime)
             let suspended = NewPumpEvent.suspend(dose: suspendDose.toDoseEntry())
@@ -373,7 +373,12 @@ enum StateSyncer {
                 return ([], true)
             }
             // The temp basal whose command went unanswered may have its record to read first
-            return pumpManager.holdForUnconfirmedRead(suspendDose) ? ([], false) : ([suspended], false)
+            if pumpManager.holdForUnconfirmedRead(suspendDose) {
+                return ([], false)
+            }
+            // Out again with every batch until the host has it (`MedtrumPumpManager.keepUntilStored`)
+            pumpManager.keepUntilStored(suspendDose)
+            return ([suspended], false)
         }
     }
 
@@ -458,7 +463,12 @@ enum StateSyncer {
                 )
                 state.basalDose = resumeDose
 
-                return pumpManager.holdWithHeldSuspend(resumeDose) ? ([], false) : ([NewPumpEvent.resume(dose: resumeDose.toDoseEntry())], false)
+                if pumpManager.holdWithHeldSuspend(resumeDose) {
+                    return ([], false)
+                }
+                // Out again with every batch until the host has it (`MedtrumPumpManager.keepUntilStored`)
+                pumpManager.keepUntilStored(resumeDose)
+                return ([NewPumpEvent.resume(dose: resumeDose.toDoseEntry())], false)
 
             default:
                 return ([], false)
@@ -563,9 +573,12 @@ enum StateSyncer {
         }
     }
 
-    private static func updatePumpState(syncResponse: SynchronizePacketResponse, pumpManager: MedtrumPumpManager) {
+    private static func updatePumpState(syncResponse: SynchronizePacketResponse, pumpManager: MedtrumPumpManager, receivedAt: Date) {
         let previousState = pumpManager.state.pumpState
         pumpManager.state.pumpState = syncResponse.state
+        if !syncResponse.state.isDelivering {
+            pumpManager.state.lastShownNotDeliveringAt = receivedAt
+        }
 
         guard syncResponse.state != previousState else {
             return
