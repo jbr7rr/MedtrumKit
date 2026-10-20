@@ -118,8 +118,8 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
 
     // MARK: The new patch's session
 
-    /// The resume comes after the suspend it ends, never at the same time - a host pairs a resume with an earlier suspend
-    /// only - and the patch replacement is dated when the session started
+    /// The resume comes after the suspend it ends, in a later second - iAPS stores both to the second, and pairs a resume
+    /// with an earlier suspend only - and the patch replacement is dated when the session started, no later than it
     func testActivationResumesAfterTheSuspendTheDeactivationReported() throws {
         makeManager(activePatchState(patchId: Self.oldPatchId, scheduledRate: Self.scheduledRate, sequence: 10, reservoir: 50))
         XCTAssertEqual(deactivate(), true)
@@ -131,8 +131,10 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(resumes.count, 1)
         let suspendedAt = try XCTUnwrap(suspends.first?.startDate)
         let resumedAt = try XCTUnwrap(resumes.first?.startDate)
-        XCTAssertGreaterThan(resumedAt, suspendedAt)
-        XCTAssertEqual(patchReplacements.map(\.date), [resumedAt])
+        XCTAssertGreaterThan(LoopOrderingChecker.stored(resumedAt), LoopOrderingChecker.stored(suspendedAt), "in a later second")
+        XCTAssertEqual(patchReplacements.count, 1)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(patchReplacements.first?.date), resumedAt)
+        XCTAssertLessThanOrEqual(resumedAt.timeIntervalSince(try XCTUnwrap(patchReplacements.first?.date)), 1)
         XCTAssertFalse(pumpManager.state.patchSessionEnded)
         XCTAssertEqual(pumpManager.state.patchId, Self.newPatchId.toData(length: 4))
     }
@@ -381,6 +383,7 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
         state.basalDose = UnfinalizedDose(suspendStartTime: deactivatedAt)
         state.basalState = .suspended
         state.initialReservoir = nil
+        hostSuspendedSince = deactivatedAt
         return state
     }
 

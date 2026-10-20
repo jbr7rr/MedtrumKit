@@ -15,11 +15,32 @@ class MedtrumManagerTestCase: XCTestCase {
     private(set) var delegate: FakePumpManagerDelegate!
     private(set) var pumpManager: MedtrumPumpManager!
 
+    /// What the hosts of the runs before a `restart` had been handed by then, each checked on its own - see
+    /// `assertLoopOrdering`
+    private var earlierHosts: [[LoopOrderingChecker.Batch]] = []
+    /// What the host had stored across every `restart`, as one host: the runs before, up to the batch each restart's
+    /// state was saved with. Nil, no restart.
+    private var storedBeforeRestart: [LoopOrderingChecker.Batch]?
+
+    /// Whether `tearDown` checks every host's batches against the rules Loop needs kept - see `LoopOrderingChecker`. Off
+    /// only for a scenario that hands the host what no manager would. The rules iAPS needs kept
+    /// (`LoopOrderingChecker.iAPSRules`) are checked all the same, unless `checksIAPSRules` is off too.
+    var checksLoopOrdering = true
+    /// Whether `tearDown` checks the rules iAPS needs kept where `checksLoopOrdering` is off
+    var checksIAPSRules = true
+
+    /// The start of a suspend the host stored before the scenario began - the one a state it builds says was reported in
+    /// a run before - for the iAPS rule of the checker: a resume after it is not one without a suspend
+    var hostSuspendedSince: Date?
+
     /// How far the manager's clock - the one its record fallbacks and bolus deadlines go by - is ahead of ours
     let clockOffset = Locked<TimeInterval>(0)
     /// How far the manager's monotonic clock is ahead of ours: moved with `clockOffset`, but not by a change of the wall
     /// clock (`changeWallClock`)
     let uptimeOffset = Locked<TimeInterval>(0)
+    /// Whether the manager's clock stands still from `makeManager` on, moved only by `advanceClock`: for a scenario that
+    /// tells a dose's span to the second from the time it ran, the test's own run time left out
+    var freezesManagerClock = false
 
     override func setUp() {
         super.setUp()
@@ -30,8 +51,35 @@ class MedtrumManagerTestCase: XCTestCase {
     }
 
     override func tearDown() {
+        if checksLoopOrdering || checksIAPSRules {
+            let rules = checksLoopOrdering ? nil : LoopOrderingChecker.iAPSRules
+            // Delivering or not as the scenario ends - rule 8 - known of the last run only
+            let delivering = pumpManager.map { manager in
+                manager.state.basalDose.type != .suspend && manager.state.basalState != .suspended &&
+                    !manager.state.patchSessionEnded
+            }
+            for batches in earlierHosts {
+                assertLoopOrdering(batches, rules: rules)
+            }
+            assertLoopOrdering(delegate?.hostBatches ?? [], delivering: delivering, rules: rules)
+            // The host keeps what it stored across a restart: the runs together, as it had them
+            if let storedBeforeRestart {
+                assertLoopOrdering(storedBeforeRestart + (delegate?.hostBatches ?? []), delivering: delivering, rules: rules)
+            }
+        }
+        earlierHosts = []
+        storedBeforeRestart = nil
+        hostSuspendedSince = nil
+
         XCTAssertEqual(link.unscriptedWrites, [], "Commands were sent that the scenario has no answer for")
         XCTAssertEqual(link.unusedAnswers, 0, "Answers were scripted that nothing asked for")
+
+        // Nothing it queued reaches the record sync of the next scenario
+        pumpManager?.stopBackgroundReads()
+        for earlier in earlierManagers {
+            earlier.value?.stopBackgroundReads()
+        }
+        earlierManagers = []
 
         pumpManager = nil
         delegate = nil
@@ -42,10 +90,24 @@ class MedtrumManagerTestCase: XCTestCase {
 
     // MARK: Setup
 
+    /// The managers of the runs before a `restart`, still alive if something holds them - see `tearDown`
+    private var earlierManagers: [Weak] = []
+
+    final class Weak {
+        weak var value: MedtrumPumpManager?
+        init(_ value: MedtrumPumpManager?) { self.value = value }
+    }
+
     @discardableResult func makeManager(_ state: MedtrumPumpState) -> MedtrumPumpManager {
+        if let pumpManager = self.pumpManager {
+            earlierManagers.append(Weak(pumpManager))
+        }
         let pumpManager = MedtrumPumpManager(state: state, link: link)
+        // Read as soon as the command is over: `settle` waits for it
+        pumpManager.openTempBasalEndReadDelay = 0
         let clockOffset = clockOffset
-        pumpManager.now = { Date.now.addingTimeInterval(clockOffset.value) }
+        let frozenAt = freezesManagerClock ? Date.now : nil
+        pumpManager.now = { (frozenAt ?? Date.now).addingTimeInterval(clockOffset.value) }
         let uptimeOffset = uptimeOffset
         pumpManager.uptime = { TimeInterval.continuousUptime + uptimeOffset.value }
         pumpManager.delegateQueue = delegate.queue
@@ -61,8 +123,29 @@ class MedtrumManagerTestCase: XCTestCase {
         let data = try PropertyListSerialization.data(fromPropertyList: raw, format: .binary, options: 0)
         let decoded = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
 
+        // Killed: nothing it queued runs on
+        pumpManager?.stopBackgroundReads()
+        earlierHosts.append(delegate.hostBatches)
+        // A state the host never saved - built by the scenario - leaves what it stored unknown: all of it
+        storedBeforeRestart = (storedBeforeRestart ?? []) + (delegate.batchesStored(savingState: raw) ?? delegate.hostBatches)
         delegate = FakePumpManagerDelegate()
         return makeManager(MedtrumPumpState(rawValue: decoded))
+    }
+
+    /// `batches` break none of the rules Loop needs kept - see `LoopOrderingChecker` - of `rules` only, if given; the
+    /// patch `delivering` after them, or not, if known (rule 8)
+    func assertLoopOrdering(
+        _ batches: [LoopOrderingChecker.Batch],
+        delivering: Bool? = nil,
+        rules: Set<Int>? = nil,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        for violation in LoopOrderingChecker.violations(in: batches, suspendedSince: hostSuspendedSince, delivering: delivering)
+            where rules?.contains(violation.rule) ?? true
+        {
+            XCTFail("Loop ordering: \(violation)", file: file, line: line)
+        }
     }
 
     /// An activated, connected patch running its schedule - one rate all day

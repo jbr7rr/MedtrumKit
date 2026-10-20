@@ -32,6 +32,22 @@ public class MedtrumPumpManager: DeviceManager {
     /// A temp basal that ended, reported once its records are read - see `TempBasalEnd`. Only under `doseReportLock`.
     private var pendingTempBasalEndStorage: TempBasalEnd?
 
+    /// The temp basal a command is cancelling - see `isCancelInFlight` - and the schedule a status showed meanwhile, set
+    /// aside should the cancel fail (`setAsideForTheCancel`). Only under `doseReportLock`.
+    private var tempBasalCancelInFlight: UnfinalizedDose?
+    private var scheduleSetAsideForTheCancel: (basal: BasalData, receivedAt: Date, receivedUptime: TimeInterval)?
+
+    /// What the batches handed over make Loop's watermark - see `LoopWatermark`. Only under `doseReportLock`.
+    private var loopWatermarkModel = LoopWatermark()
+
+    /// A bolus ran as the records of the temp basals ended open were to be read: read once it is over - see
+    /// `readOpenTempBasalEndsSoon`. Only under `doseReportLock`.
+    private var openTempBasalEndReadAwaitsBolus = false
+
+    /// How long after a temp basal ended back to back its records are read, at the earliest - see
+    /// `readOpenTempBasalEndsSoon`: the loop's bolus, right behind the temp basal, has the link first. Only tests change it.
+    var openTempBasalEndReadDelay: TimeInterval = 5
+
     /// The completion of the bolus sent and not yet answered - see `noteCompletionWithNoBolusRunning`. Only under
     /// `doseReportLock`.
     private var earlyBolusCompletion: EarlyBolusCompletion?
@@ -52,6 +68,9 @@ public class MedtrumPumpManager: DeviceManager {
     /// answers have to reach
     let tempBasalEndQueue = DispatchQueue(label: "com.nightscout.MedtrumKit.tempBasalEnd")
 
+    /// No read queued on `tempBasalEndQueue` runs any more - see `stopBackgroundReads`
+    private let backgroundReadsStopped = Locked(false)
+
     /// When a batch last carried the finals the host has yet to confirm. Only under `doseReportLock`.
     private var lastFinalsSentAt = Date.distantPast
     /// Without a batch for a while - no patch, or the host could not store the last one - the unconfirmed finals are
@@ -59,6 +78,14 @@ public class MedtrumPumpManager: DeviceManager {
     private static let unconfirmedFinalsResendInterval: TimeInterval = .minutes(1)
     /// A host that never confirms would have the finals pile up for good: one fixed this long ago is given up on
     static let unconfirmedFinalMaximumAge: TimeInterval = .hours(24)
+
+    /// Held back from every batch until the records of the temp basal whose command went unanswered are read - see
+    /// `holdForUnconfirmedRead`. Only under `doseReportLock`.
+    private var heldForUnconfirmedRead: [UnfinalizedDose] = []
+
+    /// Statuses handled, and how many showed the patch halted - see `requestStatusAfterHalt`
+    private let statusesHandled = Locked(0)
+    private let haltsSeen = Locked(0)
 
     /// Commands in flight, by when they started: the record sync yields to them - see `isCommandActive`
     private let activeCommands = Locked([UUID: Date]())
@@ -137,6 +164,7 @@ public class MedtrumPumpManager: DeviceManager {
         // Before the link can hand it a status: one synced against a state without the bolus, or the temp basal
         takeOverPendingBolus()
         takeOverPendingTempBasal()
+        noteFinalsFromLastRun()
         link.pumpManager = self
         MedtrumLogger.pumpManager = self
     }
@@ -151,6 +179,7 @@ public class MedtrumPumpManager: DeviceManager {
 
         takeOverPendingBolus()
         takeOverPendingTempBasal()
+        noteFinalsFromLastRun()
         link.pumpManager = self
     }
 
@@ -787,6 +816,9 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            // A halt shown from here on leaves the patch's basal in doubt - see `requestStatusAfterHalt`
+            let haltsBefore = self.haltsSeen.value
+
             // The status of the reconnect may have found it suspended
             guard self.state.basalState != .suspended else {
                 self.log.error("Pump is suspended...")
@@ -797,25 +829,40 @@ public extension MedtrumPumpManager {
             // When the temp basal so far ended, if a cancel ended it - and the answer, which names the record the patch
             // wrote for it
             var cancelledAt: Date?
+            var cancelSentAt: Date?
             var cancelAnswer: CancelTempBasalPacketResponse?
 
+            defer {
+                self.doseReportLock.withLock {
+                    self.tempBasalCancelInFlight = nil
+                    self.scheduleSetAsideForTheCancel = nil
+                }
+            }
+
             if self.state.basalState == .tempBasal {
-                // Need to cancel temp basal first before setting temp basal
-                let cancelSentAt = Date.now
+                // From here on this command reports what follows the temp basal running, whatever its outcome: the scheduled
+                // basal a status shows meanwhile is the cancel's own - see `isCancelInFlight`
+                self.doseReportLock.withLock { self.tempBasalCancelInFlight = self.state.basalDose }
+
+                // Need to cancel temp basal first before setting temp basal - dated on the manager's clock, as everything this
+                // command dates: the same as ours, but for tests that move it
+                let sentAt = self.now()
+                cancelSentAt = sentAt
                 let cancelResult = self.link.write(CancelTempBasalPacket())
                 if case let .failure(error) = cancelResult {
                     // Unanswered, the patch may have stopped it: it stays running, counted, until a status says
                     let outcome = MedtrumCommandOutcome(error)
                     self.log.error("Failed to cancel temp basal (\(outcome)): \(error.localizedDescription)")
                     if outcome == .unknown {
-                        self.noteUnansweredCancel(sentAt: cancelSentAt)
-                        completion(.uncertainDelivery)
-                    } else {
-                        completion(.communication(error))
+                        self.noteUnansweredCancel(sentAt: sentAt)
                     }
+                    // The schedule a status showed meanwhile is not the command's to report after all
+                    self.takeScheduleSetAsideForTheCancel()
+                    completion(outcome == .unknown ? .uncertainDelivery : .communication(error))
                     return
                 }
-                cancelledAt = Date.now
+                // On the manager's clock, as the schedule after it: the same as ours, but for tests that move it
+                cancelledAt = self.now()
 
                 // Cancelling ends the temp basal, which is exactly when the patch writes its record -
                 // so this response carries the number of the record it just wrote for it
@@ -823,6 +870,11 @@ public extension MedtrumPumpManager {
                     self.adoptRecordSequence(response.basalSequence, from: "Cancel temp basal")
                     self.noteAnsweredSegment(startingAt: response.basalStartTime)
                     cancelAnswer = response
+                    // Had the temp basal whose command went unanswered run, this is its record: read it early, ahead of
+                    // the finals of the ones after it - see `lastRecordOfOpenTempBasalEnds`
+                    self.doseReportLock.withLock {
+                        self.state.unconfirmedTempBasal?.noteEndRecord(Int(response.basalSequence))
+                    }
                 }
 
                 self.state.basalState = .active
@@ -832,13 +884,25 @@ public extension MedtrumPumpManager {
             if duration < .ulpOfOne {
                 // Need to cancel temp basal, but is already cancelled
                 // Only need to report back to algorithm
-                self.reportScheduledBasal(endedBy: cancelAnswer)
+                self.reportScheduledBasal(endedBy: cancelAnswer, sentAt: cancelSentAt)
 
                 completion(nil)
                 return
             }
 
-            let sentAt = Date.now
+            // The temp basal whose command went unanswered, kept: had it run, the cancel's answer names its record. Read
+            // now, before the set: final from it ahead of the new one's first report, which takes Loop's watermark past it
+            if let cancelAnswer {
+                self.readUnconfirmedTempBasalsRecords(through: Int(cancelAnswer.basalSequence))
+            } else if cancelledAt == nil {
+                // No cancel went out - a status showed a segment begun after its command, or the run before was killed
+                // during this read: its record, if written, is no later than the newest the patch has
+                self.readUnconfirmedTempBasalsRecords(through: self.state.currentSequenceNumber)
+            }
+            // A suspend held back for those records goes out ahead of anything this command reports
+            self.releaseHeldForUnconfirmedRead()
+
+            let sentAt = self.now()
             let sentUptime = self.uptime()
             let sequenceAtSend = self.state.currentSequenceNumber
 
@@ -852,7 +916,12 @@ public extension MedtrumPumpManager {
                     sentAt: sentAt,
                     sequenceAtSend: sequenceAtSend,
                     priorSegmentStart: priorSegmentStart,
-                    cancelledAt: cancelledAt
+                    cancelledAt: cancelledAt,
+                    cancelSegmentStart: cancelledAt.flatMap { at in
+                        cancelAnswer.flatMap {
+                            self.cancelSegmentOnPatch(at: at, cancel: $0, cancelSentAt: cancelSentAt, tempBasal: self.state.basalDose)
+                        }
+                    }
                 )
                 return priorSegmentStart
             }
@@ -860,6 +929,8 @@ public extension MedtrumPumpManager {
 
             let packet = SetTempBasalPacket(rate: unitsPerHour, duration: duration)
             let tempBasalResult = self.link.write(packet)
+            // Held back meanwhile - the patch halted as the set went out: out ahead of what the answer reports
+            self.releaseHeldForUnconfirmedRead()
             let outcome = MedtrumCommandOutcome(tempBasalResult)
 
             if case let .failure(error) = tempBasalResult, outcome != .unknown {
@@ -870,7 +941,7 @@ public extension MedtrumPumpManager {
                 // changed: a temp basal still running runs on. Off the saved state before the command fails either way:
                 // killed after it, the app must not come back with a temp basal that never ran.
                 if let cancelledAt {
-                    self.reportScheduledBasal(tempBasalEndedAt: cancelledAt, endedBy: cancelAnswer)
+                    self.reportScheduledBasal(tempBasalEndedAt: cancelledAt, endedBy: cancelAnswer, sentAt: cancelSentAt)
                 } else {
                     self.doseReportLock.withLock { self.state.pendingTempBasal = nil }
                     self.handOverState(before: "failing the temp basal")
@@ -914,14 +985,27 @@ public extension MedtrumPumpManager {
                     sentAt: sentAt,
                     sentUptime: sentUptime,
                     sequenceAtSend: sequenceAtSend,
-                    priorSegmentStart: priorSegmentStart
+                    priorSegmentStart: priorSegmentStart,
+                    // The schedule from the cancel, reported right after: else what ran as it went out - with where it began
+                    // on the patch clock, if known
+                    basalBefore: cancelledAt ?? self.reportedBasalStart,
+                    basalBeforeOnPatch: cancelledAt.map { at in
+                        cancelAnswer.flatMap {
+                            self.cancelSegmentOnPatch(at: at, cancel: $0, cancelSentAt: cancelSentAt, tempBasal: self.state.basalDose)
+                        }
+                    } ?? self.reportedBasalPatchStart
                 )
 
                 // What the host was told stands: the temp basal before ended at the cancel, then the schedule. With
                 // the set unanswered the link may be gone: its record is not read now - our estimate stands in, and a
                 // sync reads the record later, changing nothing.
                 if let cancelledAt, self.state.basalDose.type == .tempBasal {
-                    self.reportScheduledBasal(tempBasalEndedAt: cancelledAt, endedBy: outcome == .unknown ? nil : cancelAnswer)
+                    self.reportScheduledBasal(
+                        tempBasalEndedAt: cancelledAt,
+                        endedBy: cancelAnswer,
+                        sentAt: cancelSentAt,
+                        readsRecords: outcome != .unknown
+                    )
                 }
 
                 completion(.uncertainDelivery)
@@ -934,7 +1018,8 @@ public extension MedtrumPumpManager {
                 tempRate: unitsPerHour,
                 duration: duration,
                 insulinType: self.state.insulinType,
-                automatic: automatic
+                automatic: automatic,
+                startDate: self.now()
             )
             tempBasalDose.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend)
 
@@ -943,67 +1028,180 @@ public extension MedtrumPumpManager {
             let skew = response.basalStartTime.timeIntervalSince(tempBasalDose.startDate)
             self.log.info("Temp basal patch start \(response.basalStartTime) (skew \(String(format: "%+.1f", skew))s)")
 
-            // The old one ends where the new one starts, final - from the record the cancel named - and both go out in
-            // one batch
-            self.replaceRunningBasal(endedBy: cancelAnswer) {
+            // The old one ends where the new one starts, and both go out in one batch: the old one mutable until its
+            // records - the one the cancel named - are read, after this command
+            self.replaceRunningBasal(endedBy: cancelAnswer, sentAt: cancelSentAt) {
                 self.state.basalState = .tempBasal
                 self.state.lastSync = Date.now
                 return (tempBasalDose, NewPumpEvent.tempBasal(dose: tempBasalDose.toDoseEntry(isMutable: true)))
             }
             self.notifyStateDidChange()
+            self.requestStatusAfterHalt(seenSince: haltsBefore)
 
             completion(nil)
         }
     }
 
+    /// A status showed the patch halted while the command ran - `haltsBefore` counted as it began - and the command
+    /// leaves a temp basal reported running: the set's answer said it started, the halt that the patch may not run it.
+    /// The status after shows which, and ends it if halted - dated when it is received, a halt telling no time of its
+    /// own: a full status is asked for right after the command, once, not left to the next heartbeat's - unless another
+    /// status arrives first, which tells the same. Off the command's thread, once it is over, holding the command lock.
+    private func requestStatusAfterHalt(seenSince haltsBefore: Int) {
+        guard haltsSeen.value != haltsBefore else {
+            return
+        }
+        let running = state.basalDose
+        guard running.type == .tempBasal, !running.isFinished else {
+            return
+        }
+        let statusesBefore = statusesHandled.value
+        log.info("The patch showed a halt during the command, the temp basal of \(running.startDate) reported running: asking for its status")
+
+        tempBasalEndQueue.async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let deadline = Date.now.addingTimeInterval(Self.commandActivityTimeout)
+            while self.isCommandActive, Date.now < deadline, !self.backgroundReadsStopped.value {
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+            guard !self.backgroundReadsStopped.value else {
+                return
+            }
+            guard self.statusesHandled.value == statusesBefore else {
+                self.log.info("A status arrived since the halt: not asking for another")
+                return
+            }
+
+            guard let result = self.betweenCommands({ self.link.write(SynchronizePacket()) }) else {
+                return
+            }
+            guard case let .success(data) = result, let response = data as? SynchronizePacketResponse else {
+                self.log.warning("The status asked for after the halt did not come: the next one tells")
+                return
+            }
+            self.handleStatus(response, duringReconnect: false, fullSync: true)
+            self.notifyStateDidChange()
+        }
+    }
+
+    /// A status is handled - showing the patch halted, `halted`
+    internal func noteStatusHandled(halted: Bool) {
+        statusesHandled.mutate { $0 += 1 }
+        if halted {
+            haltsSeen.mutate { $0 += 1 }
+        }
+    }
+
     /// `tempBasalEndedAt`: when the temp basal running so far stopped. `endedBy`: the answer to the cancel that stopped
     /// it, which names its record.
-    private func reportScheduledBasal(tempBasalEndedAt: Date = Date.now, endedBy cancel: CancelTempBasalPacketResponse? = nil) {
-        replaceRunningBasal(endedBy: cancel) {
+    /// `sentAt`: when that cancel went out. `readsRecords`: records may be read on the way - the one the cancel named, and
+    /// those of temp basals ended open before - not after a command that went unanswered: the link may be gone. The
+    /// cancel's answer still tells where the patch ended it.
+    private func reportScheduledBasal(
+        tempBasalEndedAt: Date? = nil,
+        endedBy cancel: CancelTempBasalPacketResponse? = nil,
+        sentAt cancelSentAt: Date? = nil,
+        readsRecords: Bool = true
+    ) {
+        let tempBasalEndedAt = tempBasalEndedAt ?? now()
+        replaceRunningBasal(endedBy: cancel, sentAt: cancelSentAt, readsRecords: readsRecords) {
             let basalDose = UnfinalizedDose(
                 basalRate: state.currentBaseBasalRate,
                 insulinType: state.insulinType,
                 startDate: tempBasalEndedAt
             )
+            // Its start on the patch clock - what this one is told from, skew-free - the same instant on both clocks: the
+            // temp basal it ends still the running one
+            if let cancel,
+               let onPatch = cancelSegmentOnPatch(
+                   at: basalDose.startDate,
+                   cancel: cancel,
+                   cancelSentAt: cancelSentAt,
+                   tempBasal: state.basalDose
+               )
+            {
+                basalDose.setPumpStartTime(onPatch)
+            }
             state.lastSync = Date.now
             return (basalDose, NewPumpEvent.basal(dose: basalDose.toDoseEntry()))
         }
         notifyStateDidChange()
     }
 
-    /// The basal `change` returns takes over from the running one, and both go out in one batch: a temp basal running
-    /// till then ends where the new basal starts, final - from its records, read right here up to the one the cancel
-    /// that ended it named (`endedBy`), else from our estimate. `change` runs under `doseReportLock`, sets the rest of
-    /// the state the batch is saved with, and returns the new basal and its report - nil to change nothing. A command's
-    /// path, holding `commandLock`: no other command comes between its answer and these reads, which block on the link
-    /// for `tempBasalEndReadBudget` at most. The host has the state before they start - handed over first, outside that
-    /// budget (`stateHandOverTimeout`): killed during them, the app comes back with the new basal running and the temp
-    /// basal ended, finalized then from our estimate. The temp basal whose set is pending, if any, is settled by the
-    /// change: no longer pending once the new basal is in place.
+    /// The basal `change` returns takes over from the running one, and both go out in one batch. `change` runs under
+    /// `doseReportLock`, sets the rest of the state the batch is saved with, and returns the new basal and its report -
+    /// nil to change nothing. The temp basal whose set is pending, if any, is settled by the change: no longer pending
+    /// once the new basal is in place.
+    ///
+    /// A temp basal running till then that the new one replaces back to back - the new one starting before the old one
+    /// was to end - ends open where the new one starts: reported ended, and mutable, its records read after this command
+    /// (`readOpenTempBasalEndsSoon`). Nothing comes between the two for the host to fill.
+    ///
+    /// Any other end of a temp basal - a cancel to the schedule, a suspend, a resume, one that ran its course before the
+    /// next - leaves a gap after it, or a dose of another kind: it ends final, and every temp basal ended open before it
+    /// with it - from their records, read right here up to the one the cancel that ended it named (`endedBy`), else from
+    /// our estimate. A command's path, holding `commandLock`: no other command comes between its answer and these reads,
+    /// which block on the link for `tempBasalEndReadBudget` at most. The host has the state before they start - handed
+    /// over first, outside that budget (`stateHandOverTimeout`): killed during them, the app comes back with the new
+    /// basal running and the temp basal ended, finalized then from our estimate.
     private func replaceRunningBasal(
         endedBy cancel: CancelTempBasalPacketResponse? = nil,
+        sentAt cancelSentAt: Date? = nil,
+        readsRecords: Bool = true,
         _ change: () -> (dose: UnfinalizedDose, event: NewPumpEvent)?
     ) {
-        doseReportLock.withLock {
+        let endedOpen = doseReportLock.withLock { () -> Bool in
             guard let next = change() else {
-                return
+                return false
             }
 
-            // A temp basal a status ended meanwhile - the cancel's scheduled basal, shown while the set awaited its
-            // answer, or the suspend the patch announced - goes out final from the records it names, and the new basal
-            // after it, in the same batch: the state handed over before they are read has the new basal running
+            // A temp basal a status ended meanwhile - the suspend the patch announced, say - goes out final from the
+            // records it names, and the new basal after it, in the same batch: the state handed over before they are
+            // read has the new basal running
             let running = state.basalDose
             if let pending = pendingTempBasalEndStorage, running.type != .tempBasal || running.isFinished {
                 hold(next, after: pending)
                 state.basalDose = next.dose
                 state.pendingTempBasal = nil
-                return
+                return false
+            }
+
+            // A resume behind a suspend held back since the reads before it
+            if running.type != .tempBasal || running.isFinished, holdWithHeldSuspend(next.dose) {
+                state.basalDose = next.dose
+                state.pendingTempBasal = nil
+                return false
+            }
+
+            // The patch ran the old one for less time than we did up to the cancel: it had stopped it before, unseen, and
+            // ran the schedule since - that gap is the host's to fill. Told on each clock alone, skew-free.
+            let stoppedAt = running.type == .tempBasal ? cancel.flatMap { cancel in
+                cancelSentAt.flatMap { stopBeforeCancel(of: running, patchEnd: cancel.basalStartTime, cancelSentAt: $0) }
+            } : nil
+            let stoppedBefore = stoppedAt != nil
+
+            if next.dose.type == .tempBasal, running.type == .tempBasal, !running.isFinished,
+               next.dose.startDate <= running.estimatedEndDate, !stoppedBefore
+            {
+                endOpen(running, at: next.dose.startDate, patchEnd: cancel?.basalStartTime, lastRecord: cancel.map { Int($0.basalSequence) })
+                state.basalDose = next.dose
+                state.pendingTempBasal = nil
+                // Those that can be settled without their records go final now, the oldest first - the rest mutable,
+                // ended where the next one starts
+                let finals = settleOpenTempBasalEnds()
+                let open = openTempBasalEnds.compactMap { NewPumpEvent.finishedDose($0, entry: $0.toDoseEntry(isMutable: true)) }
+                emitPumpEvents(finals + open + [next.event])
+                return true
             }
 
             let ending = beginTempBasalEnd(
-                endedAt: next.dose.startDate,
+                endedAt: stoppedAt ?? next.dose.startDate,
                 patchEnd: cancel?.basalStartTime,
-                lastRecord: cancel.map { Int($0.basalSequence) },
+                lastRecord: readsRecords ? cancel.map { Int($0.basalSequence) } : nil,
+                readsOpenEnds: readsRecords,
                 then: next
             )
             state.basalDose = next.dose
@@ -1011,9 +1209,19 @@ public extension MedtrumPumpManager {
             if !ending {
                 emitPumpEvents([next.event])
             }
+            return false
+        }
+
+        if endedOpen {
+            readOpenTempBasalEndsSoon()
+            return
         }
 
         guard let ending = pendingTempBasalEnd else {
+            // The record a cancel named for the temp basal whose command went unanswered, read after the command
+            if let record = lastRecordOfOpenTempBasalEnds, record > state.syncedSequenceNumber {
+                readOpenTempBasalEndsSoon()
+            }
             return
         }
 
@@ -1047,6 +1255,96 @@ public extension MedtrumPumpManager {
     /// How long a command waits for the host to take the state before it reads records, or writes or fails a bolus
     private static let stateHandOverTimeout: TimeInterval = 3
 
+    /// How far apart a temp basal's end on the patch clock - taken to ours through the skew - and where we saw it end
+    /// may be and still be the same: the skew is known to a few seconds only (`unansweredStartSlack`), and an answer
+    /// takes a second or two to come back. Further apart, the patch had stopped it earlier: the gap is the schedule's.
+    internal static let patchEndTolerance: TimeInterval = unansweredStartSlack
+
+    /// No final ends this close to its start by an end we worked out: it would be dropped by the host as 0-duration, and
+    /// what it delivered with it - our observed end stands instead
+    internal static let shortestComputedDuration: TimeInterval = 1
+
+    /// Where the patch had stopped `dose` before our cancel went out at `cancelSentAt`, on our clock - nil if it ran it up
+    /// to the cancel, as far as we can tell. Told on each clock alone, so a wrong skew does not move it: how long the
+    /// patch ran it (from its patch start to `patchEnd`, the start of the segment the cancel's answer reports) against how
+    /// long we had it running when the cancel went out (from its answer). Short of that by more than `patchEndTolerance`,
+    /// it was stopped then. Without a patch start, or one not of its first segment (`firstSegmentUncertain`), nothing is
+    /// told.
+    private func stopBeforeCancel(of dose: UnfinalizedDose, patchEnd: Date, cancelSentAt: Date, logging: Bool = true) -> Date? {
+        let running = dose.snapshot
+        // Its patch start a later segment's, or its start not the patch's on our clock: nothing to tell it from
+        guard let pumpStartTime = running.pumpStartTime, !running.firstSegmentUncertain else {
+            return nil
+        }
+        let patchElapsed = max(0, patchEnd.timeIntervalSince(pumpStartTime))
+        // From its answer: short of the patch's by the round trip - never a stop that was not
+        let ourElapsed = cancelSentAt.timeIntervalSince(dose.startDate)
+        guard patchElapsed < ourElapsed - Self.patchEndTolerance else {
+            return nil
+        }
+        guard patchElapsed >= Self.shortestComputedDuration else {
+            guard logging else {
+                return nil
+            }
+            log.warning(
+                "The cancel of the temp basal of \(dose.startDate) says the patch ran it \(Int(patchElapsed)) s: not ended " +
+                    "on that, it would end where it started - where we saw it end instead"
+            )
+            return nil
+        }
+        let stoppedAt = dose.startDate.addingTimeInterval(patchElapsed)
+        if logging {
+            log.warning(
+                "The cancel of the temp basal of \(dose.startDate) says the patch ran it \(Int(patchElapsed)) s, we had it " +
+                    "running \(Int(ourElapsed)) s: the patch had stopped it at \(stoppedAt) - it ends there, the schedule ran since"
+            )
+        }
+        return stoppedAt
+    }
+
+    /// The patch time of `ourTime` - the cancel's answer, or the schedule after it, dated at it - for an anchor: the
+    /// instant `cancel` ended `tempBasal` on both clocks. Its segment began at `basalStartTime` on the patch clock: there
+    /// on ours too, the cancel going out as the patch ended it - unless the patch had stopped it before, at
+    /// `stopBeforeCancel` on ours: then `ourTime` is that much later on the patch clock as well.
+    /// Not a temp basal running - the reported schedule, a temp basal kept unconfirmed that never ran - the cancel ended
+    /// nothing: its segment still the one running, `ourTime` is as far past its start on both clocks. A segment the patch
+    /// began since is the cancel's own. Nil, the running one's patch start unknown: no anchor - the skew stands in.
+    private func cancelSegmentOnPatch(
+        at ourTime: Date,
+        cancel: CancelTempBasalPacketResponse,
+        cancelSentAt: Date?,
+        tempBasal: UnfinalizedDose
+    ) -> Date? {
+        guard tempBasal.type == .tempBasal else {
+            guard let runningOnPatch = tempBasal.pumpStartTime else {
+                return nil
+            }
+            guard cancel.basalStartTime == runningOnPatch else {
+                return cancel.basalStartTime
+            }
+            return runningOnPatch.addingTimeInterval(ourTime.timeIntervalSince(tempBasal.startDate))
+        }
+        guard let cancelSentAt,
+              let stoppedAt = stopBeforeCancel(of: tempBasal, patchEnd: cancel.basalStartTime, cancelSentAt: cancelSentAt, logging: false)
+        else {
+            return cancel.basalStartTime
+        }
+        return cancel.basalStartTime.addingTimeInterval(ourTime.timeIntervalSince(stoppedAt))
+    }
+
+    /// `patchTime`, where the patch ended `dose`, for an anchor at `ourTime`: only if `ourTime` is that same instant on our
+    /// clock, told skew-free from its patch start (`endOnOurClock`, not bounded). Nil otherwise: the skew is all there
+    /// is, and an anchor through it would tell nothing more.
+    internal func patchTimePaired(with ourTime: Date, endOf dose: UnfinalizedDose, at patchTime: Date) -> Date? {
+        let running = dose.snapshot
+        guard dose.type == .tempBasal, let pumpStartTime = running.pumpStartTime, !running.firstSegmentUncertain,
+              dose.startDate.addingTimeInterval(max(0, patchTime.timeIntervalSince(pumpStartTime))) == ourTime
+        else {
+            return nil
+        }
+        return patchTime
+    }
+
     func suspendDelivery(completion: @escaping ((any Error)?) -> Void) {
         suspendPatch(duration: .minutes(120), completion: completion)
     }
@@ -1071,7 +1369,12 @@ public extension MedtrumPumpManager {
             // The patch announces the suspend right away, with its exact time, and that status usually beats this:
             // it dated the suspend and ended the temp basal there already - its records are read here. Otherwise now,
             // as near as we know, and the temp basal is finalized from our estimate: no record of its end is known.
-            let start = Date.now
+            let start = self.now()
+            // The temp basal whose command went unanswered, kept: its record, if written, read before the suspend is
+            // reported - Loop fills up to a suspend, its watermark past the unanswered one. A suspend the status
+            // reported is held back meanwhile (`holdForUnconfirmedRead`).
+            self.readUnconfirmedTempBasalsRecords(through: self.state.currentSequenceNumber)
+            self.releaseHeldForUnconfirmedRead()
             self.replaceRunningBasal {
                 // Before the batch: the state saved with it is suspended
                 self.state.basalState = .suspended
@@ -1101,6 +1404,13 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            // A suspend held back for the records of the temp basal whose command went unanswered goes out first, those
+            // records read before, as a suspend command does: the unanswered one final from its own ahead of the suspend
+            // - Loop fills up to it, its watermark past the unanswered one. Before the resume is written: the patch still
+            // suspended, its record written at the halt, and no status of its schedule comes during the reads - the one it
+            // sends a second after the resume would, its resume then held back with the suspend (`holdWithHeldSuspend`).
+            self.releaseHeldAfterUnconfirmedRead()
+
             let response = self.link.write(ResumePumpPacket())
             if case let .failure(error) = response {
                 self.log.error("Failed to resume delivery: \(error.localizedDescription)")
@@ -1122,8 +1432,13 @@ public extension MedtrumPumpManager {
                 self.noteAnsweredSegment(startingAt: start)
             }
 
+            // The same for a suspend a halt seen during the write held back - after the resume, Loop would have its
+            // watermark past it, and never store the suspension. A resume a status reported during those reads is held
+            // with it (`holdWithHeldSuspend`), out after it.
+            self.releaseHeldAfterUnconfirmedRead()
+
             // Read and replaced in one step - see `doseReportLock`. A status showing the scheduled basal may have
-            // reported the resume already.
+            // reported the resume already - or held it back, behind a suspend held since.
             self.replaceRunningBasal {
                 // Before the batch: the state saved with it is resumed
                 self.state.basalState = .active
@@ -1133,14 +1448,31 @@ public extension MedtrumPumpManager {
                     return nil
                 }
 
-                let resumedAt = segmentStart.map {
-                    self.patchTimeOnOurClock($0, notBefore: self.state.basalDose.startDate, notAfter: Date.now)
-                } ?? Date.now
-                let resumeDose = UnfinalizedDose(resumeStartTime: resumedAt, insulinType: self.state.insulinType)
+                var resumedAt = segmentStart.map {
+                    self.endOnOurClock(of: self.state.basalDose, patchTime: $0, notAfter: self.now())
+                } ?? self.now()
+                // In a later second than the suspend at the earliest - see `earliestResume`
+                if self.state.basalDose.type == .suspend {
+                    resumedAt = max(resumedAt, Self.earliestResume(after: self.state.basalDose.startDate))
+                }
 
                 // A temp basal still taken to run stopped at the suspend for good (the patch resumes the schedule):
-                // ended at the resume at the latest, final from our estimate - no record of its end is known
-                return (resumeDose, NewPumpEvent.resume(dose: resumeDose.toDoseEntry()))
+                // ended at the resume at the latest, final from our estimate - no record of its end is known. The
+                // schedule follows it, not a resume: with no suspend reported before it, iAPS would take the patch to
+                // have been suspended since before its history (`holdWithHeldSuspend`).
+                let tookTempBasalToRun = self.state.basalDose.type == .tempBasal
+                let resumeDose = tookTempBasalToRun
+                    ? UnfinalizedDose(basalRate: self.state.currentBaseBasalRate, insulinType: self.state.insulinType, startDate: resumedAt)
+                    : UnfinalizedDose(resumeStartTime: resumedAt, insulinType: self.state.insulinType)
+                // Its start on the patch clock, where it is the same instant as on ours
+                if let segmentStart, let paired = self.patchTimePaired(with: resumedAt, endOf: self.state.basalDose, at: segmentStart) {
+                    resumeDose.setPumpStartTime(paired)
+                }
+
+                return (
+                    resumeDose,
+                    tookTempBasalToRun ? NewPumpEvent.basal(dose: resumeDose.toDoseEntry()) : NewPumpEvent.resume(dose: resumeDose.toDoseEntry())
+                )
             }
             self.notifyStateDidChange()
 
@@ -1481,7 +1813,9 @@ public extension MedtrumPumpManager {
 
             events.append(NewPumpEvent.replacedPump(date: start))
             if isDelivering {
-                let resumeDose = UnfinalizedDose(resumeStartTime: start, insulinType: state.insulinType)
+                // A resume in a later second than the suspend - see `earliestResume`
+                let resumeStart = state.basalDose.type == .suspend ? max(start, Self.earliestResume(after: state.basalDose.startDate)) : start
+                let resumeDose = UnfinalizedDose(resumeStartTime: resumeStart, insulinType: state.insulinType)
                 if state.basalDose.type == .suspend {
                     // Only a suspend that was reported gets a resume: a host can take one without it as suspended before it
                     events.append(NewPumpEvent.resume(dose: resumeDose.toDoseEntry()))
@@ -1497,6 +1831,7 @@ public extension MedtrumPumpManager {
                 } else if state.basalDose.type != .tempBasal {
                     // Nothing to report: the first activation, or a status of the new patch showed it delivering already
                     state.basalDose = resumeDose
+                    state.basalDoseIsPlaceholder = true
                 }
 
                 // What commands check: the old patch may have left it suspended or running a temp basal, and it would
@@ -1665,6 +2000,7 @@ public extension MedtrumPumpManager {
 
     func notifyStateDidChange() {
         refreshLogDeviceIdentifier()
+        readOpenTempBasalEndsAfterBolus()
 
         // synchronously, on the path that mutated the bolus dose
         for reporter in bolusProgressReporters.value {
@@ -2418,7 +2754,8 @@ public extension MedtrumPumpManager {
             return []
         }
 
-        return estimateFinal(dose, because: "the patch session ended").map { [$0] } ?? []
+        return openTempBasalEndsFromEstimate(because: "the patch session ended") +
+            (estimateFinal(dose, because: "the patch session ended").map { [$0] } ?? [])
     }
 
     /// The current temp basal (if any) stopped at `endedAt`, finalized at once from our estimate - where its records
@@ -2432,7 +2769,7 @@ public extension MedtrumPumpManager {
             return []
         }
 
-        return estimateFinal(dose, because: reason).map { [$0] } ?? []
+        return openTempBasalEndsFromEstimate(because: reason) + (estimateFinal(dose, because: reason).map { [$0] } ?? [])
     }
 
     func emitReservoirLevel() {
@@ -2459,14 +2796,16 @@ public extension MedtrumPumpManager {
     /// be killed before the state is saved - a final would come back unfinalized, and a dose the host holds mutable
     /// would be unknown to the restored state and purged by its next replacing batch.
     ///
-    /// No temp basal goes out mutable once it ended: the host moves past one as soon as anything after it is stored,
-    /// and its final would be lost. One whose records are being read goes out final from our estimate, with what
-    /// followed it - see `TempBasalEnd`. So does one waiting on its record in state saved by an earlier build.
+    /// A temp basal goes out mutable once it ended only as one ended open, the next one starting where it ended (see
+    /// `openTempBasalEnds`): the host moves past one as soon as anything immutable after it is stored, and its final would
+    /// be lost. One whose records are being read as it ends goes out final from our estimate, with what followed it, and
+    /// every one ended open before it - see `TempBasalEnd`. So does one waiting on its record in state saved as such a
+    /// read went on, or by an earlier build, with those ended open before it.
     ///
     /// `unlessTempBasalEndPending`: a batch with no events of its own - a full status's, a resend of finals, a raised
     /// cancelled bolus - is not handed over at all while such records are read. The batch the read ends with replaces
     /// pending events, carrying every final and every dose still in flight, and the temp basal final from its records
-    /// rather than from our estimate.
+    /// rather than from our estimate. Temp basals ended open hold up nothing: a batch carries them mutable.
     func emitPumpEvents(_ events: [NewPumpEvent], replacePendingEvents: Bool = true, unlessTempBasalEndPending: Bool = false) {
         // The batch is built off `awaitingRecord` and handed to the delegate queue in one go - see `doseReportLock`
         doseReportLock.lock()
@@ -2477,14 +2816,23 @@ public extension MedtrumPumpManager {
             return
         }
 
-        var events = events
+        // Temp basals ended open that their rules settle now - read past, past `openTempBasalEndMaximumWait` - go final
+        // with any batch, not only a record sync's
+        var events = settleOpenTempBasalEnds() + events
         if let ending = pendingTempBasalEndStorage {
             pendingTempBasalEndStorage = nil
-            let final = estimateFinal(ending.dose, because: "a batch went out before its records were read")
-            events = (final.map { [$0] } ?? []) + ending.then + events
+            // Those ended open before it first - see `finalize`
+            let reason = "a batch went out before its records were read"
+            let finals = openTempBasalEndsFromEstimate(because: reason) + [estimateFinal(ending.dose, because: reason)].compactMap { $0 }
+            events = finals + ending.then + events
         }
+        // Waiting on its record, none of the above, nor ended open: saved as its records were read, or by an earlier build
         var fromLastRun: [NewPumpEvent] = []
-        for dose in state.awaitingRecord where dose.type == .tempBasal && !dose.isFinalized {
+        let unread = state.awaitingRecord.filter { dose in
+            let snapshot = dose.snapshot
+            return dose.type == .tempBasal && !snapshot.isFinalized && !snapshot.endedOpen
+        }.sorted { $0.startDate < $1.startDate }
+        for dose in unread {
             if let final = estimateFinal(dose, because: "it was saved waiting on its record") {
                 fromLastRun.append(final)
             }
@@ -2494,7 +2842,8 @@ public extension MedtrumPumpManager {
         // batch the host could not store: after that final - which goes out again with it, until the host confirms
         // both. Its final went out first: no batch goes out while those records are read without carrying it.
         dropExpiredFinals()
-        let held = state.heldBasalDoses.map(\.dose)
+        // Not the suspend held back until the records of the temp basal whose command went unanswered are read
+        let held = state.heldBasalDoses.map(\.dose).filter { dose in !heldForUnconfirmedRead.contains { $0 === dose } }
         let inThisBatch = Set(events.map(\.raw))
         let heldBefore = held.compactMap { dose in Self.heldEvent(of: dose).map { (dose: dose, event: $0) } }
             .filter { !inThisBatch.contains($0.event.raw) }
@@ -2586,6 +2935,11 @@ public extension MedtrumPumpManager {
                     return
                 }
 
+                // Stored: what the host does with it moves Loop's watermark
+                self.doseReportLock.withLock {
+                    self.loopWatermarkModel.store(events, replacePendingEvents: replacePendingEvents)
+                    self.state.loopWatermark = self.loopWatermarkModel.date
+                }
                 self.acknowledgeHeld(held)
                 self.acknowledgeFinals(finals)
             }
@@ -2624,6 +2978,42 @@ public extension MedtrumPumpManager {
     }
 
     /// A time on the patch clock as ours - by the skew of the last reading - bounded to `[notBefore, notAfter]`
+    /// Where `dose`, running, ended, the patch saying it ended at `patchTime` on its clock: from its start, as long as the
+    /// patch ran it from its patch start - skew-free - where that is its first segment; through the skew otherwise. No
+    /// later than `notAfter`, no earlier than its start.
+    internal func endOnOurClock(of dose: UnfinalizedDose, patchTime: Date, notAfter: Date) -> Date {
+        let running = dose.snapshot
+        guard dose.type == .tempBasal, let pumpStartTime = running.pumpStartTime, !running.firstSegmentUncertain else {
+            return patchTimeOnOurClock(patchTime, notBefore: dose.startDate, notAfter: notAfter)
+        }
+        let ended = dose.startDate.addingTimeInterval(max(0, patchTime.timeIntervalSince(pumpStartTime)))
+        return max(min(ended, notAfter), dose.startDate)
+    }
+
+    /// Where the patch, suspending at `patchTime`, ended `dose`, the running basal, on our clock: a temp basal as
+    /// `endOnOurClock` tells it. Another kind - the schedule - from the anchor the temp basal whose command went
+    /// unanswered, kept, is dated by (`basalBefore`, `basalBeforeOnPatch`), so that the two agree to the second; else
+    /// from its own patch start, paired with its start; through the skew otherwise. Between its start and `notAfter`.
+    internal func suspendOnOurClock(of dose: UnfinalizedDose, patchTime: Date, notAfter: Date) -> Date {
+        guard dose.type != .tempBasal else {
+            return endOnOurClock(of: dose, patchTime: patchTime, notAfter: notAfter)
+        }
+        let unconfirmed = state.unconfirmedTempBasal?.snapshot
+        let anchor: (ours: Date, patch: Date)?
+        if let basalBefore = unconfirmed?.basalBefore, let onPatch = unconfirmed?.basalBeforeOnPatch {
+            anchor = (basalBefore, onPatch)
+        } else if let pumpStartTime = dose.snapshot.pumpStartTime {
+            anchor = (dose.startDate, pumpStartTime)
+        } else {
+            anchor = nil
+        }
+        guard let anchor else {
+            return endOnOurClock(of: dose, patchTime: patchTime, notAfter: notAfter)
+        }
+        let suspended = anchor.ours.addingTimeInterval(patchTime.timeIntervalSince(anchor.patch))
+        return max(min(suspended, notAfter), dose.startDate)
+    }
+
     internal func patchTimeOnOurClock(_ patchTime: Date, notBefore: Date, notAfter: Date) -> Date {
         max(min(patchTime.addingTimeInterval(-state.patchClockSkew), notAfter), notBefore)
     }
@@ -2756,6 +3146,14 @@ public extension MedtrumPumpManager {
         endDate: Date? = nil,
         _ outcome: UncertainDelivery.Outcome
     ) -> NewPumpEvent? {
+        // Basal doses go final in order: a temp basal ended open before this one goes final first, from our estimate if
+        // nothing settled it yet - its final goes out with this one's, as every final the host has yet to confirm
+        if dose.type == .tempBasal, !dose.isFinalized {
+            for earlier in openTempBasalEnds where earlier !== dose && earlier.startDate < dose.startDate {
+                estimateFinal(earlier, because: "the temp basal of \(dose.startDate) after it goes final")
+            }
+        }
+
         guard dose.finalize(deliveredUnits: deliveredUnits, endDate: endDate, at: now()) else {
             log.warning("The \(dose.type.rawValue) of \(dose.startDate) is finalized already, not reporting it again")
             return nil
@@ -2789,8 +3187,9 @@ public extension MedtrumPumpManager {
 
     /// Applies one record read off the patch: finalizes the bolus waiting on it, if any - by the number its command's
     /// answer gave it, or one whose answer was lost by when its command went out - or the temp basal whose command went
-    /// unanswered it shows ran. A temp basal of ours was finalized as it ended (`TempBasalEnd`). Only finalizes: the
-    /// identity of a dose never moves. Returns what it did, for the record screen.
+    /// unanswered it shows ran. A temp basal of ours that ended back to back is finalized by its records
+    /// (`openTempBasalEnds`); any other was finalized as it ended (`TempBasalEnd`). Only finalizes: the identity of a dose
+    /// never moves. Returns what it did, for the record screen.
     internal func reconcile(_ response: GetRecordResponse) -> String? {
         switch response.record {
         case let .bolus(record):
@@ -2882,8 +3281,13 @@ public extension MedtrumPumpManager {
             }
 
             return doseReportLock.withLock { () -> String in
-                // A temp basal of ours is final from its end on - from its records, read as it ended, or our estimate:
-                // read again, or later, its record changes nothing
+                // A part of a temp basal of ours that ended back to back, mutable until its records are read
+                if let outcome = keepPartOfOpenTempBasal(record, response: response) {
+                    return outcome
+                }
+
+                // Any other temp basal of ours is final from its end on - from its records, read as it ended, or our
+                // estimate: read again, or later, its record changes nothing
                 if let dose = state.awaitingRecord.first(where: { dose in
                     guard dose.type == .tempBasal, let pumpStartTime = dose.pumpStartTime else {
                         return false
@@ -2898,8 +3302,9 @@ public extension MedtrumPumpManager {
                     return outcome
                 }
 
-                if let outcome = finalizeUnconfirmedTempBasal(from: record, sequence: response.sequence) {
-                    return outcome
+                if let finalized = finalizeUnconfirmedTempBasal(from: record, sequence: response.sequence) {
+                    emitPumpEvents(finalized.events)
+                    return finalized.outcome
                 }
 
                 log.info(
@@ -2986,9 +3391,12 @@ public extension MedtrumPumpManager {
                 }
             }
 
+            // Ended open: the oldest first, as their own rules say
+            let open = settleOpenTempBasalEnds()
+
             let overdue = state.awaitingRecord.compactMap { dose -> (dose: UnfinalizedDose, rule: RecordSyncer.FallbackRule)? in
                 let snapshot = dose.snapshot
-                guard !snapshot.isFinalized, let finishedAt = snapshot.finishedAt,
+                guard !snapshot.isFinalized, !snapshot.endedOpen, let finishedAt = snapshot.finishedAt,
                       let rule = RecordSyncer.fallbackRule(since: finishedAt, caughtUp: isCaughtUp(after: finishedAt), now: checkedAt)
                 else {
                     return nil
@@ -2996,15 +3404,15 @@ public extension MedtrumPumpManager {
                 return (dose, rule)
             }
 
-            guard !overdue.isEmpty else {
+            guard !overdue.isEmpty || !open.isEmpty else {
                 return settled
             }
 
-            let events = finalizeFromEstimate(overdue.map(\.dose)) { dose in
+            let events = open + finalizeFromEstimate(overdue.map(\.dose)) { dose in
                 overdue.first { $0.dose === dose }?.rule.description ?? "-"
             }
             emitPumpEvents(events)
-            return settled + overdue.count
+            return settled + open.count + overdue.count
         }
     }
 
@@ -3130,28 +3538,40 @@ public extension MedtrumPumpManager {
         }
     }
 
-    /// Doses wait on records the patch has written already, or past their timeout - or finals are due to go out again
+    /// Doses wait on records the patch has written already, or past their timeout - or finals are due to go out again.
+    /// Not a temp basal ended back to back moments ago (`awaitsItsReadAfterTheCommand`): the heartbeat naming its record
+    /// comes a second or two after the set, and its sync would take the link from the loop's bolus right behind it.
     internal var hasPendingRecordWork: Bool {
         if doseReportLock.withLock({ isUnconfirmedFinalsResendDue }) {
             return true
         }
 
-        var waitingSince = state.awaitingRecord.compactMap { dose -> Date? in
-            let snapshot = dose.snapshot
-            return snapshot.isFinalized ? nil : snapshot.finishedAt
-        }
-        if let pending = state.unconfirmedTempBasal {
-            waitingSince.append(unconfirmedTempBasalEnd(pending))
-        }
-
+        let checkedAt = now()
+        let waitingSince = recordWaits(at: checkedAt)
         guard !waitingSince.isEmpty else {
             return false
         }
 
-        let checkedAt = now()
         return state.syncedSequenceNumber < state.currentSequenceNumber || waitingSince.contains {
             RecordSyncer.fallbackRule(since: $0, caughtUp: isCaughtUp(after: $0), now: checkedAt) != nil
         }
+    }
+
+    /// Doses wait on records the patch has written already - see `hasPendingRecordWork`
+    internal var awaitsRecordsWritten: Bool {
+        state.syncedSequenceNumber < state.currentSequenceNumber && !recordWaits(at: now()).isEmpty
+    }
+
+    /// When each dose waiting on its record ended - that temp basals ended back to back moments ago wait on no sync
+    private func recordWaits(at checkedAt: Date) -> [Date] {
+        var waitingSince = state.awaitingRecord.compactMap { dose -> Date? in
+            let snapshot = dose.snapshot
+            return snapshot.isFinalized || awaitsItsReadAfterTheCommand(snapshot, at: checkedAt) ? nil : snapshot.finishedAt
+        }
+        if let pending = state.unconfirmedTempBasal {
+            waitingSince.append(unconfirmedTempBasalEnd(pending))
+        }
+        return waitingSince
     }
 
     /// Every record the patch has written by `end` has been read: the cursor is at the newest record it told us of, and
@@ -3262,21 +3682,27 @@ public extension MedtrumPumpManager {
     /// the cancel, the record number a status of the scheduled basal or of a suspend shows. Read right away, they make
     /// its final (`RecordSyncer.finishTempBasalEnd`), and the two go out in one batch: the host takes basal doses as final in
     /// order, and moves past a temp basal still mutable as soon as anything after it is stored - its final would be
-    /// lost. A batch going out before that carries them out with our estimate (`emitPumpEvents`).
+    /// lost. A batch going out before that carries them out with our estimate (`emitPumpEvents`). Every temp basal ended
+    /// open before it (`openTempBasalEnds`) goes final with it. A temp basal a new one replaced back to back is not one of
+    /// these: it ends open itself.
     final class TempBasalEnd {
         let dose: UnfinalizedDose
         /// Where its last record ends, on the patch clock: where the segment after it started
         let patchEnd: Date?
         /// The number of its last record
         let lastRecord: Int?
+        /// No record of its own end known, those of the temp basals ended open before it are read all the same - unless
+        /// the command that ended it went unanswered: the link may be gone
+        let readsOpenEnds: Bool
         /// What followed it - a command that changes the basal again before it is settled adds its own, under
         /// `doseReportLock` (`hold`)
         var then: [NewPumpEvent] = []
 
-        init(dose: UnfinalizedDose, patchEnd: Date?, lastRecord: Int?) {
+        init(dose: UnfinalizedDose, patchEnd: Date?, lastRecord: Int?, readsOpenEnds: Bool = true) {
             self.dose = dose
             self.patchEnd = patchEnd
             self.lastRecord = lastRecord
+            self.readsOpenEnds = readsOpenEnds
         }
     }
 
@@ -3311,6 +3737,7 @@ public extension MedtrumPumpManager {
         endedAt: Date,
         patchEnd: Date?,
         lastRecord: Int?,
+        readsOpenEnds: Bool = true,
         then next: (dose: UnfinalizedDose, event: NewPumpEvent)
     ) -> Bool {
         doseReportLock.withLock { () -> Bool in
@@ -3331,7 +3758,7 @@ public extension MedtrumPumpManager {
                 }
                 doses.append(dose)
             }
-            let ending = TempBasalEnd(dose: dose, patchEnd: patchEnd, lastRecord: lastRecord)
+            let ending = TempBasalEnd(dose: dose, patchEnd: patchEnd, lastRecord: lastRecord, readsOpenEnds: readsOpenEnds)
             pendingTempBasalEndStorage = ending
             hold(next, after: ending)
 
@@ -3415,8 +3842,11 @@ public extension MedtrumPumpManager {
             }
 
             let deadline = Date.now.addingTimeInterval(Self.commandActivityTimeout)
-            while self.isCommandActive, Date.now < deadline {
+            while self.isCommandActive, Date.now < deadline, !self.backgroundReadsStopped.value {
                 Thread.sleep(forTimeInterval: 0.2)
+            }
+            guard !self.backgroundReadsStopped.value else {
+                return
             }
 
             let read = self.withCommandLock {
@@ -3430,8 +3860,9 @@ public extension MedtrumPumpManager {
 
     /// Fixes the final of the temp basal of `ending` - from `records`, read in one go up to its last record, if they
     /// add up to it; else from our estimate, `unread` saying why not all could be read - and reports it with what
-    /// followed it. Returns the outcome for each record it was finalized from, for the record screen. Nothing, if a
-    /// batch carried it out meanwhile.
+    /// followed it. Every temp basal ended open before it goes final first, in the same batch: from `records` where they
+    /// add up to it, else from our estimate - see `openTempBasalEnds`. Returns the outcome for each record a temp basal
+    /// was finalized from, for the record screen. Nothing, if a batch carried it out meanwhile.
     internal func settleTempBasalEnd(_ ending: TempBasalEnd, records: [GetRecordResponse], unread: String?) -> [Int: String] {
         doseReportLock.withLock { () -> [Int: String] in
             guard pendingTempBasalEndStorage === ending else {
@@ -3443,26 +3874,70 @@ public extension MedtrumPumpManager {
             var events: [NewPumpEvent] = []
             var outcomes: [Int: String] = [:]
 
-            if unread == nil, let parts = tempBasalParts(of: dose, in: records, endingAt: ending.patchEnd) {
+            // The temp basal whose command went unanswered started before all of them: its record among these goes final
+            // first, in this batch - after theirs, the host would take it as behind them, and drop it
+            if state.unconfirmedTempBasal != nil {
+                let patchId = state.patchId.toUInt64()
+                for response in records.sorted(by: { $0.sequence < $1.sequence })
+                    where RecordSyncer.isSamePatch(response.patchId, patchId)
+                {
+                    guard case let .basal(record) = response.record, record.type == .ABSOLUTE_TEMP,
+                          let finalized = finalizeUnconfirmedTempBasal(from: record, sequence: response.sequence, ending: true)
+                    else {
+                        continue
+                    }
+                    events += finalized.events
+                    outcomes[response.sequence] = finalized.outcome
+                    break
+                }
+            }
+
+            for open in openTempBasalEnds {
+                if let parts = openTempBasalParts(of: open, in: records, logging: true) {
+                    if let final = finalizeOpen(open, from: parts) {
+                        events.append(final)
+                    }
+                    for sequence in parts.sequences {
+                        outcomes[sequence] = "finalized temp basal \(open.startDate)"
+                    }
+                } else if let final = estimateFinal(
+                    open,
+                    because: unread ?? "its records do not add up, and the temp basal of \(dose.startDate) after it ended"
+                ) {
+                    events.append(final)
+                }
+            }
+
+            if unread == nil, let lastRecord = ending.lastRecord,
+               let parts = tempBasalParts(of: dose, in: records, endingAt: ending.patchEnd, through: lastRecord)
+            {
                 log.info(
                     "Record(s) \(parts.sequences.map(String.init).joined(separator: ", ")) finalize the temp basal of " +
-                        "\(dose.startDate): \(String(format: "%.1f", parts.duration / 60)) min, delivered " +
-                        "\(parts.delivered) U by its records - we observed the end at " +
-                        "\(dose.observedEndDate.map { "\($0)" } ?? "-")"
+                        "\(dose.startDate): \(String(format: "%.1f", parts.duration / 60)) min on the patch, delivered " +
+                        "\(parts.delivered) U by its records - ended at \(dose.observedEndDate.map { "\($0)" } ?? "-"), " +
+                        "where what followed it starts"
                 )
-                // Our start, the patch's duration: the identity stays on our clock
-                if let final = finalize(
-                    dose,
-                    deliveredUnits: parts.delivered,
-                    endDate: dose.startDate.addingTimeInterval(parts.duration),
-                    .byRecord
-                ) {
+                // The amount the patch's, the end ours, where what followed it starts: nothing between the two for the
+                // host to fill, nor to trim off it - unless the patch had stopped it well before, see `recordedEnd`
+                let recorded = recordedEnd(of: dose, parts, in: records, before: ending.then.first?.date)
+                if recorded != nil, let next = ending.then.first?.date {
+                    // It ended elsewhere than where what followed it is dated: that one's patch start pairs with nothing
+                    for following in [state.basalDose] + state.heldBasalDoses.map(\.dose)
+                        where following.type != .tempBasal && following.startDate == next
+                    {
+                        following.forgetPumpStartTime()
+                    }
+                }
+                if let final = finalize(dose, deliveredUnits: parts.delivered, endDate: recorded, .byRecord) {
                     events.append(final)
                 }
                 for sequence in parts.sequences {
                     outcomes[sequence] = "finalized temp basal \(dose.startDate)"
                 }
-            } else if let final = estimateFinal(dose, because: unread ?? "its records do not add up") {
+            } else if let final = estimateFinal(
+                dose,
+                because: unread ?? (ending.lastRecord == nil ? "no record of its end is known" : "its records do not add up")
+            ) {
                 events.append(final)
             }
 
@@ -3471,15 +3946,84 @@ public extension MedtrumPumpManager {
         }
     }
 
+    /// The last record to read for the temp basal of `ending`: its own - else, no record of its end known and the command
+    /// that ended it answered, the newest one a temp basal ended open before it waits on. Nil, none.
+    internal func lastRecordToRead(for ending: TempBasalEnd) -> Int? {
+        if let last = ending.lastRecord {
+            return last
+        }
+        guard ending.readsOpenEnds else {
+            return nil
+        }
+        // The temp basal whose command went unanswered, kept, with no cancel's answer naming its record - a set with no
+        // cancel before it went out since: its record, if written, is no later than the newest the patch has
+        let unconfirmed = doseReportLock.withLock { () -> Int? in
+            guard let pending = state.unconfirmedTempBasal, pending.snapshot.endRecord == nil else {
+                return nil
+            }
+            return state.currentSequenceNumber
+        }
+        return [lastRecordOfOpenTempBasalEnds, unconfirmed].compactMap { $0 }.max()
+    }
+
+    /// Where a temp basal finalized from its records `parts` ends: where we saw it end - what followed it starts there -
+    /// unless its records end more than `patchEndTolerance` before that: the patch had stopped it then, unseen, and ran
+    /// the schedule since, which the host fills the gap with - nil, where we saw it. A halt the patch announced without
+    /// its time is not that: nothing ran after it, and the suspend after it is dated as it was seen.
+    private func recordedEnd(
+        of dose: UnfinalizedDose,
+        _ parts: (delivered: Double, duration: TimeInterval, sequences: [Int], end: Date),
+        in records: [GetRecordResponse],
+        before next: Date?
+    ) -> Date? {
+        // Its parts from a patch start not its first segment's: they tell nothing of where it ended on our clock
+        guard parts.duration >= Self.shortestComputedDuration, !dose.snapshot.firstSegmentUncertain else {
+            return nil
+        }
+        let recorded = dose.startDate.addingTimeInterval(parts.duration)
+        let observed = dose.tempBasalEnd(of: dose.snapshot)
+        // Longer than where we took it to end - early, from the cancel's answer: the record wins, short of what follows
+        if recorded.timeIntervalSince(observed) > Self.patchEndTolerance {
+            let end = next.map { min(recorded, $0) } ?? recorded
+            log.warning(
+                "The records of the temp basal of \(dose.startDate) run \(Int(recorded.timeIntervalSince(observed))) s past " +
+                    "where we took it to end, \(observed): it ends at \(end)"
+            )
+            return end
+        }
+        guard observed.timeIntervalSince(recorded) > Self.patchEndTolerance else {
+            return nil
+        }
+        if let last = records.first(where: { $0.sequence == parts.sequences.last }), case let .basal(record) = last.record,
+           record.endReason?.isSuspendedByPump() == true
+        {
+            return nil
+        }
+        log.warning(
+            "The records of the temp basal of \(dose.startDate) end at \(recorded) on our clock, \(Int(observed.timeIntervalSince(recorded))) s " +
+                "before we saw it end: the patch had stopped it then - it ends there, and the schedule ran since"
+        )
+        return recorded
+    }
+
     /// Whether `records`, read in order so far, settle the temp basal of `ending` before its last record: its parts add
-    /// up - see `tempBasalParts` - and the last of them is shown to be where it ended. Where it ended on the patch clock
-    /// is known: the last part ends there. It is not - a halt the patch announced without its time, as it does: the
-    /// last part is one the halt ended, by its end reason. A part ending where the patch split it, at patch-local
-    /// midnight, ends with success, and a part after it may follow: without a known end, nothing short of that settles
-    /// it - it is read up to its last record. The records after them are left to the record sync.
+    /// up - see `tempBasalParts` - and the last of them is shown to be where it ended - and so every temp basal ended
+    /// open before it (`openTempBasalParts`). Where it ended on the patch clock is known: the last part ends there. It is
+    /// not - a halt the patch announced without its time, as it does: the last part is one the halt ended, by its end
+    /// reason. A part ending where the patch split it, at patch-local midnight, ends with success, and a part after it
+    /// may follow: without a known end, nothing short of that settles it - it is read up to its last record. The
+    /// records after them are left to the record sync.
     internal func settlesTempBasalEnd(_ ending: TempBasalEnd, records: [GetRecordResponse]) -> Bool {
         doseReportLock.withLock { () -> Bool in
-            guard let parts = tempBasalParts(of: ending.dose, in: records, endingAt: ending.patchEnd, logging: false) else {
+            guard openTempBasalEnds.allSatisfy({ openTempBasalParts(of: $0, in: records) != nil }) else {
+                return false
+            }
+            // No record of its own end known, read for those ended open before it only: they settle it
+            guard let lastRecord = ending.lastRecord else {
+                return true
+            }
+            guard let parts = tempBasalParts(of: ending.dose, in: records, endingAt: ending.patchEnd, through: lastRecord, logging: false)
+            else {
                 return false
             }
 
@@ -3504,6 +4048,7 @@ public extension MedtrumPumpManager {
         of dose: UnfinalizedDose,
         in records: [GetRecordResponse],
         endingAt patchEnd: Date?,
+        through lastRecord: Int? = nil,
         logging: Bool = true
     ) -> (delivered: Double, duration: TimeInterval, sequences: [Int], end: Date)? {
         let tolerance = RecordSyncer.tempBasalStartTolerance
@@ -3532,6 +4077,14 @@ public extension MedtrumPumpManager {
         }
 
         for response in records where !parts.contains(where: { $0.sequence == response.sequence }) {
+            // Where it ended, its parts are all in: a record after - of the next one, at the same rate, say - is not one
+            if let patchEnd, let last = parts.last, abs(last.end.timeIntervalSince(patchEnd)) <= tolerance {
+                break
+            }
+            // Nor is one numbered past its last
+            if let lastRecord, response.sequence > lastRecord {
+                continue
+            }
             guard case let .basal(record) = response.record, record.type == .ABSOLUTE_TEMP,
                   RecordSyncer.steps(record.rate) == RecordSyncer.steps(dose.value)
             else {
@@ -3593,7 +4146,15 @@ public extension MedtrumPumpManager {
         let end = dose.tempBasalEnd(of: snapshot).addingTimeInterval(skew)
         let utcOffset = state.patchUTCOffset ?? TimeInterval(TimeZone.current.secondsFromGMT())
         let restarted = Self.crossesPatchMidnight(from: start, to: end, utcOffset: utcOffset)
-        let estimate = dose.tempBasalEstimate(of: snapshot, restarted: restarted)
+        // Ended open: delivering up to the cancel, where the patch says it ended - not up to the next one's start
+        var until: Date?
+        if snapshot.endedOpen, !snapshot.firstSegmentUncertain, let patchEnd = snapshot.patchEndTime,
+           let pumpStartTime = snapshot.pumpStartTime
+        {
+            // How long the patch ran it, from our start: skew-free
+            until = dose.startDate.addingTimeInterval(max(0, patchEnd.timeIntervalSince(pumpStartTime)))
+        }
+        let estimate = dose.tempBasalEstimate(of: snapshot, restarted: restarted, until: until)
 
         guard let event = finalize(dose, deliveredUnits: estimate.units, .byEstimate) else {
             return nil
@@ -3605,6 +4166,483 @@ public extension MedtrumPumpManager {
                 (restarted ? " - it ran across patch-local midnight" : "")
         )
         return event
+    }
+
+    // MARK: - Temp basals ended back to back
+
+    /// A temp basal of ours that a new one replaced back to back ends open: the host is told it ended where the new one
+    /// started - exactly there, the same instant, so it has nothing to fill between the two - mutable until its records
+    /// are read. Loop takes basal doses as final in order, and moves past a temp basal still mutable once anything
+    /// immutable after it is stored - a temp basal's final, the scheduled basal it fills a gap with, a suspend: so these
+    /// go final in order, the oldest first, in the batch that carries the next or an earlier one - never one before an
+    /// older one (`finalize`). Every replacing batch carries those not final yet, mutable (`emitPumpEvents`).
+    ///
+    /// Their records are read once the command is over (`readOpenTempBasalEndsSoon`), or by any record sync: each one
+    /// read is kept on the temp basal it is a part of, which goes final from them once they add up to where it ended -
+    /// in its end where the next one started, the amount the patch's (`settleOpenTempBasalEnds`). From our estimate once
+    /// its last record is read past without that, once it cannot be told by its records at all, after
+    /// `openTempBasalEndMaximumWait` - or before anything that leaves a gap or a dose of another kind after them goes out:
+    /// a temp basal that ends with one reads their records with its own, and they go final with it
+    /// (`settleTempBasalEnd`). The patch session ending finalizes them with everything else.
+    ///
+    /// Saved with the doses: a restart reads them as ever. Only under `doseReportLock`.
+    private var openTempBasalEnds: [UnfinalizedDose] {
+        state.awaitingRecord.filter { dose in
+            let ended = dose.snapshot
+            return dose.type == .tempBasal && ended.endedOpen && !ended.isFinalized
+        }.sorted { $0.startDate < $1.startDate }
+    }
+
+    /// Whether any temp basal ended open is waiting on its records
+    internal var hasOpenTempBasalEnds: Bool {
+        doseReportLock.withLock { !openTempBasalEnds.isEmpty }
+    }
+
+    /// Whether `ended`, a temp basal ended open within `openTempBasalEndReadDelay` of `checkedAt`, has its first read
+    /// still to come from the command that ended it (`readOpenTempBasalEndsSoon`) - the loop's bolus right behind it
+    /// first. Past that, any sync reads it, its other bounds as ever.
+    private func awaitsItsReadAfterTheCommand(_ ended: UnfinalizedDose.State, at checkedAt: Date) -> Bool {
+        guard ended.endedOpen, !ended.isFinalized, let finishedAt = ended.finishedAt else {
+            return false
+        }
+        // The read it waits for goes by the monotonic clock: a wall clock set back since - the age negative - excludes
+        // nothing
+        let age = checkedAt.timeIntervalSince(finishedAt)
+        return age >= 0 && age < openTempBasalEndReadDelay
+    }
+
+    /// How long a temp basal ended open waits for its records at most, read or not: its final is not put off further
+    internal static let openTempBasalEndMaximumWait: TimeInterval = awaitingRecordTimeout
+
+    /// `dose`, the running temp basal, ended open at `endedAt` - see `openTempBasalEnds` - its last record `lastRecord`,
+    /// ending at `patchEnd` on the patch clock, where known. The caller replaces `state.basalDose`. Only under
+    /// `doseReportLock`.
+    private func endOpen(_ dose: UnfinalizedDose, at endedAt: Date, patchEnd: Date?, lastRecord: Int?) {
+        guard dose.endOpen(at: endedAt, patchEnd: patchEnd, endRecord: lastRecord, at: now()) else {
+            return
+        }
+        state.mutateAwaitingRecord { doses in
+            guard !doses.contains(where: { $0 === dose }) else {
+                return
+            }
+            doses.append(dose)
+        }
+
+        log.info(
+            "Temp basal of \(dose.startDate) ended at \(endedAt), where the next one started: reported ended and mutable until " +
+                "its records up to \(lastRecord.map { "#\($0)" } ?? "-") are read"
+        )
+    }
+
+    /// Whether `dose`, ended open, can be told by its records at all: a patch start to begin at, where it ended on the
+    /// patch clock, its last record named
+    private static func isReadable(_ ended: UnfinalizedDose.State) -> Bool {
+        !ended.recordMatchDisabled && ended.pumpStartTime != nil && ended.patchEndTime != nil && ended.endRecord != nil
+    }
+
+    /// What the records of `dose`, ended open - the parts kept on it, and `records` - show it delivered: nil if they do
+    /// not add up to where it ended, or it can't be told by its records - see `tempBasalParts`
+    private func openTempBasalParts(
+        of dose: UnfinalizedDose,
+        in records: [GetRecordResponse] = [],
+        logging: Bool = false
+    ) -> (delivered: Double, duration: TimeInterval, sequences: [Int], end: Date)? {
+        let ended = dose.snapshot
+        guard Self.isReadable(ended), let patchEnd = ended.patchEndTime else {
+            return nil
+        }
+        guard let parts = tempBasalParts(of: dose, in: records, endingAt: patchEnd, through: ended.endRecord, logging: logging),
+              abs(parts.end.timeIntervalSince(patchEnd)) <= RecordSyncer.tempBasalStartTolerance
+        else {
+            return nil
+        }
+        return parts
+    }
+
+    /// Fixes the final of `dose`, ended open, from `parts` of its records: what they delivered, its end where the next one
+    /// started. Only under `doseReportLock`; the caller hands the final over.
+    private func finalizeOpen(
+        _ dose: UnfinalizedDose,
+        from parts: (delivered: Double, duration: TimeInterval, sequences: [Int], end: Date)
+    ) -> NewPumpEvent? {
+        let ended = dose.snapshot
+        log.info(
+            "Record(s) \(parts.sequences.map(String.init).joined(separator: ", ")) finalize the temp basal of " +
+                "\(dose.startDate) that ended back to back: \(String(format: "%.1f", parts.duration / 60)) min on the patch, " +
+                "delivered \(parts.delivered) U by its records - ended at \(ended.observedEndDate.map { "\($0)" } ?? "-"), " +
+                "where the next one started"
+        )
+
+        // Its records end well before the next one started - more than a cancel, the hand-over and a set take: the patch
+        // had stopped it before, which the cancel's answer did not tell. It ends where they do: the host fills the
+        // schedule up to the next one's start, exactly - which still starts past everything final.
+        let recorded = dose.startDate.addingTimeInterval(parts.duration)
+        if let next = ended.observedEndDate, parts.duration >= Self.shortestComputedDuration, !ended.firstSegmentUncertain,
+           next.timeIntervalSince(recorded) > Self.openRecordShortfallTolerance
+        {
+            log.warning(
+                "The records of the temp basal of \(dose.startDate) end \(Int(next.timeIntervalSince(recorded))) s before the " +
+                    "next one started: the patch had stopped it - it ends at \(recorded), the schedule after it"
+            )
+            return finalize(dose, deliveredUnits: parts.delivered, endDate: recorded, .byRecord)
+        }
+        return finalize(dose, deliveredUnits: parts.delivered, .byRecord)
+    }
+
+    /// How much sooner than the next one's start the records of a temp basal ended back to back may end, and it still
+    /// have run up to the cancel: the cancel's answer (2 to 4 s on a slow link), the hand-over of the state before the set
+    /// (`stateHandOverTimeout`, 3 s at most), the set's round trip (4 to 9 s, one record's worth), and a second of each
+    /// clock's rounding
+    internal static let openRecordShortfallTolerance: TimeInterval = 20
+
+    /// Finalizes the temp basals ended open that can be, the oldest first, up to the first that has to wait - see
+    /// `openTempBasalEnds` - every record up to `readThrough` read, or the cursor's. Returns their finals. Only under
+    /// `doseReportLock`; the caller hands them over.
+    private func settleOpenTempBasalEnds(readThrough: Int? = nil) -> [NewPumpEvent] {
+        let readUpTo = max(state.syncedSequenceNumber, readThrough ?? 0)
+        let checkedAt = now()
+        var events: [NewPumpEvent] = []
+
+        for dose in openTempBasalEnds {
+            if let parts = openTempBasalParts(of: dose) {
+                if let final = finalizeOpen(dose, from: parts) {
+                    events.append(final)
+                }
+                continue
+            }
+
+            let ended = dose.snapshot
+            let reason: String
+            if !Self.isReadable(ended) {
+                if ended.recordMatchDisabled {
+                    reason = "its records do not start where its patch start says"
+                } else if ended.pumpStartTime == nil {
+                    reason = "its patch start is not known, its records can't be told"
+                } else {
+                    reason = "no record of its end is known"
+                }
+            } else if let endRecord = ended.endRecord, endRecord <= readUpTo {
+                // Logged, why not
+                _ = openTempBasalParts(of: dose, logging: true)
+                reason = "its records up to \(endRecord) were read, and do not add up to it"
+            } else if let finishedAt = ended.finishedAt,
+                      checkedAt.timeIntervalSince(finishedAt) >= Self.openTempBasalEndMaximumWait
+            {
+                reason = "its records were not read within \(Int(Self.openTempBasalEndMaximumWait / 60)) min of its end"
+            } else {
+                break
+            }
+
+            // A temp basal whose command went unanswered, started before it, still unsettled: its final - from a record
+            // read later - would go out behind this one's, which the host may then drop. This one waits for it, up to
+            // `awaitingRecordMaximumWait`.
+            if let pending = state.unconfirmedTempBasal, pending.startDate < dose.startDate, let finishedAt = ended.finishedAt,
+               checkedAt.timeIntervalSince(finishedAt) < Self.awaitingRecordMaximumWait
+            {
+                log.info(
+                    "The temp basal of \(dose.startDate) would go final from our estimate, \(reason) - it waits for the one of " +
+                        "\(pending.value) U/h whose command went unanswered before it"
+                )
+                break
+            }
+
+            if let final = estimateFinal(dose, because: reason) {
+                events.append(final)
+            }
+        }
+
+        return events
+    }
+
+    /// The finals of every temp basal ended open, from our estimate, the oldest first - for a temp basal after them that
+    /// goes final so, its records not read on the way. Only under `doseReportLock`; the caller hands them over.
+    private func openTempBasalEndsFromEstimate(because reason: String) -> [NewPumpEvent] {
+        openTempBasalEnds.compactMap { estimateFinal($0, because: reason) }
+    }
+
+    /// Record sync: every record up to `sequence` was read, or given up on - the temp basals ended open that this settles
+    /// go final, and out. Before the cursor moves past it.
+    internal func settleOpenTempBasalEndsRead(through sequence: Int) {
+        doseReportLock.withLock {
+            let events = settleOpenTempBasalEnds(readThrough: sequence)
+            if !events.isEmpty {
+                emitPumpEvents(events)
+            }
+        }
+    }
+
+    /// `record` is of a part of a temp basal of ours that ended open: of this patch, at its rate, starting on its patch
+    /// start or where the part kept before it ended. Kept on it - and the temp basals ended open settled, it among them
+    /// if its parts now add up to where it ended. Only under `doseReportLock`.
+    private func keepPartOfOpenTempBasal(_ record: BasalRecord, response: GetRecordResponse) -> String? {
+        guard RecordSyncer.isSamePatch(response.patchId, state.patchId.toUInt64()) else {
+            return nil
+        }
+
+        let tolerance = RecordSyncer.tempBasalStartTolerance
+        for dose in openTempBasalEnds {
+            let ended = dose.snapshot
+            // Its own records only: numbered up to its last, and none once they reach where it ended - the next one's, at
+            // the same rate, may start right there
+            guard !ended.recordMatchDisabled, let pumpStartTime = ended.pumpStartTime,
+                  RecordSyncer.steps(record.rate) == RecordSyncer.steps(dose.value),
+                  ended.endRecord.map({ response.sequence <= $0 }) ?? true
+            else {
+                continue
+            }
+
+            if ended.recordedParts.contains(where: { $0.sequence == response.sequence }) {
+                log.info("Record \(response.sequence) is a part of the ended temp basal of \(dose.startDate), kept already")
+                return "part of ended temp basal \(dose.startDate)"
+            }
+
+            let partStart = ended.recordedParts.last?.end ?? pumpStartTime
+            let complete = ended.patchEndTime.map { abs(partStart.timeIntervalSince($0)) <= tolerance && !ended.recordedParts.isEmpty } ?? false
+            guard !complete, abs(record.startTime.timeIntervalSince(partStart)) <= tolerance, record.endTime > record.startTime else {
+                continue
+            }
+
+            let part = UnfinalizedDose.RecordedPart(
+                sequence: response.sequence,
+                patchId: response.patchId & 0xFFFF,
+                start: record.startTime,
+                end: record.endTime,
+                delivered: record.delivered
+            )
+            guard dose.keepRecordedPart(part) else {
+                continue
+            }
+
+            log.info(
+                "Record \(response.sequence) is a part of the temp basal of \(dose.startDate) that ended back to back, from " +
+                    "\(record.startTime) to \(record.endTime), delivered \(record.delivered) U: kept"
+            )
+
+            let events = settleOpenTempBasalEnds(readThrough: response.sequence)
+            if !events.isEmpty {
+                emitPumpEvents(events)
+            }
+            return dose.isFinalized ? "finalized temp basal \(dose.startDate)" : "part of ended temp basal \(dose.startDate)"
+        }
+
+        return nil
+    }
+
+    /// A suspend `dose` a status shows, following the running basal - not a temp basal of ours - while the temp basal
+    /// whose command went unanswered is kept and the patch has records past the cursor: its own, if it ran. Reported
+    /// now, the suspend has Loop fill up to its start - its watermark past the unanswered one, whose final after it Loop
+    /// would not count. Held instead: saved with the state (`heldBasalDoses`) - a restart reports it after all - and left
+    /// out of every batch until those records are read, off the queue statuses arrive on once no command is in flight
+    /// (a suspend or a resume command reads them itself), then reported - or at once ahead of a set that comes first, or
+    /// of anything else a status reports (`releaseHeldForUnconfirmedRead`). A resume after it is held with it
+    /// (`holdWithHeldSuspend`), and so is another suspend: neither goes out ahead of it. Unread, it is reported all the
+    /// same. The host has no suspend meanwhile - IOB only ever overstated: up to `commandActivityTimeout` waiting for a
+    /// command in flight, the wait for the command lock after it, and `tempBasalEndReadBudget` for the reads - some 6 min
+    /// at worst, behind a stuck command. Returns false, nothing held: the caller reports it. Only under `doseReportLock`.
+    internal func holdForUnconfirmedRead(_ dose: UnfinalizedDose) -> Bool {
+        // Behind one held already: released with it, by what releases that one
+        if !heldForUnconfirmedRead.isEmpty {
+            holdWithTheHeld(dose)
+            return true
+        }
+        guard state.unconfirmedTempBasal != nil, state.currentSequenceNumber > state.syncedSequenceNumber,
+              pendingTempBasalEndStorage == nil, state.bolusDose == nil
+        else {
+            return false
+        }
+        log.info("Holding the suspend of \(dose.startDate) back until the records of the temp basal whose command went unanswered are read")
+        state.heldBasalDoses.append(HeldBasalDose(dose: dose, heldAt: now()))
+        heldForUnconfirmedRead.append(dose)
+
+        tempBasalEndQueue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            let deadline = Date.now.addingTimeInterval(Self.commandActivityTimeout)
+            while self.isCommandActive, Date.now < deadline, !self.backgroundReadsStopped.value {
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+            guard !self.backgroundReadsStopped.value else {
+                return
+            }
+            let held = self.doseReportLock.withLock { !self.heldForUnconfirmedRead.isEmpty }
+            guard held else {
+                return
+            }
+            self.withCommandLock {
+                RecordSyncer.readInCommand(
+                    pumpManager: self,
+                    through: self.state.currentSequenceNumber,
+                    until: self.now().addingTimeInterval(Self.tempBasalEndReadBudget),
+                    of: "the temp basal whose command went unanswered, a suspend held back"
+                )
+            }
+            self.releaseHeldForUnconfirmedRead()
+        }
+        return true
+    }
+
+    /// A resume `dose` - a status's, or a command's - while a suspend is held back by `holdForUnconfirmedRead`: held with
+    /// it, reported after it in the batch that releases them. Out ahead of it, iAPS would take the patch to have been
+    /// suspended since before its history (oref0 `iob/history`: the earliest resume before the earliest suspend) - and
+    /// with `suspend_zeros_iob` zero every temp basal before the resume, and the scheduled basal from 8 h back: IOB far
+    /// too low. Loop makes nothing of a resume alone, then pairs it with the suspend - but has neither meanwhile, as iAPS:
+    /// IOB only ever overstated. Returns false, nothing held: the caller reports it. Only under `doseReportLock`.
+    internal func holdWithHeldSuspend(_ dose: UnfinalizedDose) -> Bool {
+        guard dose.type == .resume, !heldForUnconfirmedRead.isEmpty else {
+            return false
+        }
+        holdWithTheHeld(dose)
+        return true
+    }
+
+    /// `dose` held back after those `holdForUnconfirmedRead` holds, released with them - from when the first was held: it
+    /// goes for good no earlier than they do (`dropExpiredFinals`). Only under `doseReportLock`.
+    private func holdWithTheHeld(_ dose: UnfinalizedDose) {
+        log.info("Holding the \(dose.type.rawValue) of \(dose.startDate) back with the suspend held for the records of the temp basal whose command went unanswered")
+        let first = heldForUnconfirmedRead.first
+        let heldAt = state.heldBasalDoses.first { $0.dose === first }?.heldAt ?? now()
+        state.heldBasalDoses.append(HeldBasalDose(dose: dose, heldAt: heldAt))
+        heldForUnconfirmedRead.append(dose)
+    }
+
+    /// The suspend held back by `holdForUnconfirmedRead`, if any - in a command - reported once the records of the temp
+    /// basal whose command went unanswered are read, as a suspend command reads them, or not to be. Read whether held
+    /// back or not - a suspend reported, the hold refused (a bolus running at the halt, say): the unanswered one final
+    /// from its own ahead of the resume, not left to a sync after it. Nothing to read - none kept, or read up - nothing is.
+    private func releaseHeldAfterUnconfirmedRead() {
+        readUnconfirmedTempBasalsRecords(through: state.currentSequenceNumber)
+        releaseHeldForUnconfirmedRead()
+    }
+
+    /// The suspend held back by `holdForUnconfirmedRead`, if any, reported - with what was held with it, in order - its
+    /// records read, or not to be: before a set, a resume command, or anything else a status reports goes out
+    internal func releaseHeldForUnconfirmedRead() {
+        let released = doseReportLock.withLock { () -> Bool in
+            guard !heldForUnconfirmedRead.isEmpty else {
+                return false
+            }
+            heldForUnconfirmedRead = []
+            return true
+        }
+        guard released else {
+            return
+        }
+        emitPumpEvents([])
+        notifyStateDidChange()
+    }
+
+    /// The records up to `last` - the one the cancel ahead of a set named, else the newest the patch has - read in the
+    /// command, in order from the cursor, before the set, the suspend or the resume is reported: the temp basal whose
+    /// command went unanswered, kept, goes final from its own - or is dropped, or split - in a batch ahead of that
+    /// report. A temp basal reported running, or a suspend - Loop fills up to its start - has Loop's watermark past the
+    /// unanswered one: final behind it, Loop would not count it (`warnIfBehindWhatIsFinal`). Only with no other basal of
+    /// ours waiting on its end - nothing else the reads would settle out of turn - and no bolus running. The host has the
+    /// state first: killed during the reads, the app comes back with the cancel's outcome and the unanswered one kept, no
+    /// set pending. Unread - the link slow, the budget spent - the set goes out all the same, and the record is read
+    /// after the command, as before.
+    private func readUnconfirmedTempBasalsRecords(through last: Int) {
+        let due = doseReportLock.withLock { () -> Bool in
+            let running = state.basalDose
+            return state.unconfirmedTempBasal != nil && pendingTempBasalEndStorage == nil
+                && (running.type != .tempBasal || running.isFinished) && state.bolusDose == nil
+                && last > state.syncedSequenceNumber
+        }
+        guard due else {
+            return
+        }
+
+        handOverState(before: "reading the records of the temp basal whose command went unanswered")
+        RecordSyncer.readInCommand(
+            pumpManager: self,
+            through: last,
+            until: now().addingTimeInterval(Self.tempBasalEndReadBudget),
+            of: "the temp basal whose command went unanswered"
+        )
+    }
+
+    /// The newest record the temp basals ended open wait on: the last one of the latest. Nil, none waits.
+    internal var lastRecordOfOpenTempBasalEnds: Int? {
+        doseReportLock.withLock {
+            (openTempBasalEnds + [state.unconfirmedTempBasal].compactMap { $0 }).compactMap { $0.snapshot.endRecord }.max()
+        }
+    }
+
+    /// Reads the records of the temp basals ended open (`openTempBasalEnds`), up to the newest one they wait on, off the
+    /// command's thread: `openTempBasalEndReadDelay` from now, once no command is in flight - the loop's bolus, right behind
+    /// the temp basal that ended the last of them, has the link first, and is held up by no record. As a record sync
+    /// does: not while a bolus runs, and yielding to a command between two records - what is not read now, a later sync
+    /// reads.
+    private func readOpenTempBasalEndsSoon(after delay: TimeInterval? = nil) {
+        let delay = delay ?? openTempBasalEndReadDelay
+        let read = { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let deadline = Date.now.addingTimeInterval(Self.commandActivityTimeout)
+            while self.isCommandActive, Date.now < deadline, !self.backgroundReadsStopped.value {
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+
+            guard !self.backgroundReadsStopped.value, let through = self.lastRecordOfOpenTempBasalEnds else {
+                return
+            }
+            // No record is read while a bolus runs: once it is over (`notifyStateDidChange`)
+            let bolusRuns = self.doseReportLock.withLock { () -> Bool in
+                guard self.state.bolusDose != nil else {
+                    return false
+                }
+                self.openTempBasalEndReadAwaitsBolus = true
+                return true
+            }
+            guard !bolusRuns else {
+                self.log.info("A bolus is running: the records of the temp basals ended back to back are read once it is over")
+                return
+            }
+            RecordSyncer.syncRecords(pumpManager: self, trigger: .tempBasalEnds, through: through)
+        }
+
+        if delay > 0 {
+            tempBasalEndQueue.asyncAfter(deadline: .now() + delay, execute: read)
+        } else {
+            tempBasalEndQueue.async(execute: read)
+        }
+    }
+
+    /// Loop's watermark as the state was saved - see `MedtrumPumpState.loopWatermark` - or, saved before it was kept, as
+    /// the finals the host has yet to confirm make it: the rest is not known
+    private func noteFinalsFromLastRun() {
+        doseReportLock.withLock {
+            if state.loopWatermark == nil {
+                // A held suspend counts with its start: Loop has it from there, ended by what follows
+                let finals = state.awaitingRecord.filter { $0.type == .tempBasal }.compactMap(\.finalEndDate)
+                let suspends = state.heldBasalDoses.filter { $0.dose.type == .suspend }.map(\.dose.startDate)
+                state.loopWatermark = (finals + suspends).max()
+            }
+            loopWatermarkModel = LoopWatermark(date: state.loopWatermark)
+        }
+    }
+
+    /// For tests: the reads queued on `tempBasalEndQueue` - after a delay, behind a command or a bolus - give up, and none
+    /// starts from here on: none outlives the scenario that queued it, into the record sync's run state of the next
+    func stopBackgroundReads() {
+        backgroundReadsStopped.value = true
+        tempBasalEndQueue.sync {}
+    }
+
+    /// The bolus a read of the temp basals ended open waited for is over: read them now, once
+    private func readOpenTempBasalEndsAfterBolus() {
+        let due = doseReportLock.withLock { () -> Bool in
+            guard openTempBasalEndReadAwaitsBolus, state.bolusDose == nil else {
+                return false
+            }
+            openTempBasalEndReadAwaitsBolus = false
+            return lastRecordOfOpenTempBasalEnds.map { $0 > state.syncedSequenceNumber } ?? false
+        }
+        if due {
+            readOpenTempBasalEndsSoon(after: 0)
+        }
     }
 
     // MARK: - Temp basal whose command went unanswered
@@ -3622,9 +4660,18 @@ public extension MedtrumPumpManager {
         sentAt: Date,
         sentUptime: TimeInterval?,
         sequenceAtSend: Int,
-        priorSegmentStart: Date?
+        priorSegmentStart: Date?,
+        basalBefore: Date?,
+        basalBeforeOnPatch: Date?
     ) {
-        dose.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend, priorSegmentStart: priorSegmentStart)
+        dose.noteCommand(
+            sentAt: sentAt,
+            uptime: sentUptime,
+            sequence: sequenceAtSend,
+            priorSegmentStart: priorSegmentStart,
+            basalBefore: basalBefore,
+            basalBeforeOnPatch: basalBeforeOnPatch
+        )
 
         doseReportLock.withLock {
             keepUnconfirmed(dose, .unanswered)
@@ -3704,7 +4751,10 @@ public extension MedtrumPumpManager {
                 sentAt: pending.sentAt,
                 uptime: nil,
                 sequence: pending.sequenceAtSend,
-                priorSegmentStart: pending.priorSegmentStart
+                priorSegmentStart: pending.priorSegmentStart,
+                basalBefore: pending.cancelledAt ?? reportedBasalStart,
+                // The cancel's segment, as its answer said - else the running basal's own
+                basalBeforeOnPatch: pending.cancelledAt != nil ? pending.cancelSegmentStart : reportedBasalPatchStart
             )
             keepUnconfirmed(dose, .appRestarted)
             log.error(
@@ -3727,10 +4777,16 @@ public extension MedtrumPumpManager {
     /// known to have begun after its command went out (`laterSegmentStart`), on our clock. Its record is written then,
     /// so the wait for it counts from there.
     internal func unconfirmedTempBasalEnd(_ pending: UnfinalizedDose) -> Date {
-        guard let later = pending.snapshot.laterSegmentStart else {
+        let unconfirmed = pending.snapshot
+        guard let later = unconfirmed.laterSegmentStart else {
             return pending.estimatedEndDate
         }
-        return patchTimeOnOurClock(later, notBefore: pending.startDate, notAfter: pending.estimatedEndDate)
+        // From the basal before it, on each clock alone - see `unansweredStartOffset` - else through the skew
+        guard let basalBefore = unconfirmed.basalBefore, let onPatch = unconfirmed.basalBeforeOnPatch else {
+            return patchTimeOnOurClock(later, notBefore: pending.startDate, notAfter: pending.estimatedEndDate)
+        }
+        let end = basalBefore.addingTimeInterval(later.timeIntervalSince(onPatch))
+        return max(min(end, pending.estimatedEndDate), pending.startDate)
     }
 
     /// A status received at `receivedAt` shows a segment - or a suspend - that started at `start` on the patch clock, and
@@ -3750,9 +4806,10 @@ public extension MedtrumPumpManager {
             }
 
             let unconfirmed = pending.snapshot
-            let sentOnPatchClock = (unconfirmed.sentAt ?? pending.startDate)
-                .addingTimeInterval(state.patchClockSkew + Self.unansweredStartSlack)
-            guard let prior = unconfirmed.priorSegmentStart, start > prior, start > sentOnPatchClock,
+            // Begun after its command went out by more than the slack, told skew-free where it can be
+            let afterTheCommand = unansweredStartOffset(of: unconfirmed, sentAt: unconfirmed.sentAt ?? pending.startDate, patchTime: start) >
+                Self.unansweredStartSlack
+            guard let prior = unconfirmed.priorSegmentStart, start > prior, afterTheCommand,
                   !Self.statusPredatesCommand(of: unconfirmed, receivedAt: receivedAt, receivedUptime: receivedUptime)
             else {
                 return false
@@ -3764,6 +4821,39 @@ public extension MedtrumPumpManager {
             pending.noteLaterSegment(startingAt: start)
             return true
         }
+    }
+
+    /// A command is cancelling `dose`, the temp basal running: from the cancel on it reports what follows it - the
+    /// temp basal it sets after it, back to back, or the scheduled basal, whatever the outcome - so the scheduled basal a
+    /// status shows meanwhile, the second or so between the cancel and the set, is not taken as its end. Only under
+    /// `doseReportLock`.
+    internal func isCancelInFlight(of dose: UnfinalizedDose) -> Bool {
+        tempBasalCancelInFlight === dose
+    }
+
+    /// A status received at `receivedAt` showed the schedule from `basal`'s start while the cancel was in flight: set
+    /// aside, the latest only, should the cancel fail - see `takeScheduleSetAsideForTheCancel`. Only under `doseReportLock`.
+    internal func setAsideForTheCancel(_ basal: BasalData, receivedAt: Date, receivedUptime: TimeInterval) {
+        scheduleSetAsideForTheCancel = (basal, receivedAt, receivedUptime)
+    }
+
+    /// The cancel failed: no longer in flight, and the schedule a status showed meanwhile, if any, is taken as any status's
+    /// - it may have been the patch's own, or the cancel's with its answer lost. On the command's thread.
+    private func takeScheduleSetAsideForTheCancel() {
+        let setAside = doseReportLock.withLock { () -> (basal: BasalData, receivedAt: Date, receivedUptime: TimeInterval)? in
+            tempBasalCancelInFlight = nil
+            defer { scheduleSetAsideForTheCancel = nil }
+            return scheduleSetAsideForTheCancel
+        }
+        guard let setAside else {
+            return
+        }
+        StateSyncer.replayScheduleSetAside(
+            setAside.basal,
+            receivedAt: setAside.receivedAt,
+            receivedUptime: setAside.receivedUptime,
+            pumpManager: self
+        )
     }
 
     /// A segment the patch reported, from a status or an answer - see `MedtrumPumpState.lastSegmentStart`. Only under
@@ -3812,7 +4902,8 @@ public extension MedtrumPumpManager {
                         return
                     }
                 } else if isOurRate, dose.setPumpStartTime(basal.startTime) {
-                    // Saved by a build that did not keep the answer's
+                    // Saved by a build that did not keep the answer's: a later segment's, maybe
+                    dose.markFirstSegmentUncertain()
                     log.info("Adopted patch start \(basal.startTime) for the running temp basal")
                     dose.noteStatusDelivery(basal.delivery, receivedAt: receivedAt)
                     return
@@ -3927,13 +5018,17 @@ public extension MedtrumPumpManager {
     /// runs: reported from its start on - or, the segment a restart of it, from its command on, and finalized from our
     /// estimate. Only under `doseReportLock`.
     /// The same second counts: the patch can start the temp basal in the second the cancel's STANDARD began, and a
-    /// segment of another type starting then can only be the one that replaced it. Returns whether it was the one.
+    /// segment of another type starting then can only be the one that replaced it. A late status of it - a later
+    /// segment known since, a later command's - changes nothing: its record settles it. Returns whether it was the one.
     private func confirmUnconfirmedTempBasal(
         _ pending: UnfinalizedDose,
         shownBy basal: BasalData,
         receivedAt: Date
     ) -> Bool {
         let unconfirmed = pending.snapshot
+        // A segment known to have begun since it - a later command's - and this status says nothing of what runs now: it
+        // is late, a notification of before, and running from here the temp basal would end the one running now
+        let isStale = state.lastSegmentStart.map { basal.startTime < $0 } == true
         guard basal.type == .ABSOLUTE_TEMP, abs(basal.rate - pending.value) <= 0.01,
               let prior = unconfirmed.priorSegmentStart, basal.startTime >= prior,
               unconfirmed.laterSegmentStart.map({ basal.startTime < $0 }) ?? true
@@ -3945,15 +5040,29 @@ public extension MedtrumPumpManager {
             return false
         }
 
+        // Its segment, but late: it ran, and ended by the segment known since - its record settles it, kept as it is
+        guard !isStale else {
+            log.warning(
+                "Status shows the segment of the temp basal of \(pending.value) U/h whose command went unanswered, from " +
+                    "\(basal.startTime) - late, a later segment is known: it ran, its record settles it"
+            )
+            return true
+        }
+        // The same over a suspend: a halted patch runs no temp basal - the segment began before the halt, which ended it.
+        // Taken to run from here, it would be dated over the suspension, its record clamped to its start.
+        guard state.basalDose.type != .suspend else {
+            log.warning(
+                "Status shows the segment of the temp basal of \(pending.value) U/h whose command went unanswered, from " +
+                    "\(basal.startTime) - late, the patch suspended since: it ran, its record settles it"
+            )
+            return true
+        }
+
         let sentAt = unconfirmed.sentAt ?? pending.startDate
         // Started well after the command, the segment is a restart of it - at patch-local midnight, on a profile
         // change - not its first: it ran from the command on, and its first record ends at the restart
-        let restarted = basal.startTime.timeIntervalSince(sentAt.addingTimeInterval(state.patchClockSkew)) > Self.recordMatchWindow
-        let start = restarted ? sentAt : patchTimeOnOurClock(
-            basal.startTime,
-            notBefore: sentAt.addingTimeInterval(-Self.unansweredStartSlack),
-            notAfter: receivedAt
-        )
+        let restarted = unansweredStartOffset(of: unconfirmed, sentAt: sentAt, patchTime: basal.startTime) > Self.recordMatchWindow
+        let start = restarted ? sentAt : unansweredStart(of: unconfirmed, sentAt: sentAt, patchTime: basal.startTime, notAfter: receivedAt)
         let tempBasalDose = UnfinalizedDose(
             tempRate: pending.value,
             duration: pending.estimatedEndDate.timeIntervalSince(pending.startDate),
@@ -3963,6 +5072,8 @@ public extension MedtrumPumpManager {
         )
         tempBasalDose.noteCommand(sentAt: sentAt, uptime: unconfirmed.sentUptime, sequence: unconfirmed.sequenceAtSend ?? 0)
         tempBasalDose.setPumpStartTime(basal.startTime)
+        // Dated from a status, its start within the match window of its command: nothing to time a stop from
+        tempBasalDose.markFirstSegmentUncertain()
 
         if restarted || unconfirmed.recordMatchDisabled {
             // A record of a part would finalize it with that part
@@ -3994,7 +5105,13 @@ public extension MedtrumPumpManager {
     /// segments known before (the same second counts, as for a status) and after it. It ran: reported once, final from
     /// its record - unless the record is only a part of it (`runSplitUnconfirmedTempBasal`). Only under
     /// `doseReportLock`.
-    private func finalizeUnconfirmedTempBasal(from record: BasalRecord, sequence: Int) -> String? {
+    /// `ending`: in the read of a temp basal's end that leaves a gap - see `settleTempBasalEnd` - the basal after it in
+    /// place: it ended by now, if it ran - it is never put back as running.
+    private func finalizeUnconfirmedTempBasal(
+        from record: BasalRecord,
+        sequence: Int,
+        ending: Bool = false
+    ) -> (outcome: String, events: [NewPumpEvent])? {
         guard let pending = state.unconfirmedTempBasal else {
             return nil
         }
@@ -4002,14 +5119,15 @@ public extension MedtrumPumpManager {
         let unconfirmed = pending.snapshot
         let sentAt = unconfirmed.sentAt ?? pending.startDate
         guard RecordSyncer.steps(record.rate) == RecordSyncer.steps(pending.value),
-              abs(record.startTime.timeIntervalSince(sentAt.addingTimeInterval(state.patchClockSkew))) <= Self.recordMatchWindow,
+              abs(unansweredStartOffset(of: unconfirmed, sentAt: sentAt, patchTime: record.startTime)) <= Self.recordMatchWindow,
               unconfirmed.priorSegmentStart.map({ record.startTime >= $0 }) ?? true,
               unconfirmed.laterSegmentStart.map({ record.startTime < $0 }) ?? true
         else {
             return nil
         }
 
-        let start = patchTimeOnOurClock(record.startTime, notBefore: sentAt.addingTimeInterval(-Self.unansweredStartSlack), notAfter: Date.now)
+        let span = unansweredSpan(of: unconfirmed, sentAt: sentAt, patchTime: record.startTime, notAfter: now(), lasting: record.duration)
+        let start = span.start
         let tempBasalDose = UnfinalizedDose(
             tempRate: pending.value,
             duration: pending.estimatedEndDate.timeIntervalSince(pending.startDate),
@@ -4022,10 +5140,10 @@ public extension MedtrumPumpManager {
 
         let utcOffset = state.patchUTCOffset ?? TimeInterval(TimeZone.current.secondsFromGMT())
         if unconfirmed.recordMatchDisabled || Self.isPatchMidnight(record.endTime, utcOffset: utcOffset) {
-            return runSplitUnconfirmedTempBasal(pending, as: tempBasalDose, shownBy: record, sequence: sequence)
+            return runSplitUnconfirmedTempBasal(pending, as: tempBasalDose, shownBy: record, sequence: sequence, endedBy: ending ? now() : nil)
         }
 
-        let endDate = start.addingTimeInterval(record.duration)
+        let endDate = span.end
         tempBasalDose.finish(endDate >= tempBasalDose.estimatedEndDate ? .completed : .cancelled, endedAt: endDate, at: now())
         state.unconfirmedTempBasal = nil
 
@@ -4033,8 +5151,47 @@ public extension MedtrumPumpManager {
             "Record \(sequence) is the temp basal of \(pending.value) U/h whose command went unanswered: it ran " +
                 "\(String(format: "%.1f", record.duration / 60)) min from \(record.startTime), delivered \(record.delivered) U"
         )
-        emitFinal(tempBasalDose, deliveredUnits: record.delivered, endDate: endDate)
-        return "finalized unconfirmed temp basal \(start)"
+        let events = finalize(tempBasalDose, deliveredUnits: record.delivered, endDate: endDate, .byRecord).map { [$0] } ?? []
+        if span.compressed {
+            // All of its amount in less time than it ran: counted so by iAPS, maybe not by Loop
+            warnNotCounted(
+                tempBasalDose,
+                because: "fitted into \(Int(endDate.timeIntervalSince(start))) s before a basal dose the host has, after running " +
+                    "\(Int(record.duration)) s"
+            )
+        } else {
+            warnIfBehindWhatIsFinal(tempBasalDose)
+        }
+        return ("finalized unconfirmed temp basal \(start)", events)
+    }
+
+    /// `dose`, the temp basal whose command went unanswered, is reported only now, starting before Loop's watermark - a
+    /// later temp basal reported meanwhile, say, its gap since the one before filled final up to its start (see
+    /// `LoopWatermark`). Loop stores no basal dose starting before it: it may never count this one. iAPS does. The host
+    /// is warned of uncertain delivery, and the settings show it not counted. Only under `doseReportLock`.
+    private func warnIfBehindWhatIsFinal(_ dose: UnfinalizedDose) {
+        guard let watermark = state.loopWatermark, dose.startDate < watermark else {
+            return
+        }
+        warnNotCounted(dose, because: "starting before Loop's watermark, \(watermark)")
+    }
+
+    /// The host is warned that `dose`, the temp basal whose command went unanswered, may not be counted, `reason` - and the
+    /// settings show it not counted. Only under `doseReportLock`.
+    private func warnNotCounted(_ dose: UnfinalizedDose, because reason: String) {
+        log.error(
+            "The temp basal of \(dose.value) U/h whose command went unanswered, from \(dose.startDate), is reported only now, " +
+                "\(reason): the host may not count it"
+        )
+        let key = UncertainDelivery.DoseKey(dose)
+        state.mutateUncertainDeliveries { deliveries in
+            for index in deliveries.indices where deliveries[index].kind == .tempBasal && deliveries[index].isOf(key) {
+                deliveries[index].outcome = .notCounted
+            }
+        }
+        pumpDelegate.notify { delegate in
+            delegate?.pumpManager(self, didError: .uncertainDelivery)
+        }
     }
 
     /// `record`, the unconfirmed temp basal's, ends where the patch split it - at patch-local midnight, or on a profile
@@ -4045,10 +5202,14 @@ public extension MedtrumPumpManager {
         _ pending: UnfinalizedDose,
         as tempBasalDose: UnfinalizedDose,
         shownBy record: BasalRecord,
-        sequence: Int
-    ) -> String {
+        sequence: Int,
+        endedBy latest: Date? = nil
+    ) -> (outcome: String, events: [NewPumpEvent]) {
         tempBasalDose.disableRecordMatch()
-        let end = unconfirmedTempBasalEnd(pending)
+        tempBasalDose.markFirstSegmentUncertain()
+        // Ended by `latest`, and never past the start of a basal dose the host has after it
+        let nextStart = reportedBasalDoses.filter { $0.startDate > tempBasalDose.startDate }.map(\.startDate).min()
+        let end = [unconfirmedTempBasalEnd(pending), latest, nextStart].compactMap { $0 }.min() ?? unconfirmedTempBasalEnd(pending)
         state.unconfirmedTempBasal = nil
 
         log.warning(
@@ -4061,6 +5222,7 @@ public extension MedtrumPumpManager {
         if end <= now() {
             tempBasalDose.finish(end >= tempBasalDose.estimatedEndDate ? .completed : .cancelled, endedAt: end, at: now())
             events = estimateFinal(tempBasalDose, because: "only a part of it has a record").map { [$0] } ?? []
+            warnIfBehindWhatIsFinal(tempBasalDose)
         } else {
             events = endTempBasalFromEstimate(
                 endedAt: tempBasalDose.startDate,
@@ -4072,8 +5234,117 @@ public extension MedtrumPumpManager {
         }
 
         state.lastSync = Date.now
-        emitPumpEvents(events)
-        return "part of split unconfirmed temp basal \(tempBasalDose.startDate)"
+        return ("part of split unconfirmed temp basal \(tempBasalDose.startDate)", events)
+    }
+
+    /// How much later than its command went out `patchTime` is, of the temp basal of `unconfirmed` whose command went
+    /// unanswered - told on each clock alone where the basal before it is known on both (`basalBefore`,
+    /// `basalBeforeOnPatch`): from there to `patchTime` on the patch clock, less from there to its command on ours.
+    /// Through the skew otherwise.
+    private func unansweredStartOffset(of unconfirmed: UnfinalizedDose.State, sentAt: Date, patchTime: Date) -> TimeInterval {
+        guard let basalBefore = unconfirmed.basalBefore, let onPatch = unconfirmed.basalBeforeOnPatch else {
+            return patchTime.timeIntervalSince(sentAt.addingTimeInterval(state.patchClockSkew))
+        }
+        return patchTime.timeIntervalSince(onPatch) - sentAt.timeIntervalSince(basalBefore)
+    }
+
+    /// When the temp basal of `unconfirmed` whose command went unanswered started, on our clock, its segment or record
+    /// starting at `patchTime`: from the basal before it as `unansweredStartOffset` tells it, else through the skew -
+    /// within `unansweredStartFloor` and `notAfter`, and before anything the host has after it
+    private func unansweredStart(of unconfirmed: UnfinalizedDose.State, sentAt: Date, patchTime: Date, notAfter: Date) -> Date {
+        unansweredSpan(of: unconfirmed, sentAt: sentAt, patchTime: patchTime, notAfter: notAfter, lasting: 0).start
+    }
+
+    /// Where the temp basal of `unconfirmed` whose command went unanswered ran, `duration` long from `patchTime` on the
+    /// patch clock, on ours: `unansweredStart`, and its end - never over a basal dose the host has that came after its
+    /// command: the host would trim that one to its start, and move its watermark past it - Loop then loses the running
+    /// temp basal. Dated into one, it is moved earlier to end where that one starts; with no room for all of it since
+    /// `unansweredStartFloor`, it is fitted into what there is, its amount kept - `compressed`. A status shows it running
+    /// now (`duration` 0): just before such a dose, if at all after it.
+    private func unansweredSpan(
+        of unconfirmed: UnfinalizedDose.State,
+        sentAt: Date,
+        patchTime: Date,
+        notAfter: Date,
+        lasting duration: TimeInterval
+    ) -> (start: Date, end: Date, compressed: Bool) {
+        let floor = unansweredStartFloor(of: unconfirmed, sentAt: sentAt)
+        var start: Date
+        if let basalBefore = unconfirmed.basalBefore, let onPatch = unconfirmed.basalBeforeOnPatch {
+            start = max(min(basalBefore.addingTimeInterval(patchTime.timeIntervalSince(onPatch)), notAfter), floor)
+        } else {
+            start = patchTimeOnOurClock(patchTime, notBefore: floor, notAfter: notAfter)
+        }
+
+        // The first thing the host has that came after its command
+        guard let later = reportedBasalDoses.filter({ $0.startDate > floor }).map(\.startDate).min(),
+              start.addingTimeInterval(duration) > later
+        else {
+            return (start, start.addingTimeInterval(duration), false)
+        }
+
+        guard duration >= Self.shortestComputedDuration else {
+            start = max(floor, min(start, later.addingTimeInterval(-Self.afterFinal)))
+            return (start, start, false)
+        }
+        let room = later.timeIntervalSince(floor)
+        guard room < duration else {
+            return (later.addingTimeInterval(-duration), later, false)
+        }
+        // Short by no more than the two clocks tell apart: fitted, its amount kept, nothing the host would miss
+        guard duration - room > Self.patchEndTolerance else {
+            return (floor, later, false)
+        }
+        return (floor, later, true)
+    }
+
+    /// The basal doses the host has: the running one unless a placeholder, those waiting on their record or final, and
+    /// the suspends and resumes held back - the host gets them all the same, after what goes out meanwhile: a resume
+    /// held with its suspend the running one, that suspend bounds the temp basal before it, not the resume
+    private var reportedBasalDoses: [UnfinalizedDose] {
+        (state.basalDoseIsPlaceholder ? [] : [state.basalDose]) + state.awaitingRecord.filter { $0.type != .bolus } +
+            state.heldBasalDoses.map(\.dose).filter { $0.type == .suspend || $0.type == .resume }
+    }
+
+    /// Where the running basal of `reportedBasalStart` began on the patch clock, where known - the segment the cancel, the
+    /// resume or the status that put it in place showed
+    private var reportedBasalPatchStart: Date? {
+        reportedBasalStart != nil ? state.basalDose.pumpStartTime : nil
+    }
+
+    /// The start of the running basal, if it is of another kind than a temp basal and the host was told of it - not a
+    /// placeholder (`MedtrumPumpState.basalDoseIsPlaceholder`)
+    private var reportedBasalStart: Date? {
+        state.basalDose.type != .tempBasal && !state.basalDoseIsPlaceholder ? state.basalDose.startDate : nil
+    }
+
+    /// How far after a dose of another basal kind a temp basal is dated at the earliest, when its start would be the same
+    /// instant: just after, the order unmistakable
+    private static let afterFinal: TimeInterval = 0.001
+
+    /// The earliest a resume of the suspend started at `suspendStart` is dated: the next whole second. iAPS stores pump
+    /// events to the second, floored (`PumpHistoryEvent`, `truncatedToSecond`), and oref0 pairs a resume with a suspend
+    /// only if it is strictly later (`iob/history`): in the suspend's second, the suspend is left open - every temp basal
+    /// after it zeroed, up to now. At most a second after the patch resumed: for Loop, a second more of the suspension.
+    internal static func earliestResume(after suspendStart: Date) -> Date {
+        Date(timeIntervalSinceReferenceDate: suspendStart.timeIntervalSinceReferenceDate.rounded(.down) + 1)
+    }
+
+    /// How early a temp basal whose command went out at `sentAt` unanswered may be dated: `unansweredStartSlack` before
+    /// then - but after the basal the host was told ran when it went out (`UnfinalizedDose.State.basalBefore`), the
+    /// scheduled basal from the cancel before it, say, final: the host would take the temp basal as starting before something final, and pass it by - or, starting
+    /// at the same instant, order the two either way. Only under `doseReportLock`.
+    private func unansweredStartFloor(of unconfirmed: UnfinalizedDose.State, sentAt: Date) -> Date {
+        let floor = sentAt.addingTimeInterval(-Self.unansweredStartSlack)
+        if let basalBefore = unconfirmed.basalBefore {
+            return max(floor, basalBefore.addingTimeInterval(Self.afterFinal))
+        }
+        // Saved by a build that did not keep it: the basal running now, if it is the one from then, reported
+        let running = state.basalDose
+        guard running.type != .tempBasal, !state.basalDoseIsPlaceholder, running.startDate <= sentAt else {
+            return floor
+        }
+        return max(floor, running.startDate.addingTimeInterval(Self.afterFinal))
     }
 
     /// The patch splits a temp basal at patch-local midnight: a record of it ending then is a part

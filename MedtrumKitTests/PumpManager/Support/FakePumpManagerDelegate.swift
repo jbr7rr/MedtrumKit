@@ -13,6 +13,8 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
         let replacePendingEvents: Bool
         /// The state the host had saved when the batch arrived: what an app killed right after storing it restarts from
         let savedState: PumpManager.RawStateValue?
+        /// The host stored it: it answered it with no error, or holds it still
+        var stored = true
     }
 
     struct StatusUpdate {
@@ -41,10 +43,12 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
 
     private let lock = NSLock()
     private var recordedBatches: [Batch] = []
-    private var heldCompletions: [(Error?) -> Void] = []
+    private var heldCompletions: [(batch: Int, completion: (Error?) -> Void)] = []
     private var reply: BatchReply = .acknowledge
     private var recordedStateUpdates = 0
     private var lastSavedState: PumpManager.RawStateValue?
+    /// Every state handed over, and how many batches had arrived by then
+    private var stateSaves: [(state: PumpManager.RawStateValue, batchesBefore: Int)] = []
     private var recordedStatusUpdates: [StatusUpdate] = []
     private var recordedErrors: [PumpManagerError] = []
     private var recordedReservoirReads: [ReservoirRead] = []
@@ -63,7 +67,12 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
     func releaseHeldBatches(error: Error? = nil) {
         let completions = lock.withLock { () -> [(Error?) -> Void] in
             defer { heldCompletions = [] }
-            return heldCompletions
+            if error != nil {
+                for held in heldCompletions {
+                    recordedBatches[held.batch].stored = false
+                }
+            }
+            return heldCompletions.map(\.completion)
         }
 
         queue.async {
@@ -79,6 +88,29 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
         lock.withLock { recordedBatches }
     }
 
+    /// The batches the host had stored when it saved `saved`, the last time it did - and the one that came with it: what an
+    /// app killed right after storing it, and restarted from `saved`, left the host with. Nil, it never saved that state.
+    func batchesStored(savingState saved: PumpManager.RawStateValue) -> [LoopOrderingChecker.Batch]? {
+        let (saves, all) = lock.withLock { (stateSaves, recordedBatches) }
+        let isSaved = { (state: PumpManager.RawStateValue?) -> Bool in
+            state.map { NSDictionary(dictionary: $0).isEqual(to: saved) } ?? false
+        }
+        guard var stored = saves.last(where: { isSaved($0.state) })?.batchesBefore else {
+            return nil
+        }
+        if stored < all.count, isSaved(all[stored].savedState) {
+            stored += 1
+        }
+        return all.prefix(stored).map {
+            LoopOrderingChecker.Batch(events: $0.events, replacePendingEvents: $0.replacePendingEvents, stored: $0.stored)
+        }
+    }
+
+    /// The batches as the Loop-ordering checker takes them
+    var hostBatches: [LoopOrderingChecker.Batch] {
+        batches.map { LoopOrderingChecker.Batch(events: $0.events, replacePendingEvents: $0.replacePendingEvents, stored: $0.stored) }
+    }
+
     var heldBatchCount: Int {
         lock.withLock { heldCompletions.count }
     }
@@ -90,6 +122,11 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
     /// The raw state handed over by the last `pumpManagerDidUpdateState`, as the host saves it
     var savedState: PumpManager.RawStateValue? {
         lock.withLock { lastSavedState }
+    }
+
+    /// Every raw state handed over so far, oldest first
+    var savedStates: [PumpManager.RawStateValue] {
+        lock.withLock { stateSaves.map(\.state) }
     }
 
     var statusUpdates: [StatusUpdate] {
@@ -126,15 +163,20 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
         completion: @escaping (Error?) -> Void
     ) {
         let reply = lock.withLock { () -> BatchReply in
+            var stored = true
+            if case .fail = self.reply {
+                stored = false
+            }
             recordedBatches.append(Batch(
                 events: events,
                 lastReconciliation: lastReconciliation,
                 replacePendingEvents: replacePendingEvents,
-                savedState: lastSavedState
+                savedState: lastSavedState,
+                stored: stored
             ))
 
             if case .hold = self.reply {
-                heldCompletions.append(completion)
+                heldCompletions.append((recordedBatches.count - 1, completion))
             }
             return self.reply
         }
@@ -177,6 +219,7 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
         lock.withLock {
             recordedStateUpdates += 1
             lastSavedState = rawState
+            stateSaves.append((rawState, recordedBatches.count))
         }
     }
 

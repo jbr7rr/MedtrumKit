@@ -96,6 +96,9 @@ public struct PendingTempBasal: RawRepresentable, Equatable {
     public let priorSegmentStart: Date?
     /// When the answered cancel that went out first ended the temp basal running before it - nil, none went out
     public let cancelledAt: Date?
+    /// Where the segment that cancel started began, on the patch clock, as its answer said - nil, none went out, or its
+    /// answer did not parse: the times of this one are then told through the skew
+    public let cancelSegmentStart: Date?
 
     public init(
         unitsPerHour: Double,
@@ -104,7 +107,8 @@ public struct PendingTempBasal: RawRepresentable, Equatable {
         sentAt: Date,
         sequenceAtSend: Int,
         priorSegmentStart: Date?,
-        cancelledAt: Date?
+        cancelledAt: Date?,
+        cancelSegmentStart: Date? = nil
     ) {
         self.unitsPerHour = unitsPerHour
         self.duration = duration
@@ -113,6 +117,7 @@ public struct PendingTempBasal: RawRepresentable, Equatable {
         self.sequenceAtSend = sequenceAtSend
         self.priorSegmentStart = priorSegmentStart
         self.cancelledAt = cancelledAt
+        self.cancelSegmentStart = cancelSegmentStart
     }
 
     public init?(rawValue: RawValue) {
@@ -129,7 +134,8 @@ public struct PendingTempBasal: RawRepresentable, Equatable {
             sentAt: sentAt,
             sequenceAtSend: sequenceAtSend,
             priorSegmentStart: rawValue["priorSegmentStart"] as? Date,
-            cancelledAt: rawValue["cancelledAt"] as? Date
+            cancelledAt: rawValue["cancelledAt"] as? Date,
+            cancelSegmentStart: rawValue["cancelSegmentStart"] as? Date
         )
     }
 
@@ -143,6 +149,7 @@ public struct PendingTempBasal: RawRepresentable, Equatable {
         ]
         raw["priorSegmentStart"] = priorSegmentStart
         raw["cancelledAt"] = cancelledAt
+        raw["cancelSegmentStart"] = cancelSegmentStart
         return raw
     }
 }
@@ -427,11 +434,14 @@ public class MedtrumPumpState: RawRepresentable {
             bolusDose = nil
         }
 
-        if let rawDoseEntry = rawValue["basalDose"] as? UnfinalizedDose.RawValue {
-            basalDose = UnfinalizedDose(rawValue: rawDoseEntry) ?? UnfinalizedDose
-                .defaultBasalDose(basalSchedule: basalSchedule, insulineType: insulinType)
+        // Absent in state written before it was kept: worked out from the doses below, see `MedtrumPumpManager`
+        loopWatermark = rawValue["loopWatermark"] as? Date
+        if let rawDoseEntry = rawValue["basalDose"] as? UnfinalizedDose.RawValue, let decoded = UnfinalizedDose(rawValue: rawDoseEntry) {
+            basalDose = decoded
+            basalDoseIsPlaceholder = rawValue["basalDoseIsPlaceholder"] as? Bool ?? false
         } else {
             basalDose = UnfinalizedDose.defaultBasalDose(basalSchedule: basalSchedule, insulineType: insulinType)
+            basalDoseIsPlaceholder = true
         }
 
         // Absent in state written before records were matched: none
@@ -458,6 +468,7 @@ public class MedtrumPumpState: RawRepresentable {
         }
         if isWaiting(basalDose) {
             basalDose = UnfinalizedDose.defaultBasalDose(basalSchedule: basalSchedule, insulineType: insulinType)
+            basalDoseIsPlaceholder = true
         }
 
         awaitingRecordStorage = Locked(awaitingRecord)
@@ -534,6 +545,7 @@ public class MedtrumPumpState: RawRepresentable {
         }
 
         basalDose = UnfinalizedDose.defaultBasalDose(basalSchedule: basalSchedule, insulineType: insulinType)
+        basalDoseIsPlaceholder = true
     }
 
     public var rawValue: RawValue {
@@ -580,6 +592,10 @@ public class MedtrumPumpState: RawRepresentable {
         value["pendingTempBasal"] = pendingTempBasal?.rawValue
         value["bolusDose"] = bolusDose?.rawValue
         value["basalDose"] = basalDose.rawValue
+        value["loopWatermark"] = loopWatermark
+        if basalDoseIsPlaceholder {
+            value["basalDoseIsPlaceholder"] = true
+        }
         if !heldBasalDoses.isEmpty {
             value["heldBasalDoses"] = heldBasalDoses.map(\.rawValue)
         }
@@ -753,8 +769,10 @@ public class MedtrumPumpState: RawRepresentable {
     /// held back until the temp basal's final goes out (`MedtrumPumpManager.TempBasalEnd`), saved until the host
     /// confirms storing a batch that carried it: an app killed meanwhile reports them after all, in its first batch,
     /// with that temp basal final from our estimate - and a batch the host could not store has them go out again, with
-    /// that final. A temp basal that followed is not kept here: it runs, and goes out with every batch. Empty otherwise.
-    /// Changed under `MedtrumPumpManager.doseReportLock`.
+    /// that final. A temp basal that followed is not kept here: it runs, and goes out with every batch. Kept here too: a
+    /// suspend held back for the records of the temp basal whose command went unanswered
+    /// (`MedtrumPumpManager.holdForUnconfirmedRead`), and what is held with it - a resume, a suspend - in the order they
+    /// go out. Empty otherwise. Changed under `MedtrumPumpManager.doseReportLock`.
     public var heldBasalDoses: [HeldBasalDose]
 
     /// A temp basal whose command went out unanswered: kept here, unreported, until a status shows the patch running it
@@ -767,7 +785,8 @@ public class MedtrumPumpState: RawRepresentable {
 
     /// Boluses and temp basals that stopped running, until the host has confirmed storing their final report.
     ///
-    /// A bolus stays mutable until the patch's record for it has been read, or until we give up on the record. A temp
+    /// A bolus stays mutable until the patch's record for it has been read, or until we give up on the record. So does a
+    /// temp basal a new one replaced back to back, ended open - see `MedtrumPumpManager.openTempBasalEnds`. Any other temp
     /// basal is final as it ends: it is here unfinalized only while its records are read, never reported so - see
     /// `MedtrumPumpManager.TempBasalEnd`. Once finalized a dose stays here with its final, which goes out with every
     /// batch until the host confirms a batch that carried it - see `MedtrumPumpManager.emitPumpEvents`.
@@ -884,8 +903,19 @@ public class MedtrumPumpState: RawRepresentable {
     public var basalDose: UnfinalizedDose {
         didSet {
             basalDoseSince = monotonicClock()
+            basalDoseIsPlaceholder = false
         }
     }
+
+    /// `basalDose` stands in for what the patch runs, the host never told of it: the schedule put in place as the state
+    /// was read back - none saved, or the temp basal saved there had ended - or at the activation of a patch. Anything
+    /// set later, or reported, clears it. Nothing is dated after it as after something the host has.
+    public internal(set) var basalDoseIsPlaceholder = false
+
+    /// Loop's watermark, as what was handed to the host makes it - see `LoopWatermark`,
+    /// `MedtrumPumpManager.warnIfBehindWhatIsFinal`. Saved: a restart keeps it. Changed under
+    /// `MedtrumPumpManager.doseReportLock`.
+    public internal(set) var loopWatermark: Date?
 
     /// When `basalDose` was put in place in this run, on the manager's monotonic clock: a status received before then
     /// says nothing of it. Nil for one read back with the state. Never saved: another run's monotonic clock is not ours.

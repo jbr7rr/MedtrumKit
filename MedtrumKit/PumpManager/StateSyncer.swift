@@ -114,6 +114,10 @@ enum StateSyncer {
         let receivedAt = syncResponse.receivedAt
         let receivedUptime = syncResponse.receivedUptime
 
+        pumpManager.noteStatusHandled(
+            halted: syncResponse.state.isDeliveryHalted || syncResponse.basal.map { $0.type.isSuspendedByPump() } == true
+        )
+
         var events: [NewPumpEvent] = []
         // A temp basal this status ended, reported once its records are read
         var endedTempBasal = false
@@ -178,34 +182,7 @@ enum StateSyncer {
                 }
 
             default:
-                // In one step with what it ends, and with the basal state: a command's own, set under the same lock -
-                // the temp basal it started, or the unconfirmed one it kept - is never overwritten by what a status
-                // decided before it
-                let resumed = pumpManager.withDoseReportLock { () -> (events: [NewPumpEvent], endedTempBasal: Bool)? in
-                    // One begun before the unconfirmed temp basal's command - or seen before it went out - says nothing
-                    // of whether the patch runs it: the next temp basal still cancels first
-                    let endsUnconfirmed = pumpManager.noteSegmentAfterUnconfirmedTempBasal(
-                        startingAt: basal.startTime,
-                        receivedAt: receivedAt,
-                        receivedUptime: receivedUptime
-                    )
-
-                    // The patch is delivering on its schedule again, since the start of the segment it shows. Nil: this
-                    // status says nothing of the basal running, which stays as it is.
-                    guard let resumed = resumeSchedule(
-                        pumpManager: pumpManager,
-                        basal: basal,
-                        receivedAt: receivedAt,
-                        receivedUptime: receivedUptime
-                    ) else {
-                        return nil
-                    }
-                    if endsUnconfirmed {
-                        state.basalState = .active
-                    }
-                    return resumed
-                }
-                if let resumed {
+                if let resumed = scheduleShown(basal, receivedAt: receivedAt, receivedUptime: receivedUptime, pumpManager: pumpManager) {
                     events.append(contentsOf: resumed.events)
                     endedTempBasal = resumed.endedTempBasal
                 }
@@ -271,10 +248,72 @@ enum StateSyncer {
             // them meanwhile: this batch would carry it out final from our estimate first. The batch their read ends
             // with replaces pending events as this one would.
             if !endReadDeferred || !events.isEmpty {
+                // A suspend held back for the records of the temp basal whose command went unanswered goes out ahead
+                // of what this status reports - not a resume: held with it (`resumeSchedule`)
+                if !events.isEmpty {
+                    pumpManager.releaseHeldForUnconfirmedRead()
+                }
                 pumpManager.emitPumpEvents(events, unlessTempBasalEndPending: true)
             }
         }
 
+        pumpManager.notifyStateDidChange()
+    }
+
+    /// A status shows the patch running its schedule, from `basal`'s start: what that ends and starts, and whether it ended
+    /// a temp basal whose records are to be read. In one step with what it ends, and with the basal state: a command's
+    /// own, set under the same lock - the temp basal it started, or the unconfirmed one it kept - is never overwritten by
+    /// what a status decided before it. Nil: it says nothing of the basal running.
+    private static func scheduleShown(
+        _ basal: BasalData,
+        receivedAt: Date,
+        receivedUptime: TimeInterval,
+        pumpManager: MedtrumPumpManager
+    ) -> (events: [NewPumpEvent], endedTempBasal: Bool)? {
+        pumpManager.withDoseReportLock { () -> (events: [NewPumpEvent], endedTempBasal: Bool)? in
+            // One begun before the unconfirmed temp basal's command - or seen before it went out - says nothing
+            // of whether the patch runs it: the next temp basal still cancels first
+            let endsUnconfirmed = pumpManager.noteSegmentAfterUnconfirmedTempBasal(
+                startingAt: basal.startTime,
+                receivedAt: receivedAt,
+                receivedUptime: receivedUptime
+            )
+
+            // The patch is delivering on its schedule again, since the start of the segment it shows. Nil: this
+            // status says nothing of the basal running, which stays as it is.
+            guard let resumed = resumeSchedule(
+                pumpManager: pumpManager,
+                basal: basal,
+                receivedAt: receivedAt,
+                receivedUptime: receivedUptime
+            ) else {
+                return nil
+            }
+            if endsUnconfirmed {
+                pumpManager.state.basalState = .active
+            }
+            return resumed
+        }
+    }
+
+    /// The schedule a status showed while a cancel of the running temp basal was in flight, set aside for the command
+    /// (`MedtrumPumpManager.isCancelInFlight`) - taken now that the cancel failed: it may have been the patch's own, a temp
+    /// basal that ran out, or the cancel's, its answer lost. On the command's thread, holding the command lock.
+    static func replayScheduleSetAside(
+        _ basal: BasalData,
+        receivedAt: Date,
+        receivedUptime: TimeInterval,
+        pumpManager: MedtrumPumpManager
+    ) {
+        logger.info("Taking the scheduled basal since \(basal.startTime) a status showed while the cancel was in flight")
+        guard let resumed = scheduleShown(basal, receivedAt: receivedAt, receivedUptime: receivedUptime, pumpManager: pumpManager) else {
+            return
+        }
+        if resumed.endedTempBasal {
+            pumpManager.finishPendingTempBasalEndSoon()
+        } else if !resumed.events.isEmpty {
+            pumpManager.emitPumpEvents(resumed.events)
+        }
         pumpManager.notifyStateDidChange()
     }
 
@@ -317,7 +356,7 @@ enum StateSyncer {
             }
 
             let eventTime = patchTime.map {
-                pumpManager.patchTimeOnOurClock($0, notBefore: dose.startDate, notAfter: receivedAt)
+                pumpManager.suspendOnOurClock(of: dose, patchTime: $0, notAfter: receivedAt)
             } ?? receivedAt
 
             let suspendDose = UnfinalizedDose(suspendStartTime: eventTime)
@@ -330,15 +369,20 @@ enum StateSyncer {
             )
             state.basalDose = suspendDose
 
-            return ending ? ([], true) : ([suspended], false)
+            if ending {
+                return ([], true)
+            }
+            // The temp basal whose command went unanswered may have its record to read first
+            return pumpManager.holdForUnconfirmedRead(suspendDose) ? ([], false) : ([suspended], false)
         }
     }
 
     /// The patch runs its schedule since the segment `basal` started: a temp basal of ours ends there - reported final
     /// with the scheduled basal once its records up to the one `basal` names, the newest, are read - a suspend is
     /// resumed there - on our clock, bounded to [the dose's start, when this was received]. Nil when this status says
-    /// nothing of the temp basal running: received before its command went out, or a segment that started no later
-    /// than it - the cancel before it, shown after it started.
+    /// nothing of the temp basal running: received before its command went out, a segment that started no later than it
+    /// - the cancel before it, shown after it started - or the scheduled basal of a cancel of it a command has in flight,
+    /// which reports what follows it.
     private static func resumeSchedule(
         pumpManager: MedtrumPumpManager,
         basal: BasalData,
@@ -360,6 +404,15 @@ enum StateSyncer {
                     return nil
                 }
 
+                if pumpManager.isCancelInFlight(of: dose) {
+                    logger.info(
+                        "Status shows the scheduled basal since \(basal.startTime), the cancel of the temp basal of " +
+                            "\(dose.startDate) in flight: the command reports what follows it, set aside should the cancel fail"
+                    )
+                    pumpManager.setAsideForTheCancel(basal, receivedAt: receivedAt, receivedUptime: receivedUptime)
+                    return nil
+                }
+
                 if let pumpStartTime = running.pumpStartTime, basal.startTime <= pumpStartTime {
                     logger.warning(
                         "Status shows the scheduled basal since \(basal.startTime), no later than the temp basal of " +
@@ -369,12 +422,17 @@ enum StateSyncer {
                 }
 
                 // A temp basal was running - it ended. Back to scheduled basal.
-                let endedAt = pumpManager.patchTimeOnOurClock(basal.startTime, notBefore: dose.startDate, notAfter: receivedAt)
+                let endedAt = pumpManager.endOnOurClock(of: dose, patchTime: basal.startTime, notAfter: receivedAt)
                 let basalDose = UnfinalizedDose(
                     basalRate: state.currentBaseBasalRate,
                     insulinType: state.insulinType,
                     startDate: endedAt
                 )
+                // Where its segment began on the patch clock - what a temp basal after it is told from, skew-free - where that
+                // is the same instant as its start on ours
+                if let paired = pumpManager.patchTimePaired(with: endedAt, endOf: dose, at: basal.startTime) {
+                    basalDose.setPumpStartTime(paired)
+                }
                 let scheduled = NewPumpEvent.basal(dose: basalDose.toDoseEntry())
                 let ending = pumpManager.beginTempBasalEnd(
                     endedAt: endedAt,
@@ -387,13 +445,20 @@ enum StateSyncer {
                 return ending ? ([], true) : ([scheduled], false)
 
             case .suspend:
-                // Delivery was suspended - report the resume. The suspend is already finalized.
-                state.basalDose = UnfinalizedDose(
-                    resumeStartTime: pumpManager.patchTimeOnOurClock(basal.startTime, notBefore: dose.startDate, notAfter: receivedAt),
+                // Delivery was suspended - report the resume. The suspend is already finalized - or held back, and the
+                // resume with it: never out ahead of it (`MedtrumPumpManager.holdWithHeldSuspend`). In a later second
+                // than it at the earliest (`MedtrumPumpManager.earliestResume`).
+                let resumeDose = UnfinalizedDose(
+                    resumeStartTime: pumpManager.patchTimeOnOurClock(
+                        basal.startTime,
+                        notBefore: MedtrumPumpManager.earliestResume(after: dose.startDate),
+                        notAfter: receivedAt
+                    ),
                     insulinType: state.insulinType
                 )
+                state.basalDose = resumeDose
 
-                return ([NewPumpEvent.resume(dose: state.basalDose.toDoseEntry())], false)
+                return pumpManager.holdWithHeldSuspend(resumeDose) ? ([], false) : ([NewPumpEvent.resume(dose: resumeDose.toDoseEntry())], false)
 
             default:
                 return ([], false)

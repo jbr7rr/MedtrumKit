@@ -92,7 +92,7 @@ public class UnfinalizedDose {
         public fileprivate(set) var pumpStartTime: Date?
 
         /// Set when the dose stops running. From then on a bolus waits for its record, mutable for the host - see
-        /// `MedtrumPumpState.awaitingRecord`. A temp basal is finalized as it ends.
+        /// `MedtrumPumpState.awaitingRecord`. A temp basal is finalized as it ends - unless it ended open, see `endedOpen`.
         public fileprivate(set) var finishReason: FinishReason?
         /// When we learned that the dose stopped - what the record timeouts count from
         public fileprivate(set) var finishedAt: Date?
@@ -115,8 +115,19 @@ public class UnfinalizedDose {
         public fileprivate(set) var statusDelivery: Double?
         public fileprivate(set) var statusDeliveryReceivedAt: Date?
 
-        /// The parts of this running temp basal whose records were read while it ran, in order - see `RecordedPart`
+        /// The parts of this running temp basal whose records were read while it ran, in order - see `RecordedPart` - and of
+        /// one `endedOpen`, read since it ended
         public fileprivate(set) var recordedParts: [RecordedPart] = []
+
+        /// This temp basal ended where the one that replaced it started, back to back: reported ended, its end there, and
+        /// mutable until its records are read - see `MedtrumPumpManager.openTempBasalEnds`
+        public fileprivate(set) var endedOpen = false
+        /// Of one `endedOpen`: the number of its last record, which the answer to the cancel that ended it named - nil,
+        /// no answer named one. Of one whose command went unanswered, the record the answer to a cancel after it named:
+        /// its own, if it ran - read early, see `MedtrumPumpManager.lastRecordOfOpenTempBasalEnds`.
+        public fileprivate(set) var endRecord: Int?
+        /// And where that record ends, on the patch clock: where the segment after it started
+        public fileprivate(set) var patchEndTime: Date?
 
         /// The final report, once there is one. Every report of the final is rebuilt from exactly these, so a final
         /// sent again until the host confirms storing it is byte for byte the same.
@@ -157,6 +168,16 @@ public class UnfinalizedDose {
         public fileprivate(set) var laterSegmentStart: Date?
         /// A cancel of this temp basal went out and no answer came back: the patch may have stopped it
         public fileprivate(set) var stopUnansweredAt: Date?
+        /// Of a temp basal whose command went unanswered: the start of the basal the host was told ran when it went out -
+        /// the scheduled basal from the cancel before it, say. A temp basal it ran is dated after it.
+        public fileprivate(set) var basalBefore: Date?
+        /// Where that basal started on the patch clock, where known - the segment the cancel before the command started:
+        /// the patch's times of this one are told from there, with no skew
+        public fileprivate(set) var basalBeforeOnPatch: Date?
+        /// Its patch start may not be where it began delivering, nor its start on our clock where the patch began it: it
+        /// went unanswered and a status or a record showed it later - a restart of it at patch-local midnight, say - or its
+        /// patch start was taken from a status. How long the patch ran it is not told from its patch start.
+        public fileprivate(set) var firstSegmentUncertain = false
 
         public var isFinished: Bool {
             finishedAt != nil
@@ -343,6 +364,9 @@ public class UnfinalizedDose {
 
         // A part that does not decode leaves a gap: the parts then do not add up, and our estimate stands in
         state.recordedParts = (rawValue["recordedParts"] as? [[String: Any]])?.compactMap(RecordedPart.init(rawValue:)) ?? []
+        state.endedOpen = rawValue["endedOpen"] as? Bool ?? false
+        state.endRecord = rawValue["endRecord"] as? Int
+        state.patchEndTime = rawValue["patchEndTime"] as? Date
 
         // Both or neither: a final is only ever set whole
         if let finalEndDate = rawValue["finalEndDate"] as? Date {
@@ -362,6 +386,9 @@ public class UnfinalizedDose {
         state.priorSegmentStart = rawValue["priorSegmentStart"] as? Date
         state.laterSegmentStart = rawValue["laterSegmentStart"] as? Date
         state.stopUnansweredAt = rawValue["stopUnansweredAt"] as? Date
+        state.basalBefore = rawValue["basalBefore"] as? Date
+        state.basalBeforeOnPatch = rawValue["basalBeforeOnPatch"] as? Date
+        state.firstSegmentUncertain = rawValue["firstSegmentUncertain"] as? Bool ?? false
 
         locked.value = state
     }
@@ -392,6 +419,11 @@ public class UnfinalizedDose {
         if !state.recordedParts.isEmpty {
             raw["recordedParts"] = state.recordedParts.map(\.rawValue)
         }
+        if state.endedOpen {
+            raw["endedOpen"] = true
+        }
+        raw["endRecord"] = state.endRecord
+        raw["patchEndTime"] = state.patchEndTime
         raw["finalDeliveredUnits"] = state.finalDeliveredUnits
         raw["finalEndDate"] = state.finalEndDate
         raw["finalizedAt"] = state.finalizedAt
@@ -410,6 +442,11 @@ public class UnfinalizedDose {
         raw["priorSegmentStart"] = state.priorSegmentStart
         raw["laterSegmentStart"] = state.laterSegmentStart
         raw["stopUnansweredAt"] = state.stopUnansweredAt
+        raw["basalBefore"] = state.basalBefore
+        raw["basalBeforeOnPatch"] = state.basalBeforeOnPatch
+        if state.firstSegmentUncertain {
+            raw["firstSegmentUncertain"] = true
+        }
 
         return raw
     }
@@ -432,12 +469,21 @@ public class UnfinalizedDose {
 
     /// The command that started this dose went out at `sentAt` (`uptime` on the monotonic clock), the patch having
     /// written up to record `sequence`. For a dose not shared yet.
-    func noteCommand(sentAt: Date, uptime: TimeInterval?, sequence: Int, priorSegmentStart: Date? = nil) {
+    func noteCommand(
+        sentAt: Date,
+        uptime: TimeInterval?,
+        sequence: Int,
+        priorSegmentStart: Date? = nil,
+        basalBefore: Date? = nil,
+        basalBeforeOnPatch: Date? = nil
+    ) {
         transition { state in
+            state.basalBeforeOnPatch = basalBeforeOnPatch
             state.sentAt = sentAt
             state.sentUptime = uptime
             state.sequenceAtSend = sequence
             state.priorSegmentStart = priorSegmentStart
+            state.basalBefore = basalBefore
         }
     }
 
@@ -483,6 +529,16 @@ public class UnfinalizedDose {
             }
             state.pumpStartTime = time
             return true
+        }
+    }
+
+    /// The patch start of this basal of another kind than a temp basal pairs with nothing on our clock after all: gone
+    func forgetPumpStartTime() {
+        transition { state in
+            guard type != .tempBasal, type != .bolus else {
+                return
+            }
+            state.pumpStartTime = nil
         }
     }
 
@@ -535,11 +591,12 @@ public class UnfinalizedDose {
         }
     }
 
-    /// The record of a part of this temp basal, read while it runs - see `RecordedPart`. Kept once, only while it runs.
-    /// Returns whether it was kept.
+    /// The record of a part of this temp basal, read while it runs - see `RecordedPart` - or since it ended open (see
+    /// `State.endedOpen`). Kept once, only until its final. Returns whether it was kept.
     @discardableResult func keepRecordedPart(_ part: RecordedPart) -> Bool {
         transition { state -> Bool in
-            guard type == .tempBasal, !state.isFinished, !state.recordedParts.contains(where: { $0.sequence == part.sequence })
+            guard type == .tempBasal, !state.isFinalized, !state.isFinished || state.endedOpen,
+                  !state.recordedParts.contains(where: { $0.sequence == part.sequence })
             else {
                 return false
             }
@@ -609,6 +666,42 @@ public class UnfinalizedDose {
             if reason == .completed, type == .bolus {
                 state.confirmation = .confirmed
             }
+            return true
+        }
+    }
+
+    /// See `State.firstSegmentUncertain`
+    func markFirstSegmentUncertain() {
+        transition { state in
+            state.firstSegmentUncertain = true
+        }
+    }
+
+    /// The answer to a cancel, gone out while this temp basal whose command went unanswered was kept, names `record`: if
+    /// it ran, the record of its end - see `State.endRecord`. Only before it is settled.
+    func noteEndRecord(_ record: Int) {
+        transition { state in
+            guard !state.isFinished, !state.isFinalized else {
+                return
+            }
+            state.endRecord = record
+        }
+    }
+
+    /// This running temp basal ended at `endedAt`, where the temp basal that replaced it started - open (see
+    /// `State.endedOpen`), its last record `endRecord`, ending at `patchEnd` on the patch clock, where known. Once, in one
+    /// step: returns whether this call ended it.
+    @discardableResult func endOpen(at endedAt: Date, patchEnd: Date?, endRecord: Int?, at now: Date = Date.now) -> Bool {
+        transition { state -> Bool in
+            guard type == .tempBasal, !state.isFinished, !state.isFinalized else {
+                return false
+            }
+            state.finishReason = endedAt >= estimatedEndDate ? .completed : .cancelled
+            state.finishedAt = now
+            state.observedEndDate = endedAt
+            state.endedOpen = true
+            state.endRecord = endRecord
+            state.patchEndTime = patchEnd
             return true
         }
     }
@@ -801,9 +894,10 @@ public class UnfinalizedDose {
     /// What a finished temp basal delivered, by our estimate: what the last status of its segment showed it had
     /// delivered, plus its rate from then to its end - within [that amount, rate × duration], in 0.05 U steps. Without
     /// such a status - or `restarted`, at patch-local midnight or by a profile change, which restarts that amount -
-    /// its rate × duration.
-    func tempBasalEstimate(of state: State, restarted: Bool) -> (units: Double, source: TempBasalEstimateSource) {
-        let end = tempBasalEnd(of: state)
+    /// its rate × duration. `until`: when it stopped delivering, if before its end as reported - one ended open stopped at
+    /// the cancel, and is reported ended where the next one started, a few seconds on.
+    func tempBasalEstimate(of state: State, restarted: Bool, until: Date? = nil) -> (units: Double, source: TempBasalEstimateSource) {
+        let end = until.map { max(min($0, tempBasalEnd(of: state)), startDate) } ?? tempBasalEnd(of: state)
         let rateTimesDuration = estimatedTempBasalDelivery(until: end)
 
         guard !restarted, !state.recordMatchDisabled, let delivered = state.statusDelivery,
