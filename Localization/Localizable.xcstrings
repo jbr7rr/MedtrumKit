@@ -11198,7 +11198,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch Désactivé"
+            "value" : "Désactiver le Patch"
           }
         },
         "he" : {
@@ -24554,7 +24554,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch grundmålning"
+            "value" : "Förbered pump"
           }
         },
         "tr" : {
@@ -24716,7 +24716,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch grundmålning"
+            "value" : "Förbered pump"
           }
         },
         "tr" : {
@@ -38187,25 +38187,25 @@
       "localizations" : {
         "ar" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "ستنتهي صلاحية التصحيح الخاص بك قريباً!"
           }
         },
         "cs" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Your patch will expire soon!"
           }
         },
         "da" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Din patch udløber snart!"
           }
         },
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Ihr Patch wird bald ablaufen!"
           }
         },
@@ -38217,91 +38217,91 @@
         },
         "es" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Tu parche caducará pronto."
           }
         },
         "fi" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Laastarin voimassaolo päättyy pian!"
           }
         },
         "fr" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Le Patch va bientôt expirer !"
           }
         },
         "he" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "התיקון שלך יפוג בקרוב!"
           }
         },
         "hu" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "A javításod hamarosan lejár!"
           }
         },
         "it" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "La tua patch scadrà presto!"
           }
         },
         "ja" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "パッチの有効期限はもうすぐ切れる！"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "패치가 곧 만료됩니다!"
           }
         },
         "nb" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Patch utløper snart!"
           }
         },
         "nl" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Je patch verloopt binnenkort!"
           }
         },
         "pl" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Twój patch wkrótce wygaśnie!"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Seu patch expirará em breve!"
           }
         },
         "ro" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Pompa dumneavoastră va expira în curând!"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Срок действия вашего патча скоро истечет!"
           }
         },
         "sk" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Tvoja náplasť čoskoro exspiruje!"
           }
         },
@@ -38313,31 +38313,31 @@
         },
         "sv" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Din patch kommer snart att upphöra att gälla!"
           }
         },
         "tr" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Yamanızın süresi yakında dolacak!"
           }
         },
         "uk" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Термін дії вашого патчу скоро закінчиться!"
           }
         },
         "vi" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Your patch will expire soon!"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "您的贴泵即将过期！"
           }
         }
