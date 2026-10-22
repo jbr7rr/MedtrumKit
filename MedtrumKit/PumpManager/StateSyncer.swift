@@ -189,14 +189,10 @@ enum StateSyncer {
             }
         }
 
-        // Its records are read here for a full status, whose thread may block on the link - not while connecting, nor
-        // with a command in flight, whose path comes first. Otherwise off the queue notifications arrive on.
-        var endReadDeferred = false
-        if endedTempBasal {
-            if !fullSync || duringReconnect || pumpManager.isCommandActive || !pumpManager.finishPendingTempBasalEndIfFree() {
-                pumpManager.finishPendingTempBasalEndSoon()
-                endReadDeferred = true
-            }
+        // The first status of this run, the run before killed as it read the records of a temp basal that ended: read
+        // now, as if this status ended it - see `MedtrumPumpManager.takeOverTempBasalEndFromLastRun`
+        if pumpManager.readsTempBasalEndFromLastRun() {
+            endedTempBasal = true
         }
 
         // Progress, from any status, is the running bolus's. A completion only from a notification: a full status
@@ -238,6 +234,18 @@ enum StateSyncer {
                 )
             }
             pumpManager.checkBolusDone(receivedAt: receivedAt, receivedUptime: receivedUptime)
+        }
+
+        // Its records are read here for a full status, whose thread may block on the link - not while connecting, nor
+        // with a command in flight, whose path comes first. Otherwise off the queue notifications arrive on. After the
+        // bolus this status ends, if any - its end held behind the read (`MedtrumPumpManager.emitBolusEvents`): with a
+        // bolus running, they would not be read, our estimate standing in (`RecordSyncer.wouldRead`).
+        var endReadDeferred = false
+        if endedTempBasal {
+            if !fullSync || duringReconnect || pumpManager.isCommandActive || !pumpManager.finishPendingTempBasalEndIfFree() {
+                pumpManager.finishPendingTempBasalEndSoon()
+                endReadDeferred = true
+            }
         }
 
         if (fullSync && isUsable) || !events.isEmpty {
@@ -376,6 +384,12 @@ enum StateSyncer {
             if pumpManager.holdForUnconfirmedRead(suspendDose) {
                 return ([], false)
             }
+            // The temp basal a command ended still read - a cancel's, in the command: behind its final, with what the
+            // command started, not taking it out from our estimate. Its read reports them, as for a resume
+            // (`resumeSchedule`).
+            if pumpManager.holdBehindTempBasalEnd((suspendDose, suspended)) {
+                return ([], true)
+            }
             // Out again with every batch until the host has it (`MedtrumPumpManager.keepUntilStored`)
             pumpManager.keepUntilStored(suspendDose)
             return ([suspended], false)
@@ -466,9 +480,15 @@ enum StateSyncer {
                 if pumpManager.holdWithHeldSuspend(resumeDose) {
                     return ([], false)
                 }
+                let resumed = NewPumpEvent.resume(dose: resumeDose.toDoseEntry())
+                // The temp basal the suspend ended still read - the first status after a restart during that read, say:
+                // behind its final, with the suspend, not taking it out from our estimate. Its read reports them.
+                if pumpManager.holdBehindTempBasalEnd((resumeDose, resumed)) {
+                    return ([], true)
+                }
                 // Out again with every batch until the host has it (`MedtrumPumpManager.keepUntilStored`)
                 pumpManager.keepUntilStored(resumeDose)
-                return ([NewPumpEvent.resume(dose: resumeDose.toDoseEntry())], false)
+                return ([resumed], false)
 
             default:
                 return ([], false)
@@ -525,7 +545,8 @@ enum StateSyncer {
             return
         }
 
-        // Between commands, not ahead of the records one reads
+        // Between commands, not ahead of the records one reads - waiting for them, which take no longer meanwhile than
+        // with a command waiting (`betweenCommands` counts the wait)
         _ = pumpManager.betweenCommands {
             fetchPatchTime(pumpManager: pumpManager)
         }

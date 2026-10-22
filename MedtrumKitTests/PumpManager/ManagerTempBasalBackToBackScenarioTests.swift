@@ -1006,6 +1006,379 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
         XCTAssertFalse(pumpManager.hasOpenTempBasalEnds)
     }
 
+    /// Device 2026-10-22 20:18:59: the loop's bolus right behind the set, the old one's read waiting for it to be over -
+    /// and the patch runs empty, the halt and the bolus's completion in one notification. The halt ends the new one,
+    /// read up to the record it names; the bolus's end waits behind that read, not taking both out from our estimate:
+    /// both final from their records, then the suspend, then the bolus - final from its record, read on the way
+    func testHaltWithTheBolussCompletionReadsTheTempBasalsItEndedBeforeTheBolusGoesOut() throws {
+        let (bolus, second) = try startBolusRightAfterTheSet()
+
+        link.script(CommandType.GET_RECORD, recordOfFirst(delivered: 0.35))
+        link.script(CommandType.GET_RECORD, scheduledSecond(sequence: 132, at: Self.end1))
+        link.script(CommandType.GET_RECORD, PatchBytes.bolusRecord(
+            sequence: 133, patchId: Self.patchId, start: Self.end1.addingTimeInterval(2), amount: 0.5, delivered: 0.3
+        ))
+        link.script(CommandType.GET_RECORD, PatchBytes.basalRecord(
+            sequence: 134, patchId: Self.patchId, type: .ABSOLUTE_TEMP, start: Self.end1.addingTimeInterval(1),
+            end: Self.end1.addingTimeInterval(4), rate: 0.5, delivered: 0.05, endReason: .STOP_EMPTY
+        ))
+        link.notify(emptyWithCompletion(delivered: 0.3, newestRecord: 135))
+        settle()
+
+        // Read up to the new one's record, which settles it: 135 is left to the sync
+        XCTAssertEqual(link.writtenCommands.suffix(5), [
+            CommandType.SET_BOLUS, CommandType.GET_RECORD, CommandType.GET_RECORD, CommandType.GET_RECORD, CommandType.GET_RECORD
+        ])
+        let firstFinal = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 }).first)
+        XCTAssertEqual(firstFinal.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+        let secondFinal = try XCTUnwrap(finals(of: second).first)
+        XCTAssertEqual(secondFinal.deliveredUnits ?? 0, 0.05, accuracy: 0.001, "from its record")
+        XCTAssertEqual(finals(of: second).count, 1)
+
+        // One batch: the finals, then the suspend, then the bolus waiting on its record
+        let index = try XCTUnwrap(batchIndex(ofFinal: firstFinal))
+        XCTAssertEqual(batchIndex(ofFinal: secondFinal), index)
+        let batch = delegate.batches[index].events.compactMap(\.dose)
+        XCTAssertEqual(batch.map(\.type), [.tempBasal, .tempBasal, .suspend, .bolus])
+        XCTAssertEqual(batch.map(\.isMutable), [false, false, false, true])
+        XCTAssertEqual(batch[3].deliveredUnits ?? 0, 0.3, accuracy: 0.001)
+        XCTAssertFalse(
+            delegate.batches[..<index].contains { $0.events.contains { $0.dose?.type == .suspend } },
+            "nothing ahead of the finals"
+        )
+
+        let bolusFinal = try XCTUnwrap(finals(of: bolus).first)
+        XCTAssertEqual(bolusFinal.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "from its record")
+        XCTAssertGreaterThan(batchIndex(ofFinal: bolusFinal) ?? -1, index)
+        XCTAssertFalse(pumpManager.hasOpenTempBasalEnds)
+        XCTAssertNil(pumpManager.pendingTempBasalEnd)
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 134)
+    }
+
+    /// The same, the records not readable: both final from our estimate, as before - then the suspend, then the bolus
+    func testHaltWithTheBolussCompletionWhoseReadFailsGoesFinalFromOurEstimate() throws {
+        let (_, second) = try startBolusRightAfterTheSet()
+
+        link.script(CommandType.GET_RECORD, .timeout)
+        link.notify(emptyWithCompletion(delivered: 0.3, newestRecord: 135))
+        settle()
+
+        XCTAssertEqual(link.writtenCommands.last, CommandType.GET_RECORD)
+        let firstFinal = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 }).first)
+        XCTAssertEqual(firstFinal.deliveredUnits ?? 0, 0.4, accuracy: 0.001, "by our estimate")
+        let secondFinal = try XCTUnwrap(finals(of: second).first)
+        XCTAssertEqual(secondFinal.deliveredUnits ?? -1, 0, accuracy: 0.001, "by our estimate: seconds at 0.5 U/h")
+        let index = try XCTUnwrap(batchIndex(ofFinal: firstFinal))
+        let batch = delegate.batches[index].events.compactMap(\.dose)
+        XCTAssertEqual(batch.map(\.type), [.tempBasal, .tempBasal, .suspend, .bolus])
+        XCTAssertEqual(batch.map(\.isMutable), [false, false, false, true])
+        XCTAssertNil(pumpManager.pendingTempBasalEnd)
+    }
+
+    /// The same on the device's slow link: 7 s a record (20:18:59-20:19:20), the four past `tempBasalEndReadBudget`. The
+    /// patch suspended and no command waiting, they are read all the same - both final from their records
+    func testHaltWithTheBolussCompletionReadsTheTempBasalsItEndedOnASlowLink() throws {
+        let (_, second) = try startBolusRightAfterTheSet()
+
+        let slow = { [unowned self] in self.advanceClock(by: 7) }
+        link.script(CommandType.GET_RECORD, .fragments(recordOfFirst(delivered: 0.35)), then: slow)
+        link.script(CommandType.GET_RECORD, .fragments(scheduledSecond(sequence: 132, at: Self.end1)), then: slow)
+        link.script(CommandType.GET_RECORD, .fragments(PatchBytes.bolusRecord(
+            sequence: 133, patchId: Self.patchId, start: Self.end1.addingTimeInterval(2), amount: 0.5, delivered: 0.3
+        )), then: slow)
+        link.script(CommandType.GET_RECORD, .fragments(secondsRecordEmptied()), then: slow)
+        link.notify(emptyWithCompletion(delivered: 0.3, newestRecord: 135))
+        settle()
+
+        let firstFinal = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 }).first)
+        XCTAssertEqual(firstFinal.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+        let secondFinal = try XCTUnwrap(finals(of: second).first)
+        XCTAssertEqual(secondFinal.deliveredUnits ?? 0, 0.05, accuracy: 0.001, "from its record")
+        XCTAssertTrue(
+            link.writes.suffix(4).allSatisfy { $0.timeout > MedtrumPumpManager.tempBasalEndRecordTimeout - 1 },
+            "each given the time a record may take"
+        )
+    }
+
+    /// The halt's notification ahead of the bolus's completion, which comes in one of its own: the read waits for the
+    /// bolus to be over, not taking both out from our estimate at the halt - then as with the two in one
+    func testHaltWithTheBolusStillRunningReadsTheTempBasalsOnceItCompletes() throws {
+        let (bolus, second) = try startBolusRightAfterTheSet()
+
+        link.notify(halt(.reservoirEmpty, at: nil, newestRecord: 135))
+        settle()
+        XCTAssertEqual(link.writtenCommands.last, CommandType.SET_BOLUS, "nothing read while it runs")
+        XCTAssertTrue(finals(of: second).isEmpty, "not from our estimate")
+        XCTAssertNotNil(pumpManager.pendingTempBasalEnd)
+        XCTAssertFalse(delegate.batches.contains { $0.events.contains { $0.dose?.type == .suspend } })
+
+        link.script(CommandType.GET_RECORD, recordOfFirst(delivered: 0.35))
+        link.script(CommandType.GET_RECORD, scheduledSecond(sequence: 132, at: Self.end1))
+        link.script(CommandType.GET_RECORD, PatchBytes.bolusRecord(
+            sequence: 133, patchId: Self.patchId, start: Self.end1.addingTimeInterval(2), amount: 0.5, delivered: 0.3
+        ))
+        link.script(CommandType.GET_RECORD, secondsRecordEmptied())
+        link.notify(emptyWithCompletion(delivered: 0.3, newestRecord: 135))
+        settle()
+
+        let firstFinal = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 }).first)
+        XCTAssertEqual(firstFinal.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+        let secondFinal = try XCTUnwrap(finals(of: second).first)
+        XCTAssertEqual(secondFinal.deliveredUnits ?? 0, 0.05, accuracy: 0.001, "from its record")
+        let index = try XCTUnwrap(batchIndex(ofFinal: firstFinal))
+        let batch = delegate.batches[index].events.compactMap(\.dose)
+        XCTAssertEqual(batch.map(\.type), [.tempBasal, .tempBasal, .suspend, .bolus])
+        XCTAssertEqual(batch.map(\.isMutable), [false, false, false, true])
+        let bolusFinal = try XCTUnwrap(finals(of: bolus).first)
+        XCTAssertEqual(bolusFinal.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "from its record")
+        XCTAssertNil(pumpManager.pendingTempBasalEnd)
+    }
+
+    /// The same, the bolus's end never seen - the link lost: not waited on for good, both final from our estimate with
+    /// the suspend once `tempBasalEndBolusWait` is up
+    func testHaltWithTheBolusStillRunningGoesFinalFromOurEstimateOnceTheWaitIsUp() throws {
+        let wait = MedtrumPumpManager.tempBasalEndBolusWait
+        MedtrumPumpManager.tempBasalEndBolusWait = 0.5
+        defer { MedtrumPumpManager.tempBasalEndBolusWait = wait }
+        let (_, second) = try startBolusRightAfterTheSet()
+
+        link.notify(halt(.reservoirEmpty, at: nil, newestRecord: 135))
+        settle()
+        XCTAssertTrue(finals(of: second).isEmpty)
+
+        Thread.sleep(forTimeInterval: 1)
+        settle()
+
+        XCTAssertEqual(link.writtenCommands.last, CommandType.SET_BOLUS, "nothing read")
+        let firstFinal = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 }).first)
+        XCTAssertEqual(firstFinal.deliveredUnits ?? 0, 0.4, accuracy: 0.001, "by our estimate")
+        XCTAssertEqual(finals(of: second).first?.deliveredUnits ?? -1, 0, accuracy: 0.001, "by our estimate")
+        let index = try XCTUnwrap(batchIndex(ofFinal: firstFinal))
+        XCTAssertEqual(delegate.batches[index].events.compactMap(\.dose).map(\.type).prefix(3), [.tempBasal, .tempBasal, .suspend])
+        XCTAssertNil(pumpManager.pendingTempBasalEnd)
+    }
+
+    /// The patch halts as the cancel's record is read in the command: the suspend waits behind the old one's final -
+    /// from its record - and the schedule the cancel started, not taking it out from our estimate
+    func testHaltDuringTheReadOfTheCancelsRecordIsReportedBehindItsFinal() throws {
+        runFirst()
+        link.script(CommandType.CANCEL_TEMP_BASAL, cancelAnswer(record: 131, at: Self.end1))
+        link.script(
+            CommandType.GET_RECORD,
+            .fragments(recordOfFirst(delivered: 0.35)),
+            thenNotify: [halt(.reservoirEmpty, at: nil, newestRecord: 132)]
+        )
+        XCTAssertNil(commandTempBasal(0, duration: 0))
+        settle()
+
+        let final = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 }).first)
+        XCTAssertEqual(final.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+        let index = try XCTUnwrap(batchIndex(ofFinal: final))
+        XCTAssertEqual(delegate.batches[index].events.compactMap(\.dose).map(\.type), [.tempBasal, .basal, .suspend])
+        XCTAssertFalse(delegate.batches[..<index].contains { $0.events.contains { $0.dose?.type == .suspend } })
+        XCTAssertEqual(pumpManager.state.basalDose.type, .suspend)
+    }
+
+    /// The halted one's record took the number the bolus's answer named - #133 - as it ran, the bolus's own #134. Read
+    /// as the temp basal ends, and taken by it there, it still tells the bolus's record is the next: final from it
+    func testTempBasalsRecordReadAsItEndsAtTheBolussAnsweredNumberLeavesTheBolusItsNext() throws {
+        let (bolus, second) = try startBolusRightAfterTheSet()
+
+        link.script(CommandType.GET_RECORD, recordOfFirst(delivered: 0.35))
+        link.script(CommandType.GET_RECORD, scheduledSecond(sequence: 132, at: Self.end1))
+        link.script(CommandType.GET_RECORD, secondsRecordEmptied(sequence: 133))
+        link.notify(emptyWithCompletion(delivered: 0.3, newestRecord: 134))
+        settle()
+        XCTAssertEqual(finals(of: second).first?.deliveredUnits ?? -1, 0.05, accuracy: 0.001, "from its record")
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 133)
+        XCTAssertTrue(finals(of: bolus).isEmpty)
+
+        link.script(CommandType.GET_RECORD, PatchBytes.bolusRecord(
+            sequence: 134, patchId: Self.patchId, start: Self.end1.addingTimeInterval(2), amount: 0.5, delivered: 0.3
+        ))
+        syncRecords()
+
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 134 }?.outcome?.hasPrefix("finalized bolus"), true)
+        let bolusFinal = try XCTUnwrap(finals(of: bolus).first)
+        XCTAssertEqual(bolusFinal.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "from its record")
+    }
+
+    /// The read waiting for the bolus to be over, the bolus is cancelled at 0.2 U - and the patch's completion after the
+    /// cancel, 0.25 U, comes as the records are read: the batch they make carries 0.25, not the cancel's 0.2
+    func testBolusCancelledWhileTheReadWaitsGoesOutWithWhatItsCompletionRaisedIt() throws {
+        let (bolus, _) = try startBolusRightAfterTheSet()
+        link.notify("200200" + "000400")
+        link.notify(halt(.reservoirEmpty, at: nil, newestRecord: 135))
+        settle()
+
+        link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+        link.script(
+            CommandType.GET_RECORD,
+            .fragments(recordOfFirst(delivered: 0.35)),
+            thenNotify: [emptyWithCompletion(delivered: 0.25, newestRecord: 135)]
+        )
+        link.script(CommandType.GET_RECORD, scheduledSecond(sequence: 132, at: Self.end1))
+        link.script(CommandType.GET_RECORD, PatchBytes.bolusRecord(
+            sequence: 133, patchId: Self.patchId, start: Self.end1.addingTimeInterval(2), amount: 0.5, delivered: 0.25
+        ))
+        link.script(CommandType.GET_RECORD, secondsRecordEmptied())
+        guard case .success? = commandCancelBolus() else {
+            XCTFail("Cancel failed")
+            return
+        }
+        settle()
+
+        let firstFinal = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 }).first)
+        let index = try XCTUnwrap(batchIndex(ofFinal: firstFinal))
+        let batch = delegate.batches[index].events.compactMap(\.dose)
+        XCTAssertEqual(batch.map(\.type), [.tempBasal, .tempBasal, .suspend, .bolus])
+        XCTAssertEqual(batch[3].isMutable, true)
+        XCTAssertEqual(batch[3].deliveredUnits ?? 0, 0.25, accuracy: 0.001, "as its completion raised it")
+        XCTAssertEqual(finals(of: bolus).first?.deliveredUnits ?? 0, 0.25, accuracy: 0.001, "from its record")
+    }
+
+    /// The slow link's read, and the loop's patch time fetch waiting for the link meanwhile - not a command: the read
+    /// takes no longer than `tempBasalEndReadBudget` for it, stopping before the fourth record, and the fetch goes out
+    func testHaltWithTheBolussCompletionReadOnASlowLinkStopsForTheLoopWaitingOnIt() throws {
+        let (_, second) = try startBolusRightAfterTheSet()
+
+        link.script(CommandType.GET_TIME, PatchBytes.answer(command: CommandType.GET_TIME, body: Date.now.toMedtrumSeconds()))
+        let fetched = expectation(description: "GetTime")
+        let slow = { [unowned self] in self.advanceClock(by: 7) }
+        link.script(CommandType.GET_RECORD, .fragments(recordOfFirst(delivered: 0.35)), then: slow)
+        link.script(CommandType.GET_RECORD, .fragments(scheduledSecond(sequence: 132, at: Self.end1))) { [unowned self] in
+            slow()
+            pumpManager.state.pumpTimeSyncedAt = .distantPast
+            DispatchQueue.global().async {
+                StateSyncer.fetchPatchTimeIfStale(pumpManager: self.pumpManager)
+                fetched.fulfill()
+            }
+            let deadline = Date.now.addingTimeInterval(1)
+            while pumpManager.readsLongerAsTempBasalEnds, Date.now < deadline {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+        link.script(CommandType.GET_RECORD, .fragments(PatchBytes.bolusRecord(
+            sequence: 133, patchId: Self.patchId, start: Self.end1.addingTimeInterval(2), amount: 0.5, delivered: 0.3
+        )), then: slow)
+        link.notify(emptyWithCompletion(delivered: 0.3, newestRecord: 135))
+        wait(for: [fetched], timeout: 5)
+        settle()
+
+        XCTAssertEqual(link.writtenCommands.suffix(4), [
+            CommandType.GET_RECORD, CommandType.GET_RECORD, CommandType.GET_RECORD, CommandType.GET_TIME
+        ])
+        let firstFinal = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 }).first)
+        XCTAssertEqual(firstFinal.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+        XCTAssertEqual(finals(of: second).first?.deliveredUnits ?? -1, 0, accuracy: 0.001, "by our estimate: its record unread")
+    }
+
+    /// The slow link's read, and the user deactivating the emptied patch meanwhile - waiting for the link, no command:
+    /// the read stops at the next record, within `tempBasalEndReadBudget`, and the deactivation goes out - its read
+    /// before the stop taking the records left
+    func testHaltWithTheBolussCompletionReadOnASlowLinkStopsForADeactivation() throws {
+        let (_, second) = try startBolusRightAfterTheSet()
+
+        let deactivated = expectation(description: "deactivatePatch")
+        let result = Locked<MedtrumDeactivatePatchResult?>(nil)
+        let slow = { [unowned self] in self.advanceClock(by: 7) }
+        link.script(CommandType.GET_RECORD, .fragments(recordOfFirst(delivered: 0.35)), then: slow)
+        link.script(CommandType.GET_RECORD, .fragments(scheduledSecond(sequence: 132, at: Self.end1))) { [unowned self] in
+            slow()
+            DispatchQueue.global().async {
+                self.pumpManager.deactivatePatch { outcome in
+                    result.value = outcome
+                    deactivated.fulfill()
+                }
+            }
+            let deadline = Date.now.addingTimeInterval(1)
+            while pumpManager.readsLongerAsTempBasalEnds, Date.now < deadline {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+        link.script(CommandType.GET_RECORD, .fragments(PatchBytes.bolusRecord(
+            sequence: 133, patchId: Self.patchId, start: Self.end1.addingTimeInterval(2), amount: 0.5, delivered: 0.3
+        )), then: slow)
+        // The deactivation's read before the stop
+        link.script(CommandType.GET_RECORD, secondsRecordEmptied())
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 10, sequence: 135, patchId: Self.patchId))
+        link.script(
+            CommandType.STOP_PATCH,
+            PatchBytes.answer(command: CommandType.STOP_PATCH, body: UInt64(10).toData(length: 2) + Self.patchId.toData(length: 2))
+        )
+        link.notify(emptyWithCompletion(delivered: 0.3, newestRecord: 135))
+        wait(for: [deactivated], timeout: 5)
+        settle()
+
+        guard case .success? = result.value else {
+            XCTFail("Not deactivated: \(String(describing: result.value))")
+            return
+        }
+        XCTAssertEqual(link.writtenCommands.suffix(6), [
+            CommandType.GET_RECORD, CommandType.GET_RECORD, CommandType.GET_RECORD,
+            CommandType.GET_RECORD, CommandType.GET_RECORD, CommandType.STOP_PATCH
+        ])
+        let firstFinal = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 }).first)
+        XCTAssertEqual(firstFinal.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+        XCTAssertEqual(finals(of: second).first?.deliveredUnits ?? -1, 0, accuracy: 0.001, "by our estimate: the read stopped short of it")
+    }
+
+    /// A wait for the link never over - its connect's completion orphaned - holds the longer read off only until
+    /// `loopWaitExpiry`, then no longer counts, with a warning
+    func testWaitForTheLinkNeverOverNoLongerCountsOnceItExpires() {
+        let expiry = MedtrumPumpManager.loopWaitExpiry
+        MedtrumPumpManager.loopWaitExpiry = 0.3
+        defer { MedtrumPumpManager.loopWaitExpiry = expiry }
+        runFirst()
+        MedtrumLogger.pumpManager = pumpManager
+        defer { MedtrumLogger.pumpManager = nil }
+        pumpManager.state.basalDose = UnfinalizedDose(suspendStartTime: Date.now)
+        XCTAssertTrue(pumpManager.readsLongerAsTempBasalEnds)
+
+        _ = pumpManager.loopBeginsWaiting()
+        XCTAssertFalse(pumpManager.readsLongerAsTempBasalEnds, "waiting")
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertTrue(pumpManager.readsLongerAsTempBasalEnds, "expired")
+        settle()
+        XCTAssertEqual(delegate.logEntries.filter { $0.message.contains("no longer counted") }.count, 1)
+    }
+
+    /// The 0.5 U/h one's record, `sequence`: from `end1` + 1 s, emptied 3 s later, 0.05 U
+    private func secondsRecordEmptied(sequence: Int = 134) -> [String] {
+        PatchBytes.basalRecord(
+            sequence: sequence, patchId: Self.patchId, type: .ABSOLUTE_TEMP, start: Self.end1.addingTimeInterval(1),
+            end: Self.end1.addingTimeInterval(4), rate: 0.5, delivered: 0.05, endReason: .STOP_EMPTY
+        )
+    }
+
+    /// The 1.2 U/h one replaced by 0.5 U/h back to back, its read after the command waiting for the loop's 0.5 U bolus
+    /// right behind - record 133, from `end1` + 2 s - to be over. Returns the bolus's first report and the new one's.
+    private func startBolusRightAfterTheSet() throws -> (bolus: DoseEntry, second: DoseEntry) {
+        runFirst()
+        pumpManager.openTempBasalEndReadDelay = 1
+        scriptReplacement(of: 1)
+        link.script(CommandType.SET_BOLUS, bolusAnswer(record: 133, start: Self.end1.addingTimeInterval(2)))
+
+        XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
+        XCTAssertNil(commandBolus(0.5, activationType: .automatic))
+        Thread.sleep(forTimeInterval: 1.5)
+        settle()
+        XCTAssertEqual(link.writtenCommands.last, CommandType.SET_BOLUS, "nothing read while it runs")
+        XCTAssertTrue(pumpManager.hasOpenTempBasalEnds)
+
+        let bolus = try XCTUnwrap(reports(of: .bolus).first)
+        let second = try XCTUnwrap(reports(of: .tempBasal).first { $0.unitsPerHour == 0.5 })
+        return (bolus, second)
+    }
+
+    /// The patch's notification that it ran empty - no time of the halt, as it sends one - with the running bolus's
+    /// completion at `delivered`, naming `newestRecord` (device 2026-10-22 20:18:59)
+    private func emptyWithCompletion(delivered: Double, newestRecord: Int) -> String {
+        let storage = UInt64(newestRecord).toData(length: 2) + Self.patchId.toData(length: 2)
+        let bolus = Data([0x80]) + UInt64((delivered / 0.05).rounded()).toData(length: 2)
+        return (Data([PatchState.reservoirEmpty.rawValue, 0x02, 0x01]) + bolus + storage).hexEncodedString()
+    }
+
     /// Past `openTempBasalEndMaximumWait`, a status's batch - no record sync - makes the old one final from our estimate
     func testOverdueTempBasalEndedBackToBackGoesFinalWithAStatusBatch() throws {
         runFirst()

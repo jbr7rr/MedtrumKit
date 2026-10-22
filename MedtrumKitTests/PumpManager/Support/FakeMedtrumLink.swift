@@ -65,6 +65,7 @@ final class FakeMedtrumLink: MedtrumLink {
     private var answers: [UInt8: [Answer]] = [:]
     private var followUps: [UInt8: [() -> Void]] = [:]
     private var recordedWrites: [Write] = []
+    private var requestedWrites: [UInt8] = []
     private var unscripted: [UInt8] = []
     private var disconnectRequests: [Bool] = []
     private var connectRequests = 0
@@ -144,6 +145,12 @@ final class FakeMedtrumLink: MedtrumLink {
 
     var writtenCommands: [UInt8] {
         writes.map(\.commandType)
+    }
+
+    /// Every command asked to be written, by command type - before the writer is free for it: one held up behind
+    /// `holdWriter` is in here, not in `writtenCommands`
+    var requestedCommands: [UInt8] {
+        lock.withLock { requestedWrites }
     }
 
     /// Commands that had no answer scripted, by command type
@@ -239,6 +246,9 @@ final class FakeMedtrumLink: MedtrumLink {
     }
 
     func write(_ packet: any MedtrumBasePacketProtocol, timeout: TimeInterval?) -> MedtrumWriteResult<Any> {
+        lock.withLock {
+            requestedWrites.append(packet.commandType)
+        }
         // Not written, if a write held up ahead of it took all of `timeout`. The follow-up runs once the writer is free.
         let written = writer.exclusively(within: timeout) { left in
             answer(packet, waitingFor: left)

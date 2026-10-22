@@ -186,16 +186,22 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         settle()
         XCTAssertNil(pumpManager.state.bolusDose)
 
-        // 935 read, then the command
+        // 935 read, then the command - in flight until the sync stopped for it: over before the sync looks again, the
+        // sync would read on, as it should
         let updated = expectation(description: "settings updated")
-        link.script(CommandType.SET_PATCH, PatchBytes.answer(command: CommandType.SET_PATCH, body: Data()))
+        let commandHeld = DispatchSemaphore(value: 0)
+        link.script(CommandType.SET_PATCH, .fragments(PatchBytes.answer(command: CommandType.SET_PATCH, body: Data()))) {
+            commandHeld.wait()
+        }
         link.script(CommandType.GET_RECORD, .fragments(PatchBytes.otherRecord(type: 3, sequence: 935, patchId: 236))) { [unowned self] in
             pumpManager.updatePatchSettings { _ in updated.fulfill() }
         }
         syncRecords(.awaitingDoses)
+        commandHeld.signal()
         wait(for: [updated], timeout: 5)
         settle()
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 935)
+        XCTAssertEqual(link.writtenCommands.filter { $0 == CommandType.GET_RECORD }.count, 1, "stopped at 936 for the command")
 
         pumpManager.state.currentSequenceNumber = 937
         confirmRecordSequence()
@@ -1187,6 +1193,79 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(finals(of: started).count, 1)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 1.5, accuracy: 0.001, "what its record said")
         XCTAssertTrue(delegate.logEntries.contains { $0.message.contains("finalizing it with it, by its number") })
+    }
+
+    /// Device 2026-10-22 13:52: the patch wrote a low-reservoir alarm as the bolus ran, under the number its answer
+    /// named - the bolus's own record the next one, at its answered start. Finalized by it in the same read, with what it
+    /// says, not 15 min later from our estimate - and that number claimed as an answered one is
+    func testBolusRecordPastAnAlarmThatTookItsNumberFinalizesIt() {
+        let started = completeAnsweredBolus()
+        pumpManager.state.currentSequenceNumber = 124
+
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 123, patchId: 236))
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 124, patchId: 236, start: Date.fromMedtrumSeconds(0x17A8_8697), amount: 2.0, delivered: 1.95)
+        )
+        syncRecords()
+
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 124)
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 124 }?.outcome?.hasPrefix("finalized bolus"), true)
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 1.95, accuracy: 0.001, "what its record said")
+        XCTAssertTrue(pumpManager.state.answeredBolusRecords.contains(124))
+        XCTAssertTrue(uncertain.isEmpty)
+    }
+
+    /// The same, the record after the alarm of another amount: not the bolus's
+    func testBolusRecordPastAnAlarmThatTookItsNumberOfAnotherAmountIsNotTaken() {
+        assertRecordPastAnAlarmIsNotTaken(start: Date.fromMedtrumSeconds(0x17A8_8697), amount: 1.5)
+    }
+
+    /// The same, the record after the alarm from another start: not the bolus's
+    func testBolusRecordPastAnAlarmThatTookItsNumberFromAnotherStartIsNotTaken() {
+        assertRecordPastAnAlarmIsNotTaken(start: Date.fromMedtrumSeconds(0x17A8_8697 + 5), amount: 2.0)
+    }
+
+    /// The alarm read, the app killed before the bolus's record could be: the next run takes it all the same
+    func testBolusRecordPastAnAlarmThatTookItsNumberIsTakenAfterARestartBetweenThem() throws {
+        let started = completeAnsweredBolus()
+        pumpManager.state.currentSequenceNumber = 124
+
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 123, patchId: 236))
+        link.script(CommandType.GET_RECORD, .timeout)
+        syncRecords()
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 123)
+        XCTAssertTrue(finals(of: started).isEmpty)
+
+        try restart(from: delegate.savedState)
+        XCTAssertEqual(pumpManager.state.awaitingRecord.first?.snapshot.answeredRecordTaken, true, "saved with it")
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 124, patchId: 236, start: Date.fromMedtrumSeconds(0x17A8_8697), amount: 2.0, delivered: 1.95)
+        )
+        syncRecords()
+
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 124)
+        let final = try XCTUnwrap(finals(of: started).last)
+        XCTAssertEqual(final.deliveredUnits ?? 0, 1.95, accuracy: 0.001, "what its record said")
+    }
+
+    private func assertRecordPastAnAlarmIsNotTaken(start: Date, amount: Double, line: UInt = #line) {
+        let started = completeAnsweredBolus()
+        pumpManager.state.currentSequenceNumber = 124
+
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 123, patchId: 236))
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 124, patchId: 236, start: start, amount: amount, delivered: amount)
+        )
+        syncRecords()
+
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 124, line: line)
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 124 }?.outcome, "unmatched", line: line)
+        XCTAssertTrue(finals(of: started).isEmpty, line: line)
+        XCTAssertEqual(pumpManager.state.awaitingRecord.first?.snapshot.answeredRecordTaken, true, line: line)
     }
 
     /// 2 U answered as record 123 is cancelled at 0.4 U, the link lost before the patch's completion of it (which

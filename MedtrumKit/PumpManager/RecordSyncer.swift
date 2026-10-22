@@ -20,7 +20,8 @@ enum RecordSyncer {
         case loopSync = "loop sync"
         /// After a full sync: the heartbeat's, or the rest of the loop's
         case fullSync = "full sync"
-        /// A heartbeat between full syncs, while doses wait on records the patch has written (or on their timeout)
+        /// A heartbeat between full syncs, while doses wait on records the patch has written (or on their timeout), or
+        /// records it told of are unread
         case awaitingDoses = "awaiting doses"
         /// Right before the patch is stopped: the last chance to read this session's records
         case beforeStop = "before stop"
@@ -369,6 +370,10 @@ enum RecordSyncer {
         outcome applied: String? = nil
     ) {
         let isOurs = isSamePatch(response.patchId, patchId.toUInt64())
+        // Another kind's at a bolus's answered number - a temp basal's it settled as it ended among them
+        if isOurs {
+            pumpManager.noteAnsweredBolusRecordTaken(by: response)
+        }
         let outcome = applied ?? (isOurs ? pumpManager.reconcile(response) : "not this patch's record")
         log(response, requested: requested, expectedPatchId: patchId.toUInt64(), outcome: outcome, to: pumpManager.recordStore)
         // A bolus whose command went unanswered keeps track of the records read in order since it went out
@@ -394,9 +399,17 @@ enum RecordSyncer {
     /// block on the link, holding the command lock: a full status's, or the end queue's. A run in progress is waited
     /// out: it yields between two records to the lock held here. Each record is asked for once: on the first that can't
     /// be read, or the first that is not the one asked for, it stops, and our estimate stands in. Not while a bolus
-    /// runs: its notifications and a cancel have the link.
+    /// runs: its notifications and a cancel have the link - read once it is over
+    /// (`MedtrumPumpManager.readsTempBasalEndAfterBolus`).
     static func finishTempBasalEnd(pumpManager: MedtrumPumpManager) {
-        guard let ending = pumpManager.pendingTempBasalEnd, mayRead(ending, pumpManager: pumpManager) else {
+        guard let ending = pumpManager.pendingTempBasalEnd else {
+            return
+        }
+        // A bolus running - a halt's notification ahead of its completion: read once it is over
+        if pumpManager.readsTempBasalEndAfterBolus(ending) {
+            return
+        }
+        guard mayRead(ending, pumpManager: pumpManager) else {
             return
         }
 
@@ -459,12 +472,19 @@ enum RecordSyncer {
         guard let ending = pumpManager.pendingTempBasalEnd else {
             return
         }
+        pumpManager.noteTempBasalEndReadBegins(ending)
 
         let state = pumpManager.state
         let patchId = state.patchId
         let store = pumpManager.recordStore
         var records: [GetRecordResponse] = []
         var unread: String?
+
+        // Off a command, the patch suspended: longer, for a slow link - see `tempBasalEndSuspendedReadBudget`
+        let suspendedDeadline = max(
+            deadline,
+            pumpManager.now().addingTimeInterval(MedtrumPumpManager.tempBasalEndSuspendedReadBudget)
+        )
 
         if let last = pumpManager.lastRecordToRead(for: ending), !patchId.isEmpty {
             let first = state.syncedSequenceNumber + 1
@@ -478,9 +498,11 @@ enum RecordSyncer {
 
                 reading: for sequence in first ... last {
                     // Less than a round trip left, and the record would be asked for only to be given up on
-                    let left = deadline.timeIntervalSince(pumpManager.now())
+                    let longer = pumpManager.readsLongerAsTempBasalEnds
+                    let left = (longer ? suspendedDeadline : deadline).timeIntervalSince(pumpManager.now())
                     guard left >= MedtrumPumpManager.tempBasalEndRecordReadMinimum else {
-                        unread = "the \(Int(MedtrumPumpManager.tempBasalEndReadBudget)) s to read them ran out at \(sequence)"
+                        let budget = longer ? MedtrumPumpManager.tempBasalEndSuspendedReadBudget : MedtrumPumpManager.tempBasalEndReadBudget
+                        unread = "the \(Int(budget)) s to read them ran out at \(sequence)"
                         break reading
                     }
 

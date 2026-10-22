@@ -128,6 +128,12 @@ public class UnfinalizedDose {
         public fileprivate(set) var endRecord: Int?
         /// And where that record ends, on the patch clock: where the segment after it started
         public fileprivate(set) var patchEndTime: Date?
+        /// Of a temp basal whose records are read as it ends (`MedtrumPumpManager.TempBasalEnd`): the number of its last
+        /// record, and where it ends on the patch clock, where known - saved with it, so that a run killed during that
+        /// read has the next one read them after all (`MedtrumPumpManager.takeOverTempBasalEndFromLastRun`). Nil, none
+        /// known - and for a state saved before these were kept: our estimate stands in.
+        public fileprivate(set) var endReadLastRecord: Int?
+        public fileprivate(set) var endReadPatchEnd: Date?
 
         /// The final report, once there is one. Every report of the final is rebuilt from exactly these, so a final
         /// sent again until the host confirms storing it is byte for byte the same.
@@ -152,6 +158,10 @@ public class UnfinalizedDose {
         public fileprivate(set) var sequenceAtSend: Int?
         /// The record the patch allocated for this bolus, from the answer to its command: matched by number
         public fileprivate(set) var recordSequence: Int?
+        /// That number came back as a record of another kind - one the patch wrote as the bolus ran, an alarm, say
+        /// (device 2026-10-22 13:52): the bolus's own is numbered after it, matched by its answered start
+        /// (`MedtrumPumpManager.reconcile`)
+        public fileprivate(set) var answeredRecordTaken = false
         /// Of a bolus whose command went unanswered: every record numbered past `sequenceAtSend` up to this one was read,
         /// in order and in its own place, while it ran or waited on its record - nil, none yet. A record skipped, or
         /// read in another's place, stops it there for good: that one could have been its.
@@ -370,6 +380,8 @@ public class UnfinalizedDose {
         state.endedOpen = rawValue["endedOpen"] as? Bool ?? false
         state.endRecord = rawValue["endRecord"] as? Int
         state.patchEndTime = rawValue["patchEndTime"] as? Date
+        state.endReadLastRecord = rawValue["endReadLastRecord"] as? Int
+        state.endReadPatchEnd = rawValue["endReadPatchEnd"] as? Date
 
         // Both or neither: a final is only ever set whole
         if let finalEndDate = rawValue["finalEndDate"] as? Date {
@@ -384,6 +396,7 @@ public class UnfinalizedDose {
         state.sentAt = rawValue["sentAt"] as? Date
         state.sequenceAtSend = rawValue["sequenceAtSend"] as? Int
         state.recordSequence = rawValue["recordSequence"] as? Int
+        state.answeredRecordTaken = rawValue["answeredRecordTaken"] as? Bool ?? false
         state.recordsReadThrough = rawValue["recordsReadThrough"] as? Int
         state.possibleRecord = rawValue["possibleRecord"] as? Int
         state.priorSegmentStart = rawValue["priorSegmentStart"] as? Date
@@ -428,6 +441,8 @@ public class UnfinalizedDose {
         }
         raw["endRecord"] = state.endRecord
         raw["patchEndTime"] = state.patchEndTime
+        raw["endReadLastRecord"] = state.endReadLastRecord
+        raw["endReadPatchEnd"] = state.endReadPatchEnd
         raw["finalDeliveredUnits"] = state.finalDeliveredUnits
         raw["finalEndDate"] = state.finalEndDate
         raw["finalizedAt"] = state.finalizedAt
@@ -441,6 +456,9 @@ public class UnfinalizedDose {
         raw["sentAt"] = state.sentAt
         raw["sequenceAtSend"] = state.sequenceAtSend
         raw["recordSequence"] = state.recordSequence
+        if state.answeredRecordTaken {
+            raw["answeredRecordTaken"] = true
+        }
         raw["recordsReadThrough"] = state.recordsReadThrough
         raw["possibleRecord"] = state.possibleRecord
         raw["priorSegmentStart"] = state.priorSegmentStart
@@ -497,6 +515,18 @@ public class UnfinalizedDose {
         transition { state in
             state.recordSequence = recordSequence
             state.pumpStartTime = pumpStartTime
+        }
+    }
+
+    /// The record its answer named came back as one of another kind - see `State.answeredRecordTaken`. Returns whether
+    /// that is news.
+    func noteAnsweredRecordTaken() -> Bool {
+        transition { state in
+            guard type == .bolus, !state.isFinalized, !state.answeredRecordTaken else {
+                return false
+            }
+            state.answeredRecordTaken = true
+            return true
         }
     }
 
@@ -716,6 +746,18 @@ public class UnfinalizedDose {
             state.endRecord = endRecord
             state.patchEndTime = patchEnd
             return true
+        }
+    }
+
+    /// This temp basal, ended, has its records read up to `lastRecord`, ending at `patchEnd` on the patch clock, where
+    /// known - see `State.endReadLastRecord`. Only before its final, and not for one ended open: those keep their own.
+    func noteEndRead(lastRecord: Int, patchEnd: Date?) {
+        transition { state in
+            guard type == .tempBasal, state.isFinished, !state.isFinalized, !state.endedOpen else {
+                return
+            }
+            state.endReadLastRecord = lastRecord
+            state.endReadPatchEnd = patchEnd
         }
     }
 
