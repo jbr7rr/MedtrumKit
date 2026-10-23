@@ -94,6 +94,9 @@ public class MedtrumPumpState: RawRepresentable {
             pumpState = .none
         }
 
+        // Not kept by earlier versions: then only a patch being set up has no session
+        patchSessionEnded = rawValue["patchSessionEnded"] as? Bool ?? pumpState.isSetup
+
         if let rawBasalSchedule = rawValue["basalSchedule"] as? BasalSchedule.RawValue {
             basalSchedule = BasalSchedule(rawValue: rawBasalSchedule) ??
                 BasalSchedule(entries: [LoopKit.RepeatingScheduleValue(startTime: 0, value: 0)])
@@ -144,6 +147,7 @@ public class MedtrumPumpState: RawRepresentable {
         pumpTime = Date()
         pumpTimeSyncedAt = Date()
         pumpState = .none
+        patchSessionEnded = true
 
         maxHourlyInsulin = 20
         maxDailyInsulin = 100
@@ -184,6 +188,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["pumpTime"] = pumpTime
         value["pumpTimeSyncedAt"] = pumpTimeSyncedAt
         value["pumpState"] = pumpState.rawValue
+        value["patchSessionEnded"] = patchSessionEnded
         value["maxHourlyInsulin"] = maxHourlyInsulin
         value["maxDailyInsulin"] = maxDailyInsulin
         value["basalSchedule"] = basalSchedule.rawValue
@@ -262,6 +267,8 @@ public class MedtrumPumpState: RawRepresentable {
     public var pumpTimeSyncedAt: Date
 
     public var pumpState: PatchState
+    /// No patch session is running: the last one ended, or none started yet
+    public var patchSessionEnded: Bool
     public var initialReservoir: Double?
     public var reservoir: Double
     public var battery: Double
