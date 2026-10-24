@@ -11,6 +11,10 @@ enum MedtrumAlert {
     case baseResetNotification
     /// A bolus whose command went unanswered, finalized in full without its record
     case bolusCountedAsDelivered(units: Double)
+    /// A bolus the patch's records show delivered that matches no dose of ours, not counted - started at `at`
+    case bolusNotCounted(units: Double, at: Date)
+    /// A bolus of ours final from our estimate, `counted`, whose record came after all, `delivered` - started at `at`
+    case bolusMiscounted(counted: Double, delivered: Double, at: Date)
 
     var title: String? {
         switch self {
@@ -105,6 +109,18 @@ enum MedtrumAlert {
                 managerIdentifier: MedtrumAlert.managerIdentifier,
                 alertIdentifier: "com.nightscout.medtrumkit.bolus-counted-as-delivered"
             )
+        case let .bolusNotCounted(_, at):
+            // One for each: they are told of once
+            return Alert.Identifier(
+                managerIdentifier: MedtrumAlert.managerIdentifier,
+                alertIdentifier: "com.nightscout.medtrumkit.bolus-not-counted.\(Int(at.timeIntervalSince1970))"
+            )
+        case let .bolusMiscounted(_, _, at):
+            // One for each: they are told of once
+            return Alert.Identifier(
+                managerIdentifier: MedtrumAlert.managerIdentifier,
+                alertIdentifier: "com.nightscout.medtrumkit.bolus-miscounted.\(Int(at.timeIntervalSince1970))"
+            )
         }
     }
 
@@ -197,6 +213,58 @@ enum MedtrumAlert {
                         comment: "Body bolus counted as delivered notification"
                     ),
                     units.formatted()
+                ),
+                acknowledgeActionButtonLabel: String(
+                    localized: "OK",
+                    comment: "Acknoledge alert"
+                )
+            )
+        case let .bolusNotCounted(units, at):
+            return Alert.Content(
+                title: String(localized: "Bolus not counted", comment: "Title bolus not counted notification"),
+                body: String(
+                    format: String(
+                        localized: "The patch's records show a bolus of %1$@ U delivered at %2$@ that is not in the app. Add it manually.",
+                        comment: "Body bolus not counted notification"
+                    ),
+                    units.formatted(),
+                    at.formatted(date: .abbreviated, time: .shortened)
+                ),
+                acknowledgeActionButtonLabel: String(
+                    localized: "OK",
+                    comment: "Acknoledge alert"
+                )
+            )
+        case let .bolusMiscounted(counted, delivered, at) where delivered > counted:
+            return Alert.Content(
+                title: String(localized: "Bolus not fully counted", comment: "Title bolus under-counted notification"),
+                body: String(
+                    format: String(
+                        localized: "The patch's records show %1$@ U delivered by the bolus at %2$@, the app counted %3$@ U. Add the %4$@ U missing manually.",
+                        comment: "Body bolus under-counted notification"
+                    ),
+                    delivered.rounded(toPlaces: 2).formatted(),
+                    at.formatted(date: .abbreviated, time: .shortened),
+                    counted.rounded(toPlaces: 2).formatted(),
+                    (delivered - counted).rounded(toPlaces: 2).formatted()
+                ),
+                acknowledgeActionButtonLabel: String(
+                    localized: "OK",
+                    comment: "Acknoledge alert"
+                )
+            )
+        case let .bolusMiscounted(counted, delivered, at):
+            return Alert.Content(
+                title: String(localized: "Bolus counted too high", comment: "Title bolus over-counted notification"),
+                body: String(
+                    format: String(
+                        localized: "The patch's records show %1$@ U delivered by the bolus at %2$@, the app counted %3$@ U. Insulin on board is overstated by %4$@ U.",
+                        comment: "Body bolus over-counted notification"
+                    ),
+                    delivered.rounded(toPlaces: 2).formatted(),
+                    at.formatted(date: .abbreviated, time: .shortened),
+                    counted.rounded(toPlaces: 2).formatted(),
+                    (counted - delivered).rounded(toPlaces: 2).formatted()
                 ),
                 acknowledgeActionButtonLabel: String(
                     localized: "OK",

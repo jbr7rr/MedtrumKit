@@ -57,6 +57,11 @@ public class MedtrumPumpManager: DeviceManager {
     /// `readOpenTempBasalEndsSoon`: the loop's bolus, right behind the temp basal, has the link first. Only tests change it.
     var openTempBasalEndReadDelay: TimeInterval = 5
 
+    /// How long a command waits for the host to take the state before it writes a bolus or a temp basal - see
+    /// `handOverState`. Well past the 3 s a host can take as it saves (device 2026-10-23 21:43, a bolus of 2.05 U).
+    /// Only tests change it.
+    var dosingHandOverTimeout: TimeInterval = 10
+
     /// The completion of the bolus sent and not yet answered - see `noteCompletionWithNoBolusRunning`. Only under
     /// `doseReportLock`.
     private var earlyBolusCompletion: EarlyBolusCompletion?
@@ -133,9 +138,21 @@ public class MedtrumPumpManager: DeviceManager {
     /// Saved in one step with what changes the doses together: a dose that took over from another, and what is held
     /// back with the one it ended (`MedtrumPumpState.heldBasalDoses`), are never saved half-way. Nothing holds
     /// `doseReportLock` across a write on the link, or waits under it for the delegate queue or the main queue.
+    ///
+    /// The host's read, which it saves: a bolus or a temp basal pending in what it reads is on its way to its disk -
+    /// noted for the command waiting to write it (`handOverPendingDose`). The manager's own reads take `state.rawValue`.
     public var rawState: PumpManager.RawStateValue {
-        doseReportLock.withLock { state.rawValue }
+        doseReportLock.withLock {
+            if state.pendingBolus != nil || state.pendingTempBasal != nil {
+                pendingDoseHandedOut = true
+            }
+            return state.rawValue
+        }
     }
+
+    /// The host read the state with the bolus or the temp basal now pending in it (`rawState`), since it was set - see
+    /// `handOverPendingDose`. Only under `doseReportLock`.
+    private var pendingDoseHandedOut = false
 
     private let logDeviceIdentifierLock = NSLock()
     private var logDeviceIdentifierStorage = ""
@@ -591,6 +608,9 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            // A halt shown from here on - as the command waits for the host, say - and the bolus is not written
+            let haltsBefore = self.haltsSeen.value
+
             guard self.state.basalState != .suspended else {
                 self.log.error("Pump is suspended...")
                 completion(.deviceState(MedtrumConnectError.isSuspended))
@@ -622,9 +642,59 @@ public extension MedtrumPumpManager {
                     sequenceAtSend: sequenceAtSend,
                     automatic: activationType.isAutomatic
                 )
+                self.pendingDoseHandedOut = false
             }
-            self.handOverState(before: "writing the bolus")
+            // Not written unless the host has it: killed after the write, the app would come back without it
+            guard self.handOverPendingDose(
+                "the bolus of \(units) U",
+                until: .now() + self.dosingHandOverTimeout,
+                orElse: {
+                    self.state.pendingBolus = nil
+                    if let early = self.earlyBolusCompletion {
+                        self.log.error(
+                            "A completion of \(early.delivered) U, record \(early.record.map { "#\($0)" } ?? "-"), came " +
+                                "while the bolus that is not written waited for the host: dropped"
+                        )
+                    }
+                    self.earlyBolusCompletion = nil
+                }
+            ) else {
+                self.log.warning(
+                    "The host did not take the state within \(Int(self.dosingHandOverTimeout)) s, nor read it: the bolus of " +
+                        "\(units) U is not written, it fails - not delivered"
+                )
+                self.notifyStateDidChange()
+                completion(.deviceState(MedtrumConnectError.stateNotSaved(tempBasalCancelled: false)))
+                return
+            }
 
+            // The patch showed itself halted as the command waited: not written - off the state the host has, which has it
+            // pending, before the command fails
+            let halted = self.doseReportLock.withLock { () -> (halted: Bool, early: EarlyBolusCompletion?) in
+                guard self.haltedSince(haltsBefore) else {
+                    return (false, nil)
+                }
+                self.state.pendingBolus = nil
+                defer { self.earlyBolusCompletion = nil }
+                return (true, self.earlyBolusCompletion)
+            }
+            if halted.halted {
+                self.log.error("The patch showed a halt as the bolus of \(units) U waited for the host: not written, it fails")
+                if let early = halted.early {
+                    self.log.error(
+                        "A completion of \(early.delivered) U, record \(early.record.map { "#\($0)" } ?? "-"), came " +
+                            "while the bolus that is not written waited for the host: dropped"
+                    )
+                }
+                self.handOverState(before: "failing the bolus")
+                completion(.deviceState(MedtrumConnectError.isSuspended))
+                return
+            }
+
+            // When it is written - after the wait for the host, which `sentAt`, its identity, is from before: a status
+            // received before then says nothing of it (`statusPredatesCommand`)
+            let writtenAt = Date.now
+            let writtenUptime = self.uptime()
             let writeResult = self.link.write(SetBolusPacket(bolusAmount: units))
             let outcome = MedtrumCommandOutcome(writeResult)
 
@@ -665,6 +735,7 @@ public extension MedtrumPumpManager {
                 startDate: sentAt
             )
             doseEntry.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend)
+            doseEntry.noteWritten(at: writtenAt, uptime: writtenUptime)
 
             if case let .success(data) = writeResult, let response = data as? SetBolusResponse {
                 self.noteBolusAnswer(response, of: doseEntry)
@@ -869,10 +940,42 @@ public extension MedtrumPumpManager {
                 }
             }
 
+            // The set is not written unless the host takes the state with it pending (`handOverPendingDose`): one that
+            // can't take it now is not sent the cancel either - the command fails with nothing sent, the temp basal
+            // running runs on, not the schedule till the next loop (and the loop's bolus after it, which the failed set
+            // stops). One wait for the command: the set's counts from here, but never less than a hand-over takes.
+            var handOverDeadline: DispatchTime?
+            if self.state.basalState == .tempBasal, duration >= .ulpOfOne {
+                let deadline = DispatchTime.now() + self.dosingHandOverTimeout
+                guard self.handOverState(until: deadline) else {
+                    self.log.warning(
+                        "The host did not take the state within \(Int(self.dosingHandOverTimeout)) s: the temp basal of " +
+                            "\(unitsPerHour) U/h is not set, it fails - nothing sent, the temp basal running runs on"
+                    )
+                    completion(.deviceState(MedtrumConnectError.stateNotSaved(tempBasalCancelled: false)))
+                    return
+                }
+                handOverDeadline = deadline
+
+                // Halted meanwhile: the status that showed it ended the temp basal running - nothing to cancel, nor set
+                guard !self.doseReportLock.withLock({ self.haltedSince(haltsBefore) }) else {
+                    self.log.error(
+                        "The patch showed a halt as the command waited for the host: the temp basal of \(unitsPerHour) " +
+                            "U/h is not set, it fails - nothing sent"
+                    )
+                    completion(.deviceState(MedtrumConnectError.isSuspended))
+                    return
+                }
+            }
+
+            // The temp basal the cancel ends, if one goes out
+            var cancelling: UnfinalizedDose?
+
             if self.state.basalState == .tempBasal {
                 // From here on this command reports what follows the temp basal running, whatever its outcome: the scheduled
                 // basal a status shows meanwhile is the cancel's own - see `isCancelInFlight`
-                self.doseReportLock.withLock { self.tempBasalCancelInFlight = self.state.basalDose }
+                cancelling = self.state.basalDose
+                self.doseReportLock.withLock { self.tempBasalCancelInFlight = cancelling }
 
                 // Need to cancel temp basal first before setting temp basal - dated on the manager's clock, as everything this
                 // command dates: the same as ours, but for tests that move it
@@ -907,14 +1010,29 @@ public extension MedtrumPumpManager {
                     }
                 }
 
-                self.state.basalState = .active
+                // Not if a status ended it meanwhile - showing the patch halted, between the answer and here
+                self.doseReportLock.withLock {
+                    if self.state.basalDose === cancelling {
+                        self.state.basalState = .active
+                    }
+                }
                 self.log.info("Cancelled temp basal!")
             }
 
             if duration < .ulpOfOne {
                 // Need to cancel temp basal, but is already cancelled
-                // Only need to report back to algorithm
-                self.reportScheduledBasal(endedBy: cancelAnswer, sentAt: cancelSentAt)
+                // Only need to report back to algorithm - unless a status showed the patch halted meanwhile: it tells
+                guard self.reportScheduleUnlessHalted(
+                    endedAt: nil,
+                    endedBy: cancelAnswer,
+                    sentAt: cancelSentAt,
+                    cancelled: cancelling,
+                    haltsBefore: haltsBefore,
+                    before: "completing the cancel"
+                ) || cancelledAt != nil else {
+                    completion(.deviceState(MedtrumConnectError.isSuspended))
+                    return
+                }
 
                 completion(nil)
                 return
@@ -953,10 +1071,68 @@ public extension MedtrumPumpManager {
                         }
                     }
                 )
+                self.pendingDoseHandedOut = false
                 return priorSegmentStart
             }
-            self.handOverState(before: "writing the temp basal")
+            // Not written unless the host has it, as a bolus: killed after the write, the app would come back with the patch
+            // running a temp basal it has no dose of, uncounted. The cancel that went out first stands: the scheduled basal
+            // from it, reported as when the set fails.
+            let deadline = max(handOverDeadline ?? .now() + self.dosingHandOverTimeout, .now() + Self.stateHandOverTimeout)
+            guard self.handOverPendingDose("the temp basal of \(unitsPerHour) U/h", until: deadline, orElse: {
+                self.state.pendingTempBasal = nil
+            }) else {
+                self.log.warning(
+                    "The host did not take the state in time, nor read it: the temp basal of \(unitsPerHour) U/h is not " +
+                        "written, it fails" + (cancelledAt != nil ? " - the temp basal before was cancelled" : "")
+                )
+                if let cancelledAt {
+                    self.failSetAfterCancel(
+                        cancelledAt: cancelledAt,
+                        cancelAnswer: cancelAnswer,
+                        cancelSentAt: cancelSentAt,
+                        cancelled: cancelling,
+                        haltsBefore: haltsBefore
+                    )
+                } else {
+                    self.notifyStateDidChange()
+                }
+                completion(.deviceState(MedtrumConnectError.stateNotSaved(tempBasalCancelled: cancelledAt != nil)))
+                return
+            }
 
+            // A status showed the patch halted since the command began - during the cancel, the reads, the wait for the
+            // host: not written, off the state the host has, which has it pending. What follows the cancel, if one went
+            // out, the status tells.
+            let haltedMeanwhile = self.doseReportLock.withLock { () -> Bool in
+                guard self.haltedSince(haltsBefore, cancelling: cancelling) else {
+                    return false
+                }
+                self.state.pendingTempBasal = nil
+                return true
+            }
+            if haltedMeanwhile {
+                self.log.error(
+                    "The patch showed a halt as the command ran: the temp basal of \(unitsPerHour) U/h is not written, it " +
+                        "fails" + (cancelledAt != nil ? " - the temp basal before was cancelled" : "")
+                )
+                if let cancelledAt {
+                    self.failSetAfterCancel(
+                        cancelledAt: cancelledAt,
+                        cancelAnswer: cancelAnswer,
+                        cancelSentAt: cancelSentAt,
+                        cancelled: cancelling,
+                        haltsBefore: haltsBefore
+                    )
+                } else {
+                    self.handOverState(before: "failing the temp basal")
+                }
+                completion(.deviceState(MedtrumConnectError.isSuspended))
+                return
+            }
+
+            // When it is written, after the wait for the host - see `enactBolus`
+            let writtenAt = self.now()
+            let writtenUptime = self.uptime()
             let packet = SetTempBasalPacket(rate: unitsPerHour, duration: duration)
             let tempBasalResult = self.link.write(packet)
             // Held back meanwhile - the patch halted as the set went out: out ahead of what the answer reports
@@ -971,7 +1147,13 @@ public extension MedtrumPumpManager {
                 // changed: a temp basal still running runs on. Off the saved state before the command fails either way:
                 // killed after it, the app must not come back with a temp basal that never ran.
                 if let cancelledAt {
-                    self.reportScheduledBasal(tempBasalEndedAt: cancelledAt, endedBy: cancelAnswer, sentAt: cancelSentAt)
+                    self.failSetAfterCancel(
+                        cancelledAt: cancelledAt,
+                        cancelAnswer: cancelAnswer,
+                        cancelSentAt: cancelSentAt,
+                        cancelled: cancelling,
+                        haltsBefore: haltsBefore
+                    )
                 } else {
                     self.doseReportLock.withLock { self.state.pendingTempBasal = nil }
                     self.handOverState(before: "failing the temp basal")
@@ -1003,15 +1185,17 @@ public extension MedtrumPumpManager {
                 }
 
                 // Kept before the batch below goes out, so the state saved with it has it
+                let unconfirmed = UnfinalizedDose(
+                    tempRate: unitsPerHour,
+                    duration: duration,
+                    insulinType: self.state.insulinType,
+                    automatic: automatic,
+                    confirmation: .uncertain,
+                    startDate: sentAt
+                )
+                unconfirmed.noteWritten(at: writtenAt, uptime: writtenUptime)
                 self.keepUnconfirmedTempBasal(
-                    UnfinalizedDose(
-                        tempRate: unitsPerHour,
-                        duration: duration,
-                        insulinType: self.state.insulinType,
-                        automatic: automatic,
-                        confirmation: .uncertain,
-                        startDate: sentAt
-                    ),
+                    unconfirmed,
                     sentAt: sentAt,
                     sentUptime: sentUptime,
                     sequenceAtSend: sequenceAtSend,
@@ -1053,6 +1237,7 @@ public extension MedtrumPumpManager {
                 startDate: max(self.now(), Self.earliestAfter(self.state.basalDose))
             )
             tempBasalDose.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend)
+            tempBasalDose.noteWritten(at: writtenAt, uptime: writtenUptime)
 
             // The patch's own clock, where its records start
             tempBasalDose.setPumpStartTime(response.basalStartTime)
@@ -1118,6 +1303,16 @@ public extension MedtrumPumpManager {
         }
     }
 
+    /// Whether a status showed the patch halted since the command began - `haltsBefore` counted then - or it is taken to
+    /// be suspended, or `cancelling`, the temp basal the command cancelled, is no longer the basal running: a status
+    /// ended it. What the command was to write next is not written then, nor the schedule from its cancel reported - the
+    /// suspend that status reported would be left open, no resume after it (`requestStatusAfterHalt`). Only under
+    /// `doseReportLock`.
+    private func haltedSince(_ haltsBefore: Int, cancelling: UnfinalizedDose? = nil) -> Bool {
+        haltsSeen.value != haltsBefore || state.basalState == .suspended || state.basalDose.type == .suspend ||
+            cancelling.map { state.basalDose !== $0 } == true
+    }
+
     /// A status is handled - showing the patch halted, `halted`
     internal func noteStatusHandled(halted: Bool) {
         statusesHandled.mutate { $0 += 1 }
@@ -1130,15 +1325,23 @@ public extension MedtrumPumpManager {
     /// it, which names its record.
     /// `sentAt`: when that cancel went out. `readsRecords`: records may be read on the way - the one the cancel named, and
     /// those of temp basals ended open before - not after a command that went unanswered: the link may be gone. The
-    /// cancel's answer still tells where the patch ended it.
-    private func reportScheduledBasal(
+    /// cancel's answer still tells where the patch ended it. `unless`: checked in the step that reports it, under
+    /// `doseReportLock` - true, nothing is reported, nothing pending. Returns whether it was reported.
+    @discardableResult private func reportScheduledBasal(
         tempBasalEndedAt: Date? = nil,
         endedBy cancel: CancelTempBasalPacketResponse? = nil,
         sentAt cancelSentAt: Date? = nil,
-        readsRecords: Bool = true
-    ) {
+        readsRecords: Bool = true,
+        unless notReported: (() -> Bool)? = nil
+    ) -> Bool {
         let tempBasalEndedAt = tempBasalEndedAt ?? now()
+        var reported = false
         replaceRunningBasal(endedBy: cancel, sentAt: cancelSentAt, readsRecords: readsRecords) {
+            if let notReported, notReported() {
+                state.pendingTempBasal = nil
+                return nil
+            }
+            reported = true
             let basalDose = UnfinalizedDose(
                 basalRate: state.currentBaseBasalRate,
                 insulinType: state.insulinType,
@@ -1160,6 +1363,58 @@ public extension MedtrumPumpManager {
             return (basalDose, NewPumpEvent.basal(dose: basalDose.toDoseEntry()))
         }
         notifyStateDidChange()
+        return reported
+    }
+
+    /// The set of a command that cancelled `cancelled`, the temp basal running, at `cancelledAt` failed - not written, or
+    /// never sent: the patch runs its schedule from the cancel, reported - unless a status showed it halted meanwhile
+    /// (`haltsBefore` counted as the command began), or ended `cancelled` otherwise: see `reportScheduleUnlessHalted`.
+    /// Nothing pending either way.
+    private func failSetAfterCancel(
+        cancelledAt: Date,
+        cancelAnswer: CancelTempBasalPacketResponse?,
+        cancelSentAt: Date?,
+        cancelled: UnfinalizedDose?,
+        haltsBefore: Int
+    ) {
+        reportScheduleUnlessHalted(
+            endedAt: cancelledAt,
+            endedBy: cancelAnswer,
+            sentAt: cancelSentAt,
+            cancelled: cancelled,
+            haltsBefore: haltsBefore,
+            before: "failing the temp basal"
+        )
+    }
+
+    /// The schedule from the cancel of `cancelled`, if one went out, at `endedAt` (now, if nil): reported - unless a status
+    /// showed the patch halted since the command began (`haltsBefore` counted then), or ended `cancelled` otherwise
+    /// (`haltedSince`), checked in the step that would report it: its end is then that status's, what the patch runs the
+    /// status after it tells, asked for if `cancelled` still runs (`requestStatusAfterHalt`) - a schedule from the cancel
+    /// would come dated behind the suspend that status reported, leaving it open. Nothing pending either way, the state
+    /// handed over before `action`. Returns whether it was reported.
+    @discardableResult private func reportScheduleUnlessHalted(
+        endedAt: Date?,
+        endedBy cancelAnswer: CancelTempBasalPacketResponse?,
+        sentAt cancelSentAt: Date?,
+        cancelled: UnfinalizedDose?,
+        haltsBefore: Int,
+        before action: String
+    ) -> Bool {
+        let halted = { self.haltedSince(haltsBefore, cancelling: cancelled) }
+        if !doseReportLock.withLock(halted),
+           reportScheduledBasal(tempBasalEndedAt: endedAt, endedBy: cancelAnswer, sentAt: cancelSentAt, unless: halted)
+        {
+            return true
+        }
+        log.warning(
+            "A status showed the patch halted, or ended the temp basal cancelled, while the command ran: the scheduled " +
+                "basal is not reported from the cancel - the status tells"
+        )
+        doseReportLock.withLock { state.pendingTempBasal = nil }
+        handOverState(before: action)
+        requestStatusAfterHalt(seenSince: haltsBefore)
+        return false
     }
 
     /// The basal `change` returns takes over from the running one, and both go out in one batch. `change` runs under
@@ -1272,22 +1527,59 @@ public extension MedtrumPumpManager {
 
     /// Hands the state to the host, and waits until it has it - `stateHandOverTimeout` at most: a command is about to
     /// read the records of the temp basal it ended, a round trip or more on the link, and only then does the batch go
-    /// out that saves the state with it - or to write a bolus, which a kill before its answer must not lose, or to fail
-    /// one, which a kill after must not bring back. Best effort: a host slower than that is not waited for. Not holding
-    /// `doseReportLock`, nor on the delegate queue.
+    /// out that saves the state with it - or to fail a bolus or a temp basal, which a kill after must not bring back.
+    /// Best effort: a host slower than that is not waited for, and that is logged. Not holding `doseReportLock`, nor on
+    /// the delegate queue.
     private func handOverState(before action: String) {
+        guard handOverState(until: .now() + Self.stateHandOverTimeout) else {
+            log.warning("The host did not take the state within \(Int(Self.stateHandOverTimeout)) s, \(action) anyway")
+            return
+        }
+    }
+
+    /// Hands the state to the host, and waits until it has it - until `deadline` at most. Returns whether it did. Not
+    /// holding `doseReportLock`, nor on the delegate queue.
+    private func handOverState(until deadline: DispatchTime) -> Bool {
         let handedOver = DispatchSemaphore(value: 0)
         pumpDelegate.notify { delegate in
             delegate?.pumpManagerDidUpdateState(self)
             handedOver.signal()
         }
+        return handedOver.wait(timeout: deadline) == .success
+    }
 
-        if handedOver.wait(timeout: .now() + Self.stateHandOverTimeout) == .timedOut {
-            log.warning("The host did not take the state within \(Int(Self.stateHandOverTimeout)) s, \(action) anyway")
+    /// Hands the state to the host with `dose`, a bolus or a temp basal, pending in it - about to be written - and waits
+    /// until it has it, until `deadline` at most (`dosingHandOverTimeout`): a kill after the write, before the host saved
+    /// the state with it pending, would leave the next run with no dose of it - its record matching nothing of ours,
+    /// what it delivered missing at the host (device 2026-10-23 15:42, the host's queue stalled 80 s). Returns whether
+    /// it is written.
+    ///
+    /// The host saves the state as it reads it (`rawState`), and only then is it done - its log, its status updates
+    /// after (device: the stall was its logging). So past the deadline, under `doseReportLock`, which its read takes:
+    /// read by the host with `dose` pending, it is on its way to its disk - the host writes what it read right after -
+    /// and written all the same, logged. Not read: `notWritten` takes it off the state, in the same step - no read from
+    /// then on has it pending - and the caller fails it, and logs it. Not on the delegate queue.
+    private func handOverPendingDose(_ dose: String, until deadline: DispatchTime, orElse notWritten: () -> Void) -> Bool {
+        // How long it waits - the bound of the command, what is left of it - for the log
+        let start = DispatchTime.now()
+        let waits = deadline > start ? Double(deadline.uptimeNanoseconds - start.uptimeNanoseconds) / 1e9 : 0
+        if handOverState(until: deadline) {
+            return true
+        }
+        return doseReportLock.withLock { () -> Bool in
+            guard pendingDoseHandedOut else {
+                notWritten()
+                return false
+            }
+            log.warning(
+                "The host did not take the state within \(Int(waits.rounded())) s, but read it with \(dose) pending - " +
+                    "saving it: written"
+            )
+            return true
         }
     }
 
-    /// How long a command waits for the host to take the state before it reads records, or writes or fails a bolus
+    /// How long a command waits for the host to take the state before it reads records, or fails a bolus or a temp basal
     private static let stateHandOverTimeout: TimeInterval = 3
 
     /// How far apart a temp basal's end on the patch clock - taken to ours through the skew - and where we saw it end
@@ -2135,7 +2427,8 @@ public extension MedtrumPumpManager {
                 observer.pumpManager(self, didUpdate: status, oldStatus: oldStatus)
             }
 
-            self.oldState = MedtrumPumpState(rawValue: self.rawState)
+            // Not `rawState`: that is the host's read
+            self.oldState = MedtrumPumpState(rawValue: self.doseReportLock.withLock { self.state.rawValue })
         }
     }
 
@@ -2552,7 +2845,10 @@ public extension MedtrumPumpManager {
 
     /// In a new run's state, a SetBolus still pending went out and the app was gone before its answer: the patch may be
     /// delivering it. It runs from here on as a bolus whose command went unanswered does (`enactBolus`), dated from when
-    /// it went out - its deadline and the window its record is looked for in count from then. Not if its dose was
+    /// it went out - its deadline and the window its record is looked for in count from then. Or it never went out: the
+    /// host took the state too late for it to be written, and the app was gone before it took the next (`handOverState`)
+    /// - the same state on disk. Its records tell: none its, it is final at 0 U (`unansweredBolusNeverRan`); if they
+    /// can't, counted in full - never less than may have been delivered. Not if its dose was
     /// registered: the state was saved as it was, read in part before. The host is told of it, and warned, as soon as it
     /// can be - and so of one whose command went unanswered in the last run that it was never warned of
     /// (`reportBolusFromLastRun`).
@@ -2594,8 +2890,8 @@ public extension MedtrumPumpManager {
                     noteUncertainDelivery(.bolus, .appRestarted, of: dose)
                     log.error(
                         "The app stopped while the bolus of \(pending.units) U sent at \(pending.sentAt) awaited its " +
-                            "answer: it may be delivering. Counted in full until the patch shows it, or its record says " +
-                            "otherwise - not sent again"
+                            "answer, or before the host took the state for it to be written: it may be delivering. Counted " +
+                            "in full until the patch shows it, or its record says otherwise - not sent again"
                     )
                 }
             }
@@ -3115,17 +3411,18 @@ public extension MedtrumPumpManager {
     /// record shows: the skew is known to a few seconds only
     internal static let unansweredStartSlack: TimeInterval = 5
 
-    /// A status received before the command of the dose it is checked against went out says nothing of that dose: the
-    /// monotonic clock where both are known (one run of the app), the wall clock otherwise
+    /// A status received before the command of the dose it is checked against went out - was written, past the wait
+    /// for the host (`UnfinalizedDose.State.writtenAt`) - says nothing of that dose: the monotonic clock where both are
+    /// known (one run of the app), the wall clock otherwise
     internal static func statusPredatesCommand(
         of dose: UnfinalizedDose.State,
         receivedAt: Date,
         receivedUptime: TimeInterval
     ) -> Bool {
-        if let sentUptime = dose.sentUptime {
+        if let sentUptime = dose.writtenUptime ?? dose.sentUptime {
             return receivedUptime < sentUptime
         }
-        if let sentAt = dose.sentAt {
+        if let sentAt = dose.writtenAt ?? dose.sentAt {
             return receivedAt < sentAt
         }
         return false
@@ -3317,6 +3614,28 @@ public extension MedtrumPumpManager {
 
         settleUncertainDeliveries(of: dose, outcome)
 
+        if dose.type == .bolus {
+            let final = dose.snapshot
+            let taken = settlePossibleBolusRecords(after: dose, outcome)
+            // Its record may come after all, matching no dose then: it is this one's. Kept with a possible record taken
+            // for its own all the same, with it: that one may have been another bolus's, at its amount - its own still to
+            // come, telling of it (`explain`).
+            if outcome == .byEstimate, let sentAt = final.sentAt {
+                state.bolusesFinalWithoutRecord = Array(
+                    (state.bolusesFinalWithoutRecord + [
+                        BolusFinalWithoutRecord(
+                            units: dose.value,
+                            delivered: final.finalDeliveredUnits ?? dose.value,
+                            sentAt: sentAt,
+                            pumpStartTime: final.pumpStartTime,
+                            recordSequence: final.recordSequence,
+                            taken: taken
+                        )
+                    ]).suffix(Self.bolusesFinalWithoutRecordKept)
+                )
+            }
+        }
+
         state.mutateAwaitingRecord { doses in
             guard !doses.contains(where: { $0 === dose }) else {
                 return
@@ -3396,7 +3715,17 @@ public extension MedtrumPumpManager {
                     }
                     dose = numbered
                 } else if claimed {
-                    log.info("Record \(response.sequence) is that of a bolus of ours finalized already, matching nothing")
+                    // Final from our estimate, its record unread till now: what it delivered may not be what the host has
+                    if let index = state.bolusesFinalWithoutRecord.firstIndex(where: { $0.recordSequence == response.sequence }) {
+                        let final = state.bolusesFinalWithoutRecord.remove(at: index)
+                        log.info(
+                            "Record \(response.sequence) is that of the bolus of \(final.units) U sent at \(final.sentAt), final " +
+                                "from our estimate already"
+                        )
+                        explain(response.sequence, delivered: record.normalDelivered, from: record.startTime, by: final)
+                    } else {
+                        log.info("Record \(response.sequence) is that of a bolus of ours finalized already, matching nothing")
+                    }
                     return "answered bolus finalized already"
                 } else if let shifted = waiting.first(where: { isRecordPastItsTakenNumber(record, response.sequence, of: $0) }) {
                     // Its answered start to the second: no other bolus starts there. One whose answer was lost that it
@@ -3415,18 +3744,30 @@ public extension MedtrumPumpManager {
                     noteAnsweredBolusRecord(response.sequence)
                     dose = shifted
                 } else if let unanswered = waiting.first(where: { couldBeOf($0, true) }) {
+                    // Claimed as an answered number is: read again, it is no other bolus's, nor one the host is missing
+                    noteAnsweredBolusRecord(response.sequence)
                     dose = unanswered
                 } else {
                     log.info(
                         "Record \(response.sequence): bolus of \(record.normalAmount) U at \(record.startTime) " +
                             "matches no dose of ours, not imported"
                     )
-                    // Ours by its amount, should the patch clock be further off than we think
-                    for dose in unansweredBoluses where couldBeOf(dose, false) {
-                        dose.notePossibleRecord(response.sequence)
+                    // Ours by its amount, should the patch clock be further off than we think - one whose answer was
+                    // lost, its progress or completion seen since included: its record is looked for all the same
+                    var possiblyOurs = false
+                    for dose in bolusesWithoutTheirAnsweredRecord where couldBeOf(dose, false) {
+                        if dose.snapshot.confirmation == .uncertain {
+                            dose.notePossibleRecord(response.sequence)
+                        }
+                        possiblyOurs = true
                     }
+                    warnOfBolusNotCounted(record, response.sequence, possiblyOurs: possiblyOurs)
                     return "unmatched"
                 }
+
+                // Kept as possibly that of a bolus whose answer was lost, read again now that it is near enough to be its:
+                // settled here - not told of as no bolus of ours as the bolus goes final
+                state.possibleBolusRecords.removeAll { $0.sequence == response.sequence }
 
                 let matched = dose.snapshot
                 log.info(
@@ -3495,6 +3836,181 @@ public extension MedtrumPumpManager {
             return nil
         }
     }
+
+    /// Bolus `record`, numbered `sequence`, of this patch, matches no dose of ours: not imported - it may be one the host
+    /// has after all, which would count twice - but what it delivered may be missing at the host for good. A bolus
+    /// written as the app was killed before the host saved it pending, say, or another app's. Looked at once per record
+    /// (`MedtrumPumpState.unmatchedBolusRecords`) - not if written before this state took up the patch
+    /// (`sessionStartSequence`). One a bolus of ours whose answer was lost could be (`possiblyOurs`), waiting on its
+    /// record, is kept until that one settles (`settlePossibleBolusRecords`); any other is told of now
+    /// (`tellOfBolusRecord`). Only under `doseReportLock`.
+    private func warnOfBolusNotCounted(_ record: BolusRecord, _ sequence: Int, possiblyOurs: Bool) {
+        guard !state.unmatchedBolusRecords.contains(sequence) else {
+            return
+        }
+        guard sequence > state.sessionStartSequence else {
+            log.info("Record \(sequence) was written before the patch was taken up, at #\(state.sessionStartSequence): not told of")
+            return
+        }
+        state.unmatchedBolusRecords = Array((state.unmatchedBolusRecords + [sequence]).suffix(Self.unmatchedBolusRecordsKept))
+
+        let unmatched = PossibleBolusRecord(
+            sequence: sequence,
+            amount: record.normalAmount,
+            delivered: record.normalDelivered,
+            startTime: record.startTime
+        )
+        guard !possiblyOurs else {
+            log.info(
+                "Record \(sequence) could be that of a bolus of ours whose answer was lost, waiting on its record: " +
+                    "looked at again as it settles"
+            )
+            state.possibleBolusRecords = Array((state.possibleBolusRecords + [unmatched]).suffix(Self.unmatchedBolusRecordsKept))
+            return
+        }
+        tellOfBolusRecord(unmatched)
+    }
+
+    /// `unmatched`, a bolus record no dose of ours waits on, nor could: the record of a bolus of ours that went final
+    /// from our estimate (`bolusesFinalWithoutRecord`) - by the number its answer named; else at its amount, delivering
+    /// no more, starting where its answer said, or near when it went out, its answer lost (`recordMatchWindow`, as for
+    /// any) - what it delivered compared with what the host has (`explain`), each entry explaining one record. Any
+    /// other is a bolus the host is missing: the user is told to add it, unless it delivered nothing
+    /// (`tellOfBolusNotCounted`). Only under `doseReportLock`.
+    private func tellOfBolusRecord(_ unmatched: PossibleBolusRecord) {
+        let skew = state.patchClockSkew
+        if let index = state.bolusesFinalWithoutRecord.firstIndex(where: { final in
+            if let recordSequence = final.recordSequence, recordSequence == unmatched.sequence {
+                return true
+            }
+            guard RecordSyncer.steps(unmatched.amount) == RecordSyncer.steps(final.units),
+                  RecordSyncer.steps(unmatched.delivered) <= RecordSyncer.steps(final.units)
+            else {
+                return false
+            }
+            if let pumpStartTime = final.pumpStartTime {
+                return abs(unmatched.startTime.timeIntervalSince(pumpStartTime)) <= RecordSyncer.bolusStartTolerance
+            }
+            return abs(unmatched.startTime.timeIntervalSince(final.sentAt.addingTimeInterval(skew))) <= Self.recordMatchWindow
+        }) {
+            let final = state.bolusesFinalWithoutRecord.remove(at: index)
+            log.info(
+                "Record \(unmatched.sequence) is that of the bolus of \(final.units) U sent at \(final.sentAt), final from our " +
+                    "estimate already"
+            )
+            explain(unmatched.sequence, delivered: unmatched.delivered, from: unmatched.startTime, by: final)
+            return
+        }
+
+        tellOfBolusNotCounted(unmatched)
+    }
+
+    /// Record `sequence`, starting at `startTime` on the patch clock, delivered `delivered`, is that of the bolus of
+    /// `final`, final from our estimate: compared with what the host has (`compare`). A possible record taken for its own
+    /// as it went final (`BolusFinalWithoutRecord.taken`) was another bolus's, then - one the host is missing: told of,
+    /// not looked up against these again (`tellOfBolusNotCounted`), once - the entry explains one record. Its own
+    /// delivering what the taken one did, it was compared as that one was taken: nothing more. Only under
+    /// `doseReportLock`.
+    private func explain(_ sequence: Int, delivered: Double, from startTime: Date, by final: BolusFinalWithoutRecord) {
+        if let taken = final.taken, RecordSyncer.steps(taken.delivered) == RecordSyncer.steps(delivered) {
+            log.info(
+                "Record \(sequence): \(delivered) U delivered, as record \(taken.sequence) taken for it - compared as that one " +
+                    "was taken"
+            )
+        } else {
+            compare(final.delivered, withItsRecord: delivered, from: startTime, sequence)
+        }
+        guard let taken = final.taken else {
+            return
+        }
+        log.warning(
+            "Record \(taken.sequence), taken for that of the bolus sent at \(final.sentAt) as it went final, is another " +
+                "bolus's: its own is \(sequence)"
+        )
+        tellOfBolusNotCounted(taken)
+    }
+
+    /// `unmatched`, a bolus record, is a bolus the host is missing: the user is told to add it, unless it delivered
+    /// nothing. Only under `doseReportLock`.
+    private func tellOfBolusNotCounted(_ unmatched: PossibleBolusRecord) {
+        let skew = state.patchClockSkew
+        guard RecordSyncer.steps(unmatched.delivered) > 0 else {
+            log.info("Record \(unmatched.sequence) delivered nothing: not told of")
+            return
+        }
+        let startedAt = unmatched.startTime.addingTimeInterval(-skew)
+        log.warning(
+            "Record \(unmatched.sequence): a bolus of \(unmatched.delivered) U delivered from \(startedAt) that the host has " +
+                "no dose of - the user is told to add it"
+        )
+        emitAlert(alertType: .bolusNotCounted(units: unmatched.delivered, at: startedAt))
+    }
+
+    /// A bolus of ours final from our estimate, `counted` - what the host has - and its record, numbered `sequence`,
+    /// starting at `startTime` on the patch clock, read after all: delivered `delivered`. Further apart than a step -
+    /// the progress last reported rounds - the host has it wrong for good, its final fixed: the user is told - to add
+    /// what is missing, or that insulin on board is overstated. Only under `doseReportLock`.
+    private func compare(_ counted: Double, withItsRecord delivered: Double, from startTime: Date, _ sequence: Int) {
+        let apart = RecordSyncer.steps(delivered) - RecordSyncer.steps(counted)
+        guard abs(apart) > 1 else {
+            log.info("Record \(sequence): \(delivered) U delivered, \(counted) U counted - not told of")
+            return
+        }
+        let startedAt = startTime.addingTimeInterval(-state.patchClockSkew)
+        log.warning(
+            "Record \(sequence): the bolus of \(startedAt) delivered \(delivered) U, the host has \(counted) U from our " +
+                "estimate - " + (apart > 0 ? "the user is told to add the rest" : "insulin on board overstated, the user is told")
+        )
+        emitAlert(alertType: .bolusMiscounted(counted: counted, delivered: delivered, at: startedAt))
+    }
+
+    /// `dose`, a bolus, went final - `outcome`. The bolus records kept as possibly those of one whose answer was lost
+    /// (`MedtrumPumpState.possibleBolusRecords`): one that could be `dose`'s, final from our estimate, is taken for its
+    /// record, what it delivered compared with what the host has (`compare`) - read again, nothing more is done - and
+    /// returned, kept with `dose`'s entry (`BolusFinalWithoutRecord.taken`). Any other that no bolus still waiting on its
+    /// record could be is told of now (`tellOfBolusRecord`) - `dose` final from its own record, or never run. Only under
+    /// `doseReportLock`.
+    private func settlePossibleBolusRecords(
+        after dose: UnfinalizedDose,
+        _ outcome: UncertainDelivery.Outcome
+    ) -> PossibleBolusRecord? {
+        guard !state.possibleBolusRecords.isEmpty else {
+            return nil
+        }
+        // Its answer lost - unanswered, or confirmed since by its progress or completion: no record named
+        let couldBe = { (possible: PossibleBolusRecord, dose: UnfinalizedDose) -> Bool in
+            let snapshot = dose.snapshot
+            return dose.type == .bolus && snapshot.recordSequence == nil &&
+                possible.sequence > snapshot.sequenceAtSend ?? 0 &&
+                RecordSyncer.steps(possible.amount) == RecordSyncer.steps(dose.value)
+        }
+
+        let final = dose.snapshot
+        var taken: PossibleBolusRecord?
+        var kept: [PossibleBolusRecord] = []
+        for possible in state.possibleBolusRecords {
+            if taken == nil, outcome == .byEstimate, couldBe(possible, dose) {
+                taken = possible
+                log.info(
+                    "Record \(possible.sequence), possibly that of the bolus of \(dose.startDate) whose answer was lost, " +
+                        "final from our estimate: taken for its record"
+                )
+                compare(final.finalDeliveredUnits ?? dose.value, withItsRecord: possible.delivered, from: possible.startTime, possible.sequence)
+            } else if bolusesWithoutTheirAnsweredRecord.contains(where: { $0 !== dose && couldBe(possible, $0) }) {
+                kept.append(possible)
+            } else {
+                log.info("Record \(possible.sequence) is no bolus of ours that waits on its record after all")
+                tellOfBolusRecord(possible)
+            }
+        }
+        state.possibleBolusRecords = kept
+        return taken
+    }
+
+    /// The latest boluses final from our estimate kept for their record, and the unmatched bolus records looked at: a
+    /// patch session's worth, and some
+    private static let bolusesFinalWithoutRecordKept = 50
+    private static let unmatchedBolusRecordsKept = 50
 
     /// Record `response`, of another kind than a bolus's, came back at the number the answer to a bolus of ours named:
     /// the patch wrote it as the bolus ran - an alarm, say (device 2026-10-22 13:52, #1606 a low-reservoir alarm, the
@@ -3845,6 +4361,15 @@ public extension MedtrumPumpManager {
             return false
         }
         return state.syncedSequenceNumber >= state.currentSequenceNumber && confirmedAt > end
+    }
+
+    /// The boluses whose answer was lost - or named no record of this patch - not final: running, or waiting on their
+    /// record, which is looked for by when they went out. Seen delivering since or not. Only under `doseReportLock`.
+    private var bolusesWithoutTheirAnsweredRecord: [UnfinalizedDose] {
+        ([state.bolusDose].compactMap { $0 } + state.awaitingRecord).filter { dose in
+            let snapshot = dose.snapshot
+            return dose.type == .bolus && snapshot.recordSequence == nil && !snapshot.isFinalized
+        }
     }
 
     /// The boluses whose command went unanswered, never seen delivering - running, or waiting on their record. Only
@@ -4846,8 +5371,9 @@ public extension MedtrumPumpManager {
 
     /// How much sooner than the next one's start the records of a temp basal ended back to back may end, and it still
     /// have run up to the cancel: the cancel's answer (2 to 4 s on a slow link), the hand-over of the state before the set
-    /// (`stateHandOverTimeout`, 3 s at most), the set's round trip (4 to 9 s, one record's worth), and a second of each
-    /// clock's rounding
+    /// (3 s at most as a rule), the set's round trip (4 to 9 s, one record's worth), and a second of each clock's
+    /// rounding. A host slower to take the state (up to `dosingHandOverTimeout`) can take it past: the temp basal then
+    /// ends where its records do, the schedule after it - as the patch ran it, waiting for the set.
     internal static let openRecordShortfallTolerance: TimeInterval = 20
 
     /// Finalizes the temp basals ended open that can be, the oldest first, up to the first that has to wait - see
@@ -5373,9 +5899,10 @@ public extension MedtrumPumpManager {
             }
 
             let unconfirmed = pending.snapshot
-            // Begun after its command went out by more than the slack, told skew-free where it can be
-            let afterTheCommand = unansweredStartOffset(of: unconfirmed, sentAt: unconfirmed.sentAt ?? pending.startDate, patchTime: start) >
-                Self.unansweredStartSlack
+            // Begun after its command went out - was written, past the wait for the host - by more than the slack, told
+            // skew-free where it can be
+            let writtenAt = unconfirmed.writtenAt ?? unconfirmed.sentAt ?? pending.startDate
+            let afterTheCommand = unansweredStartOffset(of: unconfirmed, sentAt: writtenAt, patchTime: start) > Self.unansweredStartSlack
             guard let prior = unconfirmed.priorSegmentStart, start > prior, afterTheCommand,
                   !Self.statusPredatesCommand(of: unconfirmed, receivedAt: receivedAt, receivedUptime: receivedUptime)
             else {
@@ -5671,6 +6198,9 @@ public extension MedtrumPumpManager {
             startDate: start
         )
         tempBasalDose.noteCommand(sentAt: sentAt, uptime: unconfirmed.sentUptime, sequence: unconfirmed.sequenceAtSend ?? 0)
+        if let writtenAt = unconfirmed.writtenAt {
+            tempBasalDose.noteWritten(at: writtenAt, uptime: unconfirmed.writtenUptime)
+        }
         tempBasalDose.setPumpStartTime(basal.startTime)
         // Dated from a status, its start within the match window of its command: nothing to time a stop from
         tempBasalDose.markFirstSegmentUncertain()
@@ -5736,6 +6266,10 @@ public extension MedtrumPumpManager {
             startDate: start
         )
         tempBasalDose.noteCommand(sentAt: sentAt, uptime: nil, sequence: unconfirmed.sequenceAtSend ?? 0)
+        // On the wall clock alone, as its command's
+        if let writtenAt = unconfirmed.writtenAt {
+            tempBasalDose.noteWritten(at: writtenAt, uptime: nil)
+        }
         tempBasalDose.setPumpStartTime(record.startTime)
 
         let utcOffset = state.patchUTCOffset ?? TimeInterval(TimeZone.current.secondsFromGMT())

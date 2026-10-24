@@ -853,6 +853,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
     func testUnansweredTempBasalAStatusShowsRunningIsReportedFromItsStart() {
         let sentAt = startUnansweredTempBasal()
         let batches = delegate.batches.count
+        let written = pumpManager.state.unconfirmedTempBasal?.snapshot
 
         link.notify(PatchBytes.basalNotification(
             type: .ABSOLUTE_TEMP,
@@ -875,6 +876,10 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertGreaterThanOrEqual(confirmed.startDate, sentAt.addingTimeInterval(-MedtrumPumpManager.unansweredStartSlack))
         XCTAssertLessThanOrEqual(confirmed.startDate, Date.now)
         XCTAssertEqual(confirmed.estimatedEndDate.timeIntervalSince(confirmed.startDate), Self.hour, accuracy: 0.001)
+        // When its command was written, as the unconfirmed one had it
+        XCTAssertNotNil(written?.writtenAt)
+        XCTAssertEqual(confirmed.snapshot.writtenAt, written?.writtenAt)
+        XCTAssertEqual(confirmed.snapshot.writtenUptime, written?.writtenUptime)
 
         XCTAssertEqual(delegate.batches.count, batches + 1)
         let reported = delegate.batches.last?.events.compactMap(\.dose).first { $0.type == .tempBasal }
@@ -3647,6 +3652,235 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertLessThanOrEqual(link.writes.first { $0.commandType == CommandType.GET_RECORD }?.timeout ?? .infinity, 10)
         XCTAssertGreaterThan(written(CommandType.GET_RECORD)?.timeout ?? 0, MedtrumPumpManager.tempBasalEndRecordTimeout - 0.5)
         XCTAssertEqual(delegate.batches.first?.events.first?.dose?.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+    }
+
+    /// The host does not take the state within the bound as the set is to go out, after the cancel ended the temp basal
+    /// running: the set is not written - killed after it, the app would come back with the patch running a temp basal it
+    /// has no dose of, uncounted - and fails. The cancel stands: the temp basal ends there, final from the record it
+    /// named, the scheduled basal after it - as when the set fails. Nothing pending, and the next set goes out as ever.
+    func testTempBasalIsNotWrittenAndFailsWhenTheHostDoesNotTakeTheStateAfterTheCancel() {
+        let tempBasal = runTempBasalOfOurs()
+        pumpManager.dosingHandOverTimeout = 1
+        // Free once the cancel is answered, busy from then on
+        let releaseHost = Locked<(() -> Void)?>(nil)
+        defer { releaseHost.value?() }
+        link.script(CommandType.CANCEL_TEMP_BASAL, .fragments(cancelAnswer(record: 131))) { [unowned self] in
+            releaseHost.value = stallHost()
+        }
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+
+        let error = commandTempBasal(0.5, duration: 30 * Self.minute, timeout: 15)
+        XCTAssertTrue(isStateNotSaved(error, tempBasalCancelled: true), "failed, not uncertain: \(String(describing: error))")
+        XCTAssertEqual(link.writtenCommands, [CommandType.CANCEL_TEMP_BASAL, CommandType.GET_RECORD], "no set")
+        XCTAssertNil(pumpManager.state.pendingTempBasal)
+        XCTAssertEqual(pumpManager.state.basalDose.type, .basal)
+        XCTAssertEqual(pumpManager.state.basalState, .active)
+
+        releaseHost.value?()
+        settle()
+        XCTAssertNil(delegate.savedState?["pendingTempBasal"])
+        let doses = delegate.batches.flatMap(\.events).compactMap(\.dose)
+        let finals = doses.filter { $0.type == .tempBasal && !$0.isMutable }
+        XCTAssertEqual(finals.map(\.startDate), [tempBasal.startDate])
+        XCTAssertEqual(finals.first?.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+        XCTAssertEqual(doses.last?.type, .basal)
+        XCTAssertNil(pumpManager.state.unconfirmedTempBasal)
+        XCTAssertEqual(delegate.errors.count, 0)
+
+        link.script(CommandType.SET_TEMP_BASAL, setAnswer(record: 132))
+        XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
+        settle()
+        XCTAssertEqual(pumpManager.state.basalDose.value, 0.5)
+        XCTAssertEqual(pumpManager.state.basalState, .tempBasal)
+    }
+
+    /// The same with no temp basal running: nothing goes out, nothing is reported
+    func testTempBasalIsNotWrittenAndFailsWhenTheHostDoesNotTakeTheState() {
+        makeManager(activePatchState(patchId: 251, scheduledRate: 0.7, sequence: 130, reservoir: 150))
+        pumpManager.dosingHandOverTimeout = 1
+        let releaseHost = stallHost()
+        defer { releaseHost() }
+
+        XCTAssertTrue(isStateNotSaved(commandTempBasal(0.5, duration: 30 * Self.minute, timeout: 10)))
+        XCTAssertEqual(link.writtenCommands, [])
+        XCTAssertNil(pumpManager.state.pendingTempBasal)
+        XCTAssertEqual(pumpManager.state.basalDose.type, .basal)
+
+        releaseHost()
+        settle()
+        XCTAssertNil(delegate.savedState?["pendingTempBasal"])
+        XCTAssertEqual(delegate.batches.count, 0)
+    }
+
+    /// The host does not take the state at all as a temp basal of ours runs: the command fails before it cancels it -
+    /// nothing sent, the temp basal running runs on, reported as it was - within the one bound, not one for the cancel
+    /// and another for the set
+    func testTempBasalCommandFailsBeforeItsCancelWhenTheHostDoesNotTakeTheState() {
+        let tempBasal = runTempBasalOfOurs()
+        pumpManager.dosingHandOverTimeout = 1
+        let releaseHost = stallHost()
+        defer { releaseHost() }
+
+        let started = Date.now
+        let error = commandTempBasal(0.5, duration: 30 * Self.minute, timeout: 10)
+        let took = Date.now.timeIntervalSince(started)
+        XCTAssertTrue(isStateNotSaved(error, tempBasalCancelled: false), "nothing sent: \(String(describing: error))")
+        XCTAssertGreaterThan(took, 0.9)
+        XCTAssertLessThan(took, 2.5, "one bound")
+        XCTAssertEqual(link.writtenCommands, [], "not cancelled either")
+        XCTAssertTrue(pumpManager.state.basalDose === tempBasal)
+        XCTAssertEqual(pumpManager.state.basalState, .tempBasal)
+        XCTAssertNil(pumpManager.state.pendingTempBasal)
+
+        releaseHost()
+        settle()
+        XCTAssertEqual(delegate.batches.count, 0)
+        XCTAssertEqual(delegate.errors.count, 0)
+    }
+
+    /// The host saves the state with the set pending, and is held up before it is done with it: on its disk, the set
+    /// goes out once the bound is up, logged
+    func testTempBasalIsWrittenWhenTheHostSavedTheStateWithItPendingAndIsHeldUp() {
+        makeManager(activePatchState(patchId: 251, scheduledRate: 0.7, sequence: 130, reservoir: 150))
+        MedtrumLogger.pumpManager = pumpManager
+        defer { MedtrumLogger.pumpManager = nil }
+        pumpManager.dosingHandOverTimeout = 1
+        let releaseHost = stallHostAfterSaving("pendingTempBasal")
+        defer { releaseHost() }
+
+        let atWrite = Locked<PumpManager.RawStateValue?>(nil)
+        link.script(CommandType.SET_TEMP_BASAL, .fragments(setAnswer(record: 131))) { [unowned self] in
+            atWrite.value = delegate.savedState
+        }
+        XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute, timeout: 10))
+        XCTAssertNotNil(atWrite.value?["pendingTempBasal"], "on disk as it went out")
+
+        releaseHost()
+        settle()
+        XCTAssertTrue(delegate.logEntries.contains { entry in
+            entry.message.contains("but read it with the temp basal of 0.5 U/h pending - saving it: written")
+        })
+        XCTAssertEqual(pumpManager.state.basalDose.value, 0.5)
+        XCTAssertEqual(pumpManager.state.basalState, .tempBasal)
+        XCTAssertNil(delegate.savedState?["pendingTempBasal"])
+    }
+
+    /// The set not written - the host not taking the state - after the cancel, and the patch shows it suspended as the
+    /// command waits: the schedule is not reported from the cancel, dated behind the suspend - the patch is suspended,
+    /// as the status says
+    func testTempBasalNotWrittenAfterTheCancelWithASuspendShownMeanwhileLeavesItSuspended() {
+        let tempBasal = runTempBasalOfOurs()
+        pumpManager.dosingHandOverTimeout = 1
+        let releaseHost = Locked<(() -> Void)?>(nil)
+        defer { releaseHost.value?() }
+        link.script(CommandType.CANCEL_TEMP_BASAL, .fragments(cancelAnswer(record: 131))) { [unowned self] in
+            releaseHost.value = stallHost()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { [link] in
+                link?.notify(self.haltNotification(.suspended, at: Self.ourEnd.addingTimeInterval(2), newestRecord: 131))
+            }
+        }
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+
+        let error = commandTempBasal(0.5, duration: 30 * Self.minute, timeout: 20)
+        XCTAssertTrue(isStateNotSaved(error, tempBasalCancelled: true), "\(String(describing: error))")
+        XCTAssertNil(pumpManager.state.pendingTempBasal)
+        XCTAssertEqual(pumpManager.state.basalDose.type, .suspend, "the status's")
+        XCTAssertEqual(pumpManager.state.basalState, .suspended)
+
+        releaseHost.value?()
+        settle()
+        let doses = delegate.batches.flatMap(\.events).compactMap(\.dose)
+        XCTAssertFalse(doses.contains { $0.type == .basal }, "no schedule from the cancel")
+        XCTAssertEqual(doses.filter { $0.type == .tempBasal && !$0.isMutable }.map(\.startDate), [tempBasal.startDate])
+        XCTAssertEqual(doses.last?.type, .suspend)
+        XCTAssertEqual(pumpManager.state.basalDose.type, .suspend)
+    }
+
+    /// A cancel only, and the patch shows itself halted as its answer comes in - before the command carries on: the
+    /// schedule is not reported from the cancel - behind the suspend, it would leave it open, no resume after it - the
+    /// temp basal ends at the suspend, final from its record, and the patch is suspended. The next halted status reports
+    /// no second suspend.
+    func testCancelOnlyWithAHaltShownDuringTheCancelLeavesItSuspended() {
+        let tempBasal = runTempBasalOfOurs()
+        let halt = haltNotification(.suspended, at: Self.ourEnd, newestRecord: 131)
+        link.script(CommandType.CANCEL_TEMP_BASAL, .fragments(cancelAnswer(record: 131)), thenNotify: [halt])
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+
+        XCTAssertNil(commandTempBasal(0, duration: 0), "cancelled")
+        settle()
+        XCTAssertEqual(link.writtenCommands, [CommandType.CANCEL_TEMP_BASAL, CommandType.GET_RECORD])
+        XCTAssertEqual(pumpManager.state.basalDose.type, .suspend)
+        XCTAssertEqual(pumpManager.state.basalState, .suspended)
+
+        link.notify(halt)
+        settle()
+        let doses = delegate.batches.flatMap(\.events).compactMap(\.dose)
+        XCTAssertFalse(doses.contains { $0.type == .basal }, "no schedule from the cancel")
+        let finals = doses.filter { $0.type == .tempBasal && !$0.isMutable }
+        XCTAssertEqual(finals.map(\.startDate), [tempBasal.startDate])
+        XCTAssertEqual(finals.first?.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
+        XCTAssertEqual(Set(reports(of: .suspend).map(\.startDate)).count, 1, "one suspend")
+        XCTAssertEqual(doses.last?.type, .suspend)
+        XCTAssertEqual(pumpManager.state.basalState, .suspended)
+    }
+
+    /// The same halt during the cancel of a command that sets a temp basal after it: the set is not written to a halted
+    /// patch - it fails - and nothing follows the suspend
+    func testSetIsNotWrittenWithAHaltShownDuringItsCancel() {
+        let tempBasal = runTempBasalOfOurs()
+        let halt = haltNotification(.suspended, at: Self.ourEnd.addingTimeInterval(2), newestRecord: 131)
+        link.script(CommandType.CANCEL_TEMP_BASAL, .fragments(cancelAnswer(record: 131)), thenNotify: [halt])
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+
+        let error = commandTempBasal(0.5, duration: 30 * Self.minute)
+        guard case let .deviceState(cause)? = error, case .isSuspended? = cause as? MedtrumConnectError else {
+            XCTFail("Not failed as suspended: \(String(describing: error))")
+            return
+        }
+        settle()
+        XCTAssertFalse(link.writtenCommands.contains(CommandType.SET_TEMP_BASAL))
+        XCTAssertNil(pumpManager.state.pendingTempBasal)
+        XCTAssertNil(delegate.savedState?["pendingTempBasal"])
+        XCTAssertEqual(pumpManager.state.basalDose.type, .suspend)
+        XCTAssertEqual(pumpManager.state.basalState, .suspended)
+        let doses = delegate.batches.flatMap(\.events).compactMap(\.dose)
+        XCTAssertFalse(doses.contains { $0.type == .basal })
+        XCTAssertEqual(doses.filter { $0.type == .tempBasal && !$0.isMutable }.map(\.startDate), [tempBasal.startDate])
+        XCTAssertEqual(doses.last?.type, .suspend)
+    }
+
+    /// A halt shown as the command hands the state to the host before its cancel: the status ended the temp basal
+    /// running - nothing is cancelled, nor set
+    func testSetIsNotSentWithAHaltShownAsTheCommandWaitsForTheHost() {
+        let tempBasal = runTempBasalOfOurs()
+        settle()
+        let halt = haltNotification(.suspended, at: Self.ourEnd.addingTimeInterval(2), newestRecord: 131)
+        let shown = Locked(false)
+        delegate.afterSavingState = { [link] _ in
+            guard !shown.value else {
+                return
+            }
+            shown.value = true
+            // Off the host's queue, while it is held up
+            DispatchQueue.global().async { link?.notify(halt) }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+
+        let error = commandTempBasal(0.5, duration: 30 * Self.minute)
+        delegate.afterSavingState = nil
+        guard case let .deviceState(cause)? = error, case .isSuspended? = cause as? MedtrumConnectError else {
+            XCTFail("Not failed as suspended: \(String(describing: error))")
+            return
+        }
+        settle()
+        XCTAssertTrue(shown.value)
+        XCTAssertEqual(link.writtenCommands, [CommandType.GET_RECORD], "nothing sent")
+        XCTAssertNil(pumpManager.state.pendingTempBasal)
+        XCTAssertEqual(pumpManager.state.basalDose.type, .suspend)
+        let doses = delegate.batches.flatMap(\.events).compactMap(\.dose)
+        XCTAssertEqual(doses.filter { $0.type == .tempBasal && !$0.isMutable }.map(\.startDate), [tempBasal.startDate])
+        XCTAssertEqual(doses.last?.type, .suspend)
     }
 
     /// A suspend while a temp basal runs, the patch's status of it not in - nor in within the moment it is waited for:

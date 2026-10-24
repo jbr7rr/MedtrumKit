@@ -153,6 +153,13 @@ public class UnfinalizedDose {
         /// `sentAt` on the monotonic clock, which survives a change of the wall clock - but not a restart, so it is
         /// never saved
         public fileprivate(set) var sentUptime: TimeInterval?
+        /// When the command was written, after the wait for the host to take the state with it pending - `sentAt` is
+        /// from before, and stays its identity: a status received before then says nothing of it
+        /// (`MedtrumPumpManager.statusPredatesCommand`). Nil, the same as `sentAt` as far as is known - one taken over
+        /// after a kill, one saved before this was kept.
+        public fileprivate(set) var writtenAt: Date?
+        /// `writtenAt` on the monotonic clock, never saved - as `sentUptime`
+        public fileprivate(set) var writtenUptime: TimeInterval?
         /// The newest record number known when the command went out - for a bolus, or claimed by an earlier bolus's
         /// answer (`MedtrumPumpState.answeredBolusRecords`): the record of a bolus whose answer was lost is numbered past it
         public fileprivate(set) var sequenceAtSend: Int?
@@ -394,6 +401,7 @@ public class UnfinalizedDose {
             .confirmed
         state.uncertaintyReported = rawValue["uncertaintyReported"] as? Bool ?? false
         state.sentAt = rawValue["sentAt"] as? Date
+        state.writtenAt = rawValue["writtenAt"] as? Date
         state.sequenceAtSend = rawValue["sequenceAtSend"] as? Int
         state.recordSequence = rawValue["recordSequence"] as? Int
         state.answeredRecordTaken = rawValue["answeredRecordTaken"] as? Bool ?? false
@@ -454,6 +462,7 @@ public class UnfinalizedDose {
             raw["uncertaintyReported"] = true
         }
         raw["sentAt"] = state.sentAt
+        raw["writtenAt"] = state.writtenAt
         raw["sequenceAtSend"] = state.sequenceAtSend
         raw["recordSequence"] = state.recordSequence
         if state.answeredRecordTaken {
@@ -507,6 +516,15 @@ public class UnfinalizedDose {
             state.sequenceAtSend = sequence
             state.priorSegmentStart = priorSegmentStart
             state.basalBefore = basalBefore
+        }
+    }
+
+    /// The command that started this dose was written at `at` (`uptime` on the monotonic clock) - see
+    /// `State.writtenAt`. For a dose not shared yet.
+    func noteWritten(at: Date, uptime: TimeInterval?) {
+        transition { state in
+            state.writtenAt = at
+            state.writtenUptime = uptime
         }
     }
 

@@ -430,6 +430,26 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertEqual(MedtrumPumpState(rawValue: try roundTripped(raw)).answeredBolusRecords, [123, 124])
     }
 
+    /// A bolus final from our estimate saved before the possible record taken for its own was kept with it decodes, none
+    /// taken; one with it saves and decodes as it was
+    func testBolusFinalWithoutRecordSavedWithoutTheRecordTakenDecodes() throws {
+        let sentAt = Date.now.addingTimeInterval(-Self.hour)
+        var raw = activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 124, reservoir: 100).rawValue
+        raw["bolusesFinalWithoutRecord"] = [["units": 0.3, "delivered": 0.3, "sentAt": sentAt]]
+        let old = try XCTUnwrap(MedtrumPumpState(rawValue: try roundTripped(raw)).bolusesFinalWithoutRecord.first)
+        XCTAssertEqual(old, BolusFinalWithoutRecord(units: 0.3, delivered: 0.3, sentAt: sentAt, pumpStartTime: nil, recordSequence: nil))
+        XCTAssertNil(old.taken)
+
+        let taken = PossibleBolusRecord(sequence: 824, amount: 0.3, delivered: 0.1, startTime: sentAt.addingTimeInterval(300))
+        let state = activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 124, reservoir: 100)
+        state.bolusesFinalWithoutRecord = [
+            BolusFinalWithoutRecord(units: 0.3, delivered: 0.3, sentAt: sentAt, pumpStartTime: nil, recordSequence: nil, taken: taken)
+        ]
+        let restored = MedtrumPumpState(rawValue: try roundTripped(state.rawValue))
+        XCTAssertEqual(restored.bolusesFinalWithoutRecord, state.bolusesFinalWithoutRecord)
+        XCTAssertEqual(restored.bolusesFinalWithoutRecord.first?.taken, taken)
+    }
+
     /// The state the shipped driver saves decodes without loss, and saves again as it was
     func testStateSavedBeforeRecordsWereMatchedDecodes() throws {
         let t0 = Date.now.addingTimeInterval(-Self.minute)

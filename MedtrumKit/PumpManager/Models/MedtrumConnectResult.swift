@@ -10,6 +10,10 @@ public enum MedtrumConnectError: LocalizedError {
     case failedToConnectToDevice
     case isBolussing
     case isSuspended
+    /// A bolus or a temp basal not written: the host did not take the state with it pending in time - see
+    /// `MedtrumPumpManager.handOverPendingDose`. `tempBasalCancelled`: the temp basal running was cancelled before;
+    /// else nothing was sent.
+    case stateNotSaved(tempBasalCancelled: Bool)
 
     public var errorDescription: String? {
         switch self {
@@ -37,6 +41,17 @@ public enum MedtrumConnectError: LocalizedError {
             return String(localized: "Bolus issue. Patch is already bolussing", comment: "MedtrumError patch bolussing")
         case .isSuspended:
             return String(localized: "Bolus issue. Patch is suspended. Resume delivery", comment: "MedtrumError patch suspended")
+        case let .stateNotSaved(tempBasalCancelled):
+            guard tempBasalCancelled else {
+                return String(
+                    localized: "The app did not save the pump state in time: nothing was sent to the patch",
+                    comment: "MedtrumError state not saved"
+                )
+            }
+            return String(
+                localized: "The app did not save the pump state in time: the running temp basal was cancelled, the new one was not sent",
+                comment: "MedtrumError state not saved after the temp basal was cancelled"
+            )
         }
     }
 }

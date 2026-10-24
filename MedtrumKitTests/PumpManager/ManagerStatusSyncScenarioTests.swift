@@ -14,6 +14,9 @@ final class ManagerStatusSyncScenarioTests: MedtrumManagerTestCase {
     func testFullStatusSyncThenRecords() {
         let state = activePatchState(patchId: 237, scheduledRate: 0.6, sequence: 2, reservoir: 184.65)
         state.syncedSequenceNumber = 0
+        // Taken up with the two written before it: the bolus of record 3 after them is no dose of this state's - the user
+        // is told to add it
+        state.sessionStartSequence = 2
         state.pumpTimeSyncedAt = Date.now.addingTimeInterval(-Self.hour)
         let tempBasal = runningTempBasal(rate: 2.1, startedAgo: 4 * Self.minute, duration: 30 * Self.minute)
         state.basalDose = tempBasal
@@ -109,6 +112,8 @@ final class ManagerStatusSyncScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.recordStore.status, .idle)
 
         XCTAssertEqual(delegate.errors.count, 0)
-        XCTAssertEqual(delegate.alerts.count, 0)
+        XCTAssertEqual(delegate.alerts.count, 1)
+        XCTAssertEqual(delegate.alerts.first?.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-not-counted"), true)
+        XCTAssertEqual(delegate.alerts.first?.foregroundContent?.body.contains("a bolus of \(0.2.formatted()) U delivered at"), true)
     }
 }

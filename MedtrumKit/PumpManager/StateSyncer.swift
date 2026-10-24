@@ -92,6 +92,8 @@ enum StateSyncer {
                 logger.info("New patch id \(patchId.hexEncodedString()), resetting the record sequence")
                 state.patchId = patchId
                 state.resetRecordSequence()
+                // Taken up with what it has written: another app's doses, or an earlier state's
+                state.sessionStartSequence = Int(storage.sequence)
                 pumpManager.recordStore.clear()
                 state.lastSegmentStart = nil
             }

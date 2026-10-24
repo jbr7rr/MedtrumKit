@@ -79,6 +79,97 @@ public struct PendingBolus: RawRepresentable, Equatable {
     }
 }
 
+/// A bolus of ours that went final without its record - from our estimate - kept for its record, should it come after
+/// all: it matches no dose then, and is not one the host is missing - but what it delivered may not be what the host
+/// has (`MedtrumPumpManager.tellOfBolusRecord`, `compare`)
+public struct BolusFinalWithoutRecord: RawRepresentable, Equatable {
+    public typealias RawValue = [String: Any]
+
+    public let units: Double
+    /// What its final said it delivered: what the host has
+    public let delivered: Double
+    public let sentAt: Date
+    /// Where it started on the patch clock, as its answer said - nil, its answer was lost
+    public let pumpStartTime: Date?
+    /// The record its answer named - nil, its answer was lost
+    public let recordSequence: Int?
+    /// The possible record taken for its own as it went final (`MedtrumPumpManager.settlePossibleBolusRecords`) - nil,
+    /// none was, or kept before they were: its own read later, that one is another bolus's, the host missing it
+    public let taken: PossibleBolusRecord?
+
+    public init(
+        units: Double,
+        delivered: Double,
+        sentAt: Date,
+        pumpStartTime: Date?,
+        recordSequence: Int?,
+        taken: PossibleBolusRecord? = nil
+    ) {
+        self.units = units
+        self.delivered = delivered
+        self.sentAt = sentAt
+        self.pumpStartTime = pumpStartTime
+        self.recordSequence = recordSequence
+        self.taken = taken
+    }
+
+    public init?(rawValue: RawValue) {
+        guard let units = rawValue["units"] as? Double, let sentAt = rawValue["sentAt"] as? Date else {
+            return nil
+        }
+        self.init(
+            units: units,
+            // Kept before what it delivered was: counted in full, as one whose answer was lost
+            delivered: rawValue["delivered"] as? Double ?? units,
+            sentAt: sentAt,
+            pumpStartTime: rawValue["pumpStartTime"] as? Date,
+            recordSequence: rawValue["recordSequence"] as? Int,
+            taken: (rawValue["taken"] as? PossibleBolusRecord.RawValue).flatMap(PossibleBolusRecord.init(rawValue:))
+        )
+    }
+
+    public var rawValue: RawValue {
+        var value: RawValue = ["units": units, "delivered": delivered, "sentAt": sentAt]
+        value["pumpStartTime"] = pumpStartTime
+        value["recordSequence"] = recordSequence
+        value["taken"] = taken?.rawValue
+        return value
+    }
+}
+
+/// A bolus record that matched no dose of ours, but could be one whose answer was lost, still waiting on its record - by
+/// its amount, starting further from when it went out than its record would: kept until that bolus settles
+/// (`MedtrumPumpManager.settlePossibleBolusRecords`)
+public struct PossibleBolusRecord: RawRepresentable, Equatable {
+    public typealias RawValue = [String: Any]
+
+    public let sequence: Int
+    public let amount: Double
+    public let delivered: Double
+    /// On the patch clock
+    public let startTime: Date
+
+    public init(sequence: Int, amount: Double, delivered: Double, startTime: Date) {
+        self.sequence = sequence
+        self.amount = amount
+        self.delivered = delivered
+        self.startTime = startTime
+    }
+
+    public init?(rawValue: RawValue) {
+        guard let sequence = rawValue["sequence"] as? Int, let amount = rawValue["amount"] as? Double,
+              let delivered = rawValue["delivered"] as? Double, let startTime = rawValue["startTime"] as? Date
+        else {
+            return nil
+        }
+        self.init(sequence: sequence, amount: amount, delivered: delivered, startTime: startTime)
+    }
+
+    public var rawValue: RawValue {
+        ["sequence": sequence, "amount": amount, "delivered": delivered, "startTime": startTime]
+    }
+}
+
 /// A SetTempBasal on its way to the patch, as `PendingBolus`: saved before it is written, gone once its outcome is in.
 /// Found in the state of a new run, it went out and the app was gone before its answer - the patch may be running it,
 /// and the cancel before it ended the temp basal running till then (`MedtrumPumpManager.takeOverPendingTempBasal`).
@@ -359,6 +450,13 @@ public class MedtrumPumpState: RawRepresentable {
         // Saved as number and patch start before builds kept the number only
         answeredBolusRecords = rawValue["answeredBolusRecords"] as? [Int] ??
             (rawValue["answeredBolusRecords"] as? [[String: Any]] ?? []).compactMap { $0["sequence"] as? Int }
+        // Absent in state written before unmatched bolus records were told of: the records read by then are not told of
+        sessionStartSequence = rawValue["sessionStartSequence"] as? Int ?? syncedSequenceNumber
+        unmatchedBolusRecords = rawValue["unmatchedBolusRecords"] as? [Int] ?? []
+        bolusesFinalWithoutRecord = (rawValue["bolusesFinalWithoutRecord"] as? [BolusFinalWithoutRecord.RawValue] ?? [])
+            .compactMap(BolusFinalWithoutRecord.init(rawValue:))
+        possibleBolusRecords = (rawValue["possibleBolusRecords"] as? [PossibleBolusRecord.RawValue] ?? [])
+            .compactMap(PossibleBolusRecord.init(rawValue:))
         patchActivatedAt = rawValue["patchActivatedAt"] as? Date ?? nil
         deviceType = rawValue["deviceType"] as? UInt8 ?? 0
         swVersion = rawValue["swVersion"] as? String ?? "0.0.0"
@@ -521,6 +619,10 @@ public class MedtrumPumpState: RawRepresentable {
         sequenceConfirmedAt = nil
         skippedRecordSequences = []
         answeredBolusRecords = []
+        sessionStartSequence = 0
+        unmatchedBolusRecords = []
+        bolusesFinalWithoutRecord = []
+        possibleBolusRecords = []
         patchActivatedAt = nil
         deviceType = 0
         swVersion = "0.0.0"
@@ -571,6 +673,16 @@ public class MedtrumPumpState: RawRepresentable {
         }
         if !answeredBolusRecords.isEmpty {
             value["answeredBolusRecords"] = answeredBolusRecords
+        }
+        value["sessionStartSequence"] = sessionStartSequence
+        if !unmatchedBolusRecords.isEmpty {
+            value["unmatchedBolusRecords"] = unmatchedBolusRecords
+        }
+        if !bolusesFinalWithoutRecord.isEmpty {
+            value["bolusesFinalWithoutRecord"] = bolusesFinalWithoutRecord.map(\.rawValue)
+        }
+        if !possibleBolusRecords.isEmpty {
+            value["possibleBolusRecords"] = possibleBolusRecords.map(\.rawValue)
         }
         value["patchActivatedAt"] = patchActivatedAt
         value["patchGracePeriodFrom"] = patchGracePeriodFrom
@@ -678,6 +790,18 @@ public class MedtrumPumpState: RawRepresentable {
     /// the newest of them (its `PendingBolus.sequenceAtSend` takes it in). Kept while the record may still be read - see
     /// `MedtrumPumpManager.noteAnsweredBolusRecord`. Per patch.
     public var answeredBolusRecords: [Int]
+    /// The newest record the patch had written as this state took it up - 0, a patch it activated, or no patch: the
+    /// records up to it were written before, none of their doses ours to tell of
+    /// (`MedtrumPumpManager.warnOfBolusNotCounted`). Per patch.
+    public var sessionStartSequence: Int
+    /// The bolus records that matched no dose of ours, each looked at once: the user told of it, or a bolus of ours
+    /// final without its record found to be it - read again, nothing more is done. Per patch.
+    public var unmatchedBolusRecords: [Int]
+    /// The latest boluses of ours final without their record - see `BolusFinalWithoutRecord`. Per patch.
+    public var bolusesFinalWithoutRecord: [BolusFinalWithoutRecord]
+    /// The unmatched bolus records a bolus of ours whose answer was lost could be - see `PossibleBolusRecord`.
+    /// Per patch.
+    public var possibleBolusRecords: [PossibleBolusRecord]
 
     /// Forgets what belonged to the records of the patch before
     func resetRecordSequence() {
@@ -687,6 +811,10 @@ public class MedtrumPumpState: RawRepresentable {
         sequenceConfirmedInThisRun = nil
         skippedRecordSequences = []
         answeredBolusRecords = []
+        sessionStartSequence = 0
+        unmatchedBolusRecords = []
+        bolusesFinalWithoutRecord = []
+        possibleBolusRecords = []
     }
 
     public var patchActivatedAt: Date?
@@ -760,10 +888,10 @@ public class MedtrumPumpState: RawRepresentable {
 
     public var bolusDose: UnfinalizedDose?
 
-    /// The SetBolus being written, saved - and handed to the host - before it goes out: an app killed before its answer
-    /// comes back with it here, and runs it as a bolus whose command went unanswered
-    /// (`MedtrumPumpManager.takeOverPendingBolus`). Cleared as its outcome is in, with the dose registered in the same
-    /// step if there is one.
+    /// The SetBolus being written, saved - and handed to the host - before it goes out, never written unless the host
+    /// took it (`MedtrumPumpManager.handOverState`): an app killed before its answer comes back with it here, and runs it
+    /// as a bolus whose command went unanswered (`MedtrumPumpManager.takeOverPendingBolus`). Cleared as its outcome is
+    /// in, with the dose registered in the same step if there is one - or as it is not written after all.
     public var pendingBolus: PendingBolus?
 
     /// The SetTempBasal being written, saved - and handed to the host - before it goes out, as `pendingBolus`: an app

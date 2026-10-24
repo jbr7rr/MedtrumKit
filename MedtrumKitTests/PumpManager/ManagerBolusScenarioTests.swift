@@ -2159,42 +2159,806 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(ended?.deliveredUnits ?? 0, 2.0, accuracy: 0.001)
     }
 
-    /// A host that takes longer than the bound to take the state: the bolus goes out once that is up - not pending on
-    /// disk as it does - and that is logged; nothing waits on the host for good
-    func testBolusGoesOutAnywayWhenTheHostIsSlowToTakeTheState() throws {
+    /// A host that does not take the state within the bound (device 2026-10-23 15:42, its queue stalled 80 s): the bolus
+    /// is not written - killed after the write, the app would come back with no dose of it - and fails, not delivered,
+    /// with a warning. A manual one and an automatic one alike. Nothing is left pending or running, the state the host
+    /// takes once it is free has nothing pending, and the next bolus goes out as ever.
+    func testBolusIsNotWrittenAndFailsWhenTheHostDoesNotTakeTheState() throws {
         makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
         MedtrumLogger.pumpManager = pumpManager
         defer { MedtrumLogger.pumpManager = nil }
-        // The host busy until the bolus went out, however long the bound takes on a loaded machine
-        let hostFree = DispatchSemaphore(value: 0)
-        delegate.queue.async { _ = hostFree.wait(timeout: .now() + 60) }
+        pumpManager.dosingHandOverTimeout = 1
 
-        let atWrite = Locked<PumpManager.RawStateValue?>(nil)
-        let wroteAt = Locked<Date?>(nil)
+        for activationType: BolusActivationType in [.manualNoRecommendation, .automatic] {
+            let releaseHost = stallHost()
+            defer { releaseHost() }
+
+            let started = Date.now
+            let error = commandBolus(2.0, activationType: activationType, timeout: 10)
+            let took = Date.now.timeIntervalSince(started)
+
+            XCTAssertTrue(isStateNotSaved(error), "failed, not uncertain: \(String(describing: error))")
+            XCTAssertGreaterThan(took, 0.9, "not before the bound is up")
+            XCTAssertEqual(link.writtenCommands, [], "not written")
+            XCTAssertNil(pumpManager.state.pendingBolus)
+            XCTAssertNil(pumpManager.state.bolusDose)
+            XCTAssertEqual(pumpManager.state.bolusState, .noBolus)
+
+            XCTAssertNil(pumpManager.rawState["pendingBolus"], "no read from now on has it pending")
+
+            releaseHost()
+            settle()
+            XCTAssertNil(delegate.savedState?["pendingBolus"], "the host took the state late, nothing pending")
+        }
+
+        XCTAssertEqual(delegate.batches.count, 0)
+        XCTAssertEqual(delegate.errors.count, 0)
+        XCTAssertTrue(uncertain.isEmpty)
+        XCTAssertEqual(delegate.logEntries.filter { entry in
+            entry.message.contains("did not take the state within 1 s, nor read it: the bolus of 2.0 U is not written, it fails - not delivered")
+        }.count, 2)
+
+        // The loop's next SMB
+        link.script(CommandType.SET_BOLUS, .fragments(["0f13280000007b00ec009786a8178900"]))
+        XCTAssertNil(commandBolus(2.0, activationType: .automatic))
+        settle()
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS])
+        XCTAssertEqual(pumpManager.state.bolusDose?.recordSequence, 123)
+        XCTAssertEqual(delegate.batches.count, 1)
+    }
+
+    /// A host taking 5 s to take the state - past the 3 s every other hand-over waits, within the bolus's bound: the
+    /// bolus goes out once it has it, pending on disk, as ever
+    func testBolusGoesOutWhenTheHostTakesTheStateWithinItsBound() throws {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        XCTAssertEqual(pumpManager.dosingHandOverTimeout, 10)
+        delegate.queue.async { Thread.sleep(forTimeInterval: 5) }
+
         let started = Date.now
+        let wroteAt = Locked<Date?>(nil)
+        let atWrite = Locked<PumpManager.RawStateValue?>(nil)
         link.script(CommandType.SET_BOLUS, .fragments(["0f13280000007b00ec009786a8178900"])) { [unowned self] in
             atWrite.value = delegate.savedState
             wroteAt.value = Date.now
-            hostFree.signal()
         }
-        let done = expectation(description: "enactBolus")
-        let outcome = Locked<PumpManagerError??>(nil)
-        pumpManager.enactBolus(units: 2.0, activationType: .manualNoRecommendation) { error in
-            outcome.value = error
-            done.fulfill()
-        }
-        wait(for: [done], timeout: 30)
-        XCTAssertNil(outcome.value ?? nil)
+        XCTAssertNil(commandBolus(2.0, timeout: 20))
         settle()
 
-        let waited = try XCTUnwrap(wroteAt.value).timeIntervalSince(started)
-        XCTAssertGreaterThan(waited, 2.9, "not before the bound is up")
-        XCTAssertLessThan(waited, 30, "nor waiting on the host for good")
-        XCTAssertNil(atWrite.value?["pendingBolus"])
+        XCTAssertGreaterThan(try XCTUnwrap(wroteAt.value).timeIntervalSince(started), 4.9, "once the host has it")
+        XCTAssertNotNil(atWrite.value?["pendingBolus"], "on disk as it went out")
         XCTAssertNotNil(pumpManager.state.bolusDose)
+        XCTAssertEqual(delegate.batches.count, 1)
+        XCTAssertEqual(delegate.errors.count, 0)
+    }
+
+    /// The host saved the state with the bolus pending, and is held up before it is done with it - as iAPS logs it,
+    /// stalled (device 2026-10-23 15:42): it is on its disk, the bound runs out all the same. The bolus is written, and
+    /// that is logged - killed after the write, the app comes back with it pending, as one gone unanswered.
+    func testBolusIsWrittenWhenTheHostSavedTheStateWithItPendingAndIsHeldUp() throws {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        MedtrumLogger.pumpManager = pumpManager
+        defer { MedtrumLogger.pumpManager = nil }
+        pumpManager.dosingHandOverTimeout = 1
+        let releaseHost = stallHostAfterSaving("pendingBolus")
+        defer { releaseHost() }
+
+        let started = Date.now
+        let wroteAt = Locked<Date?>(nil)
+        let atWrite = Locked<PumpManager.RawStateValue?>(nil)
+        link.script(CommandType.SET_BOLUS, .fragments(["0f13280000007b00ec009786a8178900"])) { [unowned self] in
+            atWrite.value = delegate.savedState
+            wroteAt.value = Date.now
+        }
+        XCTAssertNil(commandBolus(2.0, timeout: 10))
+
+        XCTAssertGreaterThan(try XCTUnwrap(wroteAt.value).timeIntervalSince(started), 0.9, "once the bound is up")
+        XCTAssertNotNil(atWrite.value?["pendingBolus"], "on disk as it went out")
+
+        releaseHost()
+        settle()
+        // Handed to the host on its queue, as everything else
         XCTAssertTrue(delegate.logEntries.contains { entry in
-            entry.message.contains("did not take the state within 3 s, writing the bolus anyway")
+            entry.message.contains("did not take the state within 1 s, but read it with the bolus of 2.0 U pending - saving it: written")
         })
+        XCTAssertEqual(pumpManager.state.bolusDose?.recordSequence, 123)
+        XCTAssertNil(delegate.savedState?["pendingBolus"])
+        XCTAssertEqual(delegate.batches.count, 1)
+        XCTAssertEqual(delegate.errors.count, 0)
+    }
+
+    /// The manager's own read of the state as the bolus is pending - for the status updates it hands out - is not the
+    /// host's: it saves nothing, and the bolus is not written as the bound runs out
+    func testStateReadByTheManagerItselfIsNotTakenForTheHostsWithABolusPending() {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        pumpManager.dosingHandOverTimeout = 1
+        let releaseHost = stallHost()
+        defer { releaseHost() }
+
+        // Once it is pending: a change of the state told of, its old state read again on the main queue after
+        let readWhilePending = Locked(false)
+        DispatchQueue.global().async { [pumpManager] in
+            guard let pumpManager else {
+                return
+            }
+            let until = Date.now.addingTimeInterval(5)
+            while pumpManager.state.pendingBolus == nil, Date.now < until {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            pumpManager.notifyStateDidChange()
+            DispatchQueue.main.async {
+                readWhilePending.value = pumpManager.oldState.pendingBolus != nil
+            }
+        }
+
+        XCTAssertTrue(isStateNotSaved(commandBolus(2.0, timeout: 10)))
+        XCTAssertTrue(readWhilePending.value, "read while it was pending")
+        XCTAssertEqual(link.writtenCommands, [], "not written")
+        XCTAssertNil(pumpManager.state.pendingBolus)
+    }
+
+    /// A host taking 5 s to take the state, a completion with no bolus running coming meanwhile - kept for the bolus
+    /// pending, a tiny one completes before its answer: it came before the bolus was written, and is not its completion,
+    /// though after `sentAt`, which is from before the wait
+    func testCompletionWhileTheHostTakesTheStateIsNotTheBolussOwn() throws {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        MedtrumLogger.pumpManager = pumpManager
+        defer { MedtrumLogger.pumpManager = nil }
+        delegate.queue.async { Thread.sleep(forTimeInterval: 5) }
+
+        DispatchQueue.global().async { [pumpManager, link] in
+            guard let pumpManager, let link else {
+                return
+            }
+            let until = Date.now.addingTimeInterval(5)
+            while pumpManager.state.pendingBolus == nil, Date.now < until {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+            link.notify("200200802800") // 2 U, no record named
+        }
+
+        link.script(CommandType.SET_BOLUS, .fragments(["0f13280000007b00ec009786a8178900"]))
+        XCTAssertNil(commandBolus(2.0, timeout: 20))
+        settle()
+
+        XCTAssertTrue(delegate.logEntries.contains { $0.message.contains("before the answer to the bolus of 2.0 U") })
+        XCTAssertTrue(delegate.logEntries.contains { $0.message.contains("it came before the bolus went out") })
+        XCTAssertNotNil(pumpManager.state.bolusDose, "still running")
+        XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
+    }
+
+    /// The patch shows itself halted as the bolus waits for the host to take the state with it pending: not written to
+    /// a halted patch - it fails, nothing pending in the state the host has after
+    func testBolusIsNotWrittenWithAHaltShownAsItWaitsForTheHost() {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        settle()
+        // Halted, of its own - no time told - its newest record 122
+        let halt = (Data([PatchState.suspended.rawValue, 0x00, 0x01]) + UInt64(122).toData(length: 2) + UInt64(236).toData(length: 2))
+            .hexEncodedString()
+        let shown = Locked(false)
+        delegate.afterSavingState = { [link] saved in
+            guard saved["pendingBolus"] != nil, !shown.value else {
+                return
+            }
+            shown.value = true
+            // Off the host's queue, while it is held up
+            DispatchQueue.global().async { link?.notify(halt) }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        let error = commandBolus(2.0, activationType: .automatic)
+        delegate.afterSavingState = nil
+        guard case let .deviceState(cause)? = error, case .isSuspended? = cause as? MedtrumConnectError else {
+            XCTFail("Not failed as suspended: \(String(describing: error))")
+            return
+        }
+        settle()
+        XCTAssertTrue(shown.value)
+        XCTAssertEqual(link.writtenCommands, [], "not written")
+        XCTAssertNil(pumpManager.state.pendingBolus)
+        XCTAssertNil(pumpManager.state.bolusDose)
+        XCTAssertNil(delegate.savedState?["pendingBolus"], "off the state the host has")
+        XCTAssertEqual(pumpManager.state.basalDose.type, .suspend)
+        XCTAssertTrue(reports(of: .bolus).isEmpty)
+    }
+
+    /// A SetBolus whose write failed - it never left the phone - the app killed before the host took the state that
+    /// failure cleared: the next run comes back with it pending, as one gone unanswered, counted in full. Every record
+    /// past the 823 known when it went out read, none its: final at 0 U, and the next bolus goes out as ever.
+    func testBolusWhoseWriteFailedTakenOverAfterAKillIsFinalizedAtZero() throws {
+        let started = try takeOverUnansweredBolusAndEndItAtItsDeadline(answer: .failure(.notConnected))
+
+        link.notify("20000138" + "03f700")
+        settle()
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 824, patchId: 247))
+        syncRecords()
+        advanceClock(by: 15 * Self.minute)
+        syncRecords()
+
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(delegate.alerts.count, 0)
+        XCTAssertFalse(pumpManager.status.deliveryIsUncertain)
+        XCTAssertEqual(pumpManager.state.bolusState, .noBolus)
+
+        link.script(
+            CommandType.SET_BOLUS,
+            PatchBytes.answer(
+                command: CommandType.SET_BOLUS,
+                body: UInt64(825).toData(length: 2) + UInt64(247).toData(length: 2) + pumpManager.state.pumpTime.toMedtrumSeconds() +
+                    Data([0])
+            )
+        )
+        XCTAssertNil(commandBolus(0.3))
+        XCTAssertEqual(pumpManager.state.bolusDose?.recordSequence, 825)
+        XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
+    }
+
+    // MARK: - A bolus record matching no dose of ours
+
+    /// Record 123, a bolus of 1.0 U delivered that no dose of ours is - one written as the app was killed before the host
+    /// saved it pending, another app's: not imported, the user told to add it - once, read again or after a restart
+    func testBolusRecordMatchingNoDoseOfOursIsToldOfOnce() throws {
+        let state = activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 123, reservoir: 168.6)
+        state.syncedSequenceNumber = 122
+        makeManager(state)
+        let start = pumpManager.state.pumpTime.addingTimeInterval(-10 * Self.minute)
+        let record = PatchBytes.bolusRecord(sequence: 123, patchId: 236, start: start, amount: 1.0, delivered: 1.0)
+
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 123 }?.outcome, "unmatched")
+        XCTAssertTrue(reports(of: .bolus).isEmpty, "not imported")
+        XCTAssertEqual(delegate.alerts.count, 1)
+        let alert = try XCTUnwrap(delegate.alerts.first)
+        XCTAssertTrue(alert.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-not-counted"))
+        XCTAssertEqual(alert.foregroundContent?.body.contains("a bolus of 1 U delivered at"), true)
+
+        // Read again
+        pumpManager.state.syncedSequenceNumber = 122
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+        XCTAssertEqual(delegate.alerts.count, 1, "told of once")
+
+        // And after a restart
+        try restart(from: delegate.savedState)
+        pumpManager.state.syncedSequenceNumber = 122
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 123 }?.outcome, "unmatched")
+        XCTAssertEqual(delegate.alerts.count, 0, "told of before the restart")
+    }
+
+    /// Unmatched bolus records the user is not told of: one that delivered nothing, and one written before this state
+    /// took up the patch - the backlog of its first status, another app's
+    func testBolusRecordMatchingNoDoseOfOursThatDeliveredNothingOrPredatesThePatchIsNotToldOf() {
+        let state = activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 124, reservoir: 168.6)
+        state.syncedSequenceNumber = 122
+        state.sessionStartSequence = 123
+        makeManager(state)
+        let start = pumpManager.state.pumpTime.addingTimeInterval(-10 * Self.minute)
+
+        link.script(CommandType.GET_RECORD, PatchBytes.bolusRecord(sequence: 123, patchId: 236, start: start, amount: 1.0, delivered: 1.0))
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 124, patchId: 236, start: start.addingTimeInterval(60), amount: 1.0, delivered: 0)
+        )
+        syncRecords()
+
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 124)
+        XCTAssertEqual(pumpManager.recordStore.records.filter { $0.outcome == "unmatched" }.count, 2)
+        XCTAssertEqual(delegate.alerts.count, 0)
+    }
+
+    /// The record that finalized a bolus whose command went unanswered, read again - the app killed before the cursor
+    /// past it was saved, say: taken as it was, no other bolus's, and nothing the host is missing
+    func testRecordOfAnUnansweredBolusReadAgainIsNotToldOf() throws {
+        let started = try takeOverUnansweredBolusAndEndItAtItsDeadline()
+        link.notify("20000138" + "03f700")
+        settle()
+        let record = PatchBytes.bolusRecord(
+            sequence: 824,
+            patchId: 247,
+            start: Date.fromMedtrumSeconds(0x17CC_31CB).addingTimeInterval(2),
+            amount: 0.3,
+            delivered: 0.3
+        )
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertTrue(pumpManager.state.awaitingRecord.isEmpty, "the host stored the final")
+
+        pumpManager.state.syncedSequenceNumber = 823
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 824 }?.outcome, "answered bolus finalized already")
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(delegate.alerts.count, 0)
+    }
+
+    /// The record of a bolus of ours final from our estimate - its answer lost, the records unread for an hour, counted
+    /// in full, and the user told so - read after all: it matches no dose any more, and is that one's, at its amount near
+    /// when it went out. Nothing more to tell.
+    func testRecordOfABolusFinalFromOurEstimateIsNotToldOf() throws {
+        let started = try takeOverUnansweredBolusAndEndItAtItsDeadline(confirmingRecords: false)
+        advanceClock(by: 60 * Self.minute)
+        syncRecords()
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
+        XCTAssertEqual(delegate.alerts.map(\.identifier.alertIdentifier), ["com.nightscout.medtrumkit.bolus-counted-as-delivered"])
+        XCTAssertEqual(pumpManager.state.bolusesFinalWithoutRecord.count, 1)
+
+        link.notify("20000138" + "03f700")
+        settle()
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(
+                sequence: 824,
+                patchId: 247,
+                start: Date.fromMedtrumSeconds(0x17CC_31CB).addingTimeInterval(2),
+                amount: 0.3,
+                delivered: 0.3
+            )
+        )
+        syncRecords()
+
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 824 }?.outcome, "unmatched")
+        XCTAssertEqual(delegate.alerts.count, 1, "nothing more")
+        XCTAssertTrue(pumpManager.state.bolusesFinalWithoutRecord.isEmpty, "it explained one record")
+    }
+
+    // MARK: - The record of a bolus final from our estimate, read after all
+
+    /// The bolus of 1 U of `testCancelledBolusIsRaisedByItsCompletionAndFinalizedWithoutItsRecord`, cancelled at 0.1 U,
+    /// the patch's completion of it lost; its record 490 skipped, it goes final at 0.1 U from our estimate. Read after
+    /// all, the record says 0.5 U: the host is missing 0.4 U for good - the user is told, once
+    func testCancelledBolusFinalFromOurEstimateBelowItsRecordIsToldOfOnce() throws {
+        let cancelled = cancelBolusAndFinalizeItFromOurEstimate(progress: "2022100002005c090000000000")
+        XCTAssertEqual(finals(of: cancelled).last?.deliveredUnits ?? 0, 0.1, accuracy: 0.001)
+        XCTAssertEqual(pumpManager.state.bolusesFinalWithoutRecord.first?.recordSequence, 490)
+
+        readRecordOfTheCancelledBolusAgain(delivered: 0.5)
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 490 }?.outcome, "answered bolus finalized already")
+        XCTAssertEqual(delegate.alerts.count, 1)
+        let alert = try XCTUnwrap(delegate.alerts.first)
+        XCTAssertTrue(alert.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-miscounted"))
+        XCTAssertEqual(alert.foregroundContent?.title, "Bolus not fully counted")
+        XCTAssertEqual(alert.foregroundContent?.body.contains("show \(0.5.formatted()) U delivered"), true)
+        XCTAssertEqual(alert.foregroundContent?.body.contains("the app counted \(0.1.formatted()) U. Add the \(0.4.formatted()) U missing manually."), true)
+        XCTAssertTrue(pumpManager.state.bolusesFinalWithoutRecord.isEmpty, "it explained its record")
+
+        readRecordOfTheCancelledBolusAgain(delivered: 0.5)
+        XCTAssertEqual(delegate.alerts.count, 1, "told of once")
+        XCTAssertEqual(finals(of: cancelled).count, 1)
+    }
+
+    /// The same, its record at the amount it went final at: nothing to tell
+    func testCancelledBolusFinalFromOurEstimateAtItsRecordsAmountIsNotToldOf() {
+        let cancelled = cancelBolusAndFinalizeItFromOurEstimate(progress: "2022100002005c090000000000")
+        readRecordOfTheCancelledBolusAgain(delivered: 0.1)
+        XCTAssertEqual(delegate.alerts.count, 0)
+        XCTAssertTrue(pumpManager.state.bolusesFinalWithoutRecord.isEmpty, "it explained its record")
+        XCTAssertEqual(finals(of: cancelled).count, 1)
+    }
+
+    /// Cancelled before any progress, final at 0 U from our estimate, its record 0 U delivered: it explains the record -
+    /// taken off, not left to crowd out the others - and there is nothing to tell
+    func testZeroDeliveredRecordOfABolusFinalFromOurEstimateIsTakenOffSilently() {
+        let cancelled = cancelBolusAndFinalizeItFromOurEstimate(progress: nil)
+        XCTAssertEqual(finals(of: cancelled).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(pumpManager.state.bolusesFinalWithoutRecord.count, 1)
+
+        readRecordOfTheCancelledBolusAgain(delivered: 0)
+        XCTAssertEqual(delegate.alerts.count, 0)
+        XCTAssertTrue(pumpManager.state.bolusesFinalWithoutRecord.isEmpty)
+    }
+
+    /// The bolus of 0.3 U whose answer was lost, counted in full at maximumWait - the user told so - and its record read
+    /// after all, 0.1 U delivered: the host has 0.2 U too many for good, insulin on board overstated - the user is told,
+    /// once
+    func testRecordOfABolusCountedInFullThatDeliveredLessIsToldOfOnce() throws {
+        let started = try takeOverUnansweredBolusAndEndItAtItsDeadline(confirmingRecords: false)
+        advanceClock(by: 60 * Self.minute)
+        syncRecords()
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "counted in full")
+        XCTAssertEqual(delegate.alerts.map(\.identifier.alertIdentifier), ["com.nightscout.medtrumkit.bolus-counted-as-delivered"])
+
+        link.notify("20000138" + "03f700")
+        settle()
+        let record = PatchBytes.bolusRecord(
+            sequence: 824,
+            patchId: 247,
+            start: Date.fromMedtrumSeconds(0x17CC_31CB).addingTimeInterval(2),
+            amount: 0.3,
+            delivered: 0.1
+        )
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+
+        XCTAssertEqual(delegate.alerts.count, 2)
+        let alert = try XCTUnwrap(delegate.alerts.last)
+        XCTAssertTrue(alert.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-miscounted"))
+        XCTAssertEqual(alert.foregroundContent?.title, "Bolus counted too high")
+        XCTAssertEqual(alert.foregroundContent?.body.contains("Insulin on board is overstated by \(0.2.formatted()) U."), true)
+
+        pumpManager.state.syncedSequenceNumber = 823
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+        XCTAssertEqual(delegate.alerts.count, 2, "told of once")
+    }
+
+    /// The same, its record showing nothing delivered - cancelled on the patch before it began: no bolus the host is
+    /// missing, but the 0.3 U it counted were never delivered - the user is told
+    func testRecordOfABolusCountedInFullThatDeliveredNothingIsToldOf() throws {
+        let started = try takeOverUnansweredBolusAndEndItAtItsDeadline(confirmingRecords: false)
+        advanceClock(by: 60 * Self.minute)
+        syncRecords()
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "counted in full")
+        XCTAssertEqual(pumpManager.state.bolusesFinalWithoutRecord.count, 1)
+
+        link.notify("20000138" + "03f700")
+        settle()
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(
+                sequence: 824,
+                patchId: 247,
+                start: Date.fromMedtrumSeconds(0x17CC_31CB).addingTimeInterval(2),
+                amount: 0.3,
+                delivered: 0
+            )
+        )
+        syncRecords()
+
+        XCTAssertTrue(pumpManager.state.bolusesFinalWithoutRecord.isEmpty, "it explained its record")
+        XCTAssertEqual(delegate.alerts.count, 2)
+        XCTAssertEqual(delegate.alerts.last?.foregroundContent?.body.contains("Insulin on board is overstated by \(0.3.formatted()) U."), true)
+    }
+
+    // MARK: - A record that could be that of a bolus whose answer was lost
+
+    /// The bolus of 0.3 U whose answer was lost; record 824, of 0.3 U, starts 5 min after it went out - further than its
+    /// record would, but it could be its, the patch clock off: not told of, kept. The bolus goes final from our estimate,
+    /// counted in full - the record taken for its, at its amount: nothing more to tell, nor read again
+    func testPossibleRecordOfAnUnansweredBolusFinalFromOurEstimateIsTakenForItsRecord() {
+        startUnansweredBolus()
+        let started = delegate.batches.first?.events.first?.dose
+        let patchSentAt = pumpManager.state.pumpTime
+        endUnansweredBolusAtItsDeadline()
+
+        link.notify("200001" + "3803f700")
+        settle()
+        let record = PatchBytes.bolusRecord(
+            sequence: 824,
+            patchId: 247,
+            start: patchSentAt.addingTimeInterval(5 * Self.minute),
+            amount: 0.3,
+            delivered: 0.3
+        )
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 824 }?.outcome, "unmatched")
+        XCTAssertEqual(delegate.alerts.count, 0, "it could be ours")
+        XCTAssertEqual(pumpManager.state.possibleBolusRecords.map(\.sequence), [824])
+
+        advanceClock(by: 15 * Self.minute)
+        syncRecords()
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "counted in full")
+        XCTAssertEqual(delegate.alerts.map(\.identifier.alertIdentifier), ["com.nightscout.medtrumkit.bolus-counted-as-delivered"])
+        XCTAssertTrue(pumpManager.state.possibleBolusRecords.isEmpty)
+        XCTAssertEqual(pumpManager.state.bolusesFinalWithoutRecord.count, 1, "kept all the same: 824 may be another's")
+
+        // Read again - the app killed before the cursor past it was saved, say
+        pumpManager.state.syncedSequenceNumber = 823
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+        XCTAssertEqual(delegate.alerts.count, 1, "nothing more")
+    }
+
+    /// The same record 824, kept; then the bolus's own, 825, near when it went out, finalizes it: 824 was no bolus of
+    /// ours after all - delivered, missing at the host - and the user is told, once
+    func testPossibleRecordOfAnUnansweredBolusFinalByItsOwnRecordIsToldOf() throws {
+        startUnansweredBolus()
+        let started = delegate.batches.first?.events.first?.dose
+        let patchSentAt = pumpManager.state.pumpTime
+        endUnansweredBolusAtItsDeadline()
+
+        link.notify("200001" + "3803f700")
+        settle()
+        let possible = PatchBytes.bolusRecord(
+            sequence: 824,
+            patchId: 247,
+            start: patchSentAt.addingTimeInterval(5 * Self.minute),
+            amount: 0.3,
+            delivered: 0.3
+        )
+        link.script(CommandType.GET_RECORD, possible)
+        syncRecords()
+        XCTAssertEqual(delegate.alerts.count, 0, "it could be ours")
+
+        link.notify("200001" + "3903f700")
+        settle()
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 825, patchId: 247, start: patchSentAt.addingTimeInterval(1), amount: 0.3, delivered: 0.3)
+        )
+        syncRecords()
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 825 }?.outcome?.hasPrefix("finalized bolus"), true)
+
+        XCTAssertEqual(delegate.alerts.count, 1)
+        let alert = try XCTUnwrap(delegate.alerts.first)
+        XCTAssertTrue(alert.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-not-counted"))
+        XCTAssertTrue(pumpManager.state.possibleBolusRecords.isEmpty)
+
+        pumpManager.state.syncedSequenceNumber = 823
+        link.script(CommandType.GET_RECORD, possible)
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 825, patchId: 247, start: patchSentAt.addingTimeInterval(1), amount: 0.3, delivered: 0.3)
+        )
+        syncRecords()
+        XCTAssertEqual(delegate.alerts.count, 1, "told of once")
+    }
+
+    /// As `testPossibleRecordOfAnUnansweredBolusFinalFromOurEstimateIsTakenForItsRecord`, 824 another bolus's after all -
+    /// one the host is missing: the bolus's own, 825, near when it went out, is read later - it explains it, at the
+    /// amount the host has: nothing to tell of it; 824 is told of, once
+    func testOwnRecordOfABolusAPossibleRecordWasTakenForTellsOfThatOne() throws {
+        let (started, patchSentAt) = try takePossibleRecordAndReadTheBolussOwn(possibleDelivered: 0.3, ownDelivered: 0.3)
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 825 }?.outcome, "unmatched")
+        XCTAssertTrue(pumpManager.state.bolusesFinalWithoutRecord.isEmpty, "it explained its own record")
+        XCTAssertEqual(delegate.alerts.count, 2)
+        try assertToldOfNotCounted(delegate.alerts.last, 0.3)
+
+        // Read again - the app killed before the cursor past them was saved, say
+        pumpManager.state.syncedSequenceNumber = 823
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 824, patchId: 247, start: patchSentAt.addingTimeInterval(5 * Self.minute), amount: 0.3, delivered: 0.3)
+        )
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 825, patchId: 247, start: patchSentAt.addingTimeInterval(1), amount: 0.3, delivered: 0.3)
+        )
+        syncRecords()
+        XCTAssertEqual(delegate.alerts.count, 2, "told of once")
+        XCTAssertEqual(finals(of: started).count, 1)
+    }
+
+    /// The same, 824 delivering 0.1 U of its 0.3 U: as it was taken, the user was told the bolus was counted too high -
+    /// by its numbers. The bolus's own, 825, shows the 0.3 U the host has: nothing more of it - the miscount told of
+    /// before is not taken back - and 824's 0.1 U are told of as not counted
+    func testOwnRecordOfABolusAPossibleRecordThatDeliveredLessWasTakenForTellsOfThatOne() throws {
+        let (started, _) = try takePossibleRecordAndReadTheBolussOwn(possibleDelivered: 0.1, ownDelivered: 0.3) {
+            XCTAssertEqual(self.delegate.alerts.count, 2)
+            XCTAssertTrue(
+                self.delegate.alerts.contains { $0.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-miscounted") },
+                "by 824's numbers"
+            )
+        }
+        XCTAssertEqual(delegate.alerts.count, 3)
+        try assertToldOfNotCounted(delegate.alerts.last, 0.1)
+        XCTAssertEqual(finals(of: started).count, 1)
+    }
+
+    /// The same, 825 delivering 0.1 U too: the user was told of the bolus counted too high as 824 was taken - nothing
+    /// more of it; 824's 0.1 U are told of as not counted
+    func testOwnRecordAtWhatTheRecordTakenForItDeliveredIsNotComparedAgain() throws {
+        let (started, _) = try takePossibleRecordAndReadTheBolussOwn(possibleDelivered: 0.1, ownDelivered: 0.1) {
+            XCTAssertEqual(self.delegate.alerts.count, 2)
+        }
+        XCTAssertEqual(delegate.alerts.count, 3, "no second miscount")
+        XCTAssertEqual(delegate.alerts.filter { $0.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-miscounted") }.count, 1)
+        try assertToldOfNotCounted(delegate.alerts.last, 0.1)
+        XCTAssertEqual(finals(of: started).count, 1)
+    }
+
+    /// The bolus of 0.3 U whose answer was lost; record 824, of 0.3 U, `possibleDelivered`, 5 min off, kept; the bolus
+    /// goes final from our estimate, counted in full, 824 taken for its record - `afterTheTake` - then its own, 825,
+    /// `ownDelivered`, is read. Returns the bolus as it started, and when it went out on the patch clock.
+    private func takePossibleRecordAndReadTheBolussOwn(
+        possibleDelivered: Double,
+        ownDelivered: Double,
+        afterTheTake: () -> Void = {}
+    ) throws -> (started: DoseEntry?, patchSentAt: Date) {
+        startUnansweredBolus()
+        let started = delegate.batches.first?.events.first?.dose
+        let patchSentAt = pumpManager.state.pumpTime
+        endUnansweredBolusAtItsDeadline()
+
+        link.notify("200001" + "3803f700")
+        settle()
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 824, patchId: 247, start: patchSentAt.addingTimeInterval(5 * Self.minute), amount: 0.3, delivered: possibleDelivered)
+        )
+        syncRecords()
+        XCTAssertEqual(delegate.alerts.count, 0, "it could be ours")
+        advanceClock(by: 15 * Self.minute)
+        syncRecords()
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "counted in full")
+        XCTAssertTrue(delegate.alerts.contains { $0.identifier.alertIdentifier == "com.nightscout.medtrumkit.bolus-counted-as-delivered" })
+        XCTAssertEqual(pumpManager.state.bolusesFinalWithoutRecord.first?.taken?.sequence, 824)
+        afterTheTake()
+        let toldAtTheTake = delegate.alerts.count
+
+        link.notify("200001" + "3903f700")
+        settle()
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 825, patchId: 247, start: patchSentAt.addingTimeInterval(1), amount: 0.3, delivered: ownDelivered)
+        )
+        syncRecords()
+        XCTAssertEqual(delegate.alerts.count, toldAtTheTake + 1, "824, once")
+        XCTAssertTrue(pumpManager.state.bolusesFinalWithoutRecord.isEmpty, "it explained its own record")
+        return (started, patchSentAt)
+    }
+
+    private func assertToldOfNotCounted(_ alert: Alert?, _ units: Double, file: StaticString = #filePath, line: UInt = #line) throws {
+        let alert = try XCTUnwrap(alert, file: file, line: line)
+        XCTAssertTrue(alert.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-not-counted"), file: file, line: line)
+        XCTAssertEqual(
+            alert.foregroundContent?.body.contains("a bolus of \(units.formatted()) U delivered"),
+            true,
+            file: file,
+            line: line
+        )
+    }
+
+    /// Record 824, 5 min off, kept as possibly that of the unanswered bolus; then the patch clock is found that much
+    /// further ahead, and 824 read again - the app killed before the cursor past it was saved, say: near enough now, it
+    /// finalizes the bolus - settled with it, not told of as a bolus the host is missing
+    func testPossibleRecordThatFinalizesItsBolusWhenReadAgainIsNotToldOf() {
+        startUnansweredBolus()
+        let started = delegate.batches.first?.events.first?.dose
+        let patchSentAt = pumpManager.state.pumpTime
+        endUnansweredBolusAtItsDeadline()
+
+        link.notify("200001" + "3803f700")
+        settle()
+        let record = PatchBytes.bolusRecord(
+            sequence: 824,
+            patchId: 247,
+            start: patchSentAt.addingTimeInterval(5 * Self.minute),
+            amount: 0.3,
+            delivered: 0.3
+        )
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+        XCTAssertEqual(pumpManager.state.possibleBolusRecords.map(\.sequence), [824])
+        XCTAssertEqual(finals(of: started).count, 0)
+
+        pumpManager.state.pumpTime = pumpManager.state.pumpTime.addingTimeInterval(5 * Self.minute)
+        pumpManager.state.syncedSequenceNumber = 823
+        link.script(CommandType.GET_RECORD, record)
+        syncRecords()
+
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
+        XCTAssertEqual(delegate.alerts.count, 0)
+        XCTAssertTrue(pumpManager.state.possibleBolusRecords.isEmpty)
+    }
+
+    /// The bolus of 0.3 U whose answer was lost, seen delivering since - confirmed by its progress, then completed, no
+    /// record named: its record is looked for by when it went out all the same. Record 824, 5 min off, read then, could
+    /// be its - kept, not told of; it goes final from our estimate, and 824 is taken for its record.
+    func testPossibleRecordOfABolusWhoseAnswerWasLostReadAfterItsProgressIsNotToldOf() {
+        startUnansweredBolus()
+        let started = delegate.batches.first?.events.first?.dose
+        let patchSentAt = pumpManager.state.pumpTime
+        link.notify("2022100002005c090000000000") // 0.1 U
+        settle()
+        XCTAssertEqual(pumpManager.state.bolusDose?.confirmation, .confirmed)
+        link.notify("200200800600") // completed at 0.3 U, no record named
+        settle()
+        XCTAssertNil(pumpManager.state.bolusDose)
+
+        link.notify("200001" + "3803f700")
+        settle()
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 824, patchId: 247, start: patchSentAt.addingTimeInterval(5 * Self.minute), amount: 0.3, delivered: 0.3)
+        )
+        syncRecords()
+        XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 824 }?.outcome, "unmatched")
+        XCTAssertEqual(delegate.alerts.count, 0, "it could be its")
+        XCTAssertEqual(pumpManager.state.possibleBolusRecords.map(\.sequence), [824])
+
+        advanceClock(by: 60 * Self.minute)
+        syncRecords()
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertFalse(delegate.alerts.contains { $0.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-not-counted") })
+        XCTAssertTrue(pumpManager.state.possibleBolusRecords.isEmpty)
+    }
+
+    /// The bolus of 0.3 U whose answer was lost, cancelled before any progress came: record 824, of 0.3 U, 5 min off,
+    /// read then, could be its - kept. Only then its completion, 0.1 U naming 824 - its own: confirmed, its answer still
+    /// lost. Final from our estimate at 0.1 U, 824 is taken for its record, at that amount: nothing to tell.
+    func testPossibleRecordKeptBeforeTheBolusWasConfirmedIsTakenForItsRecord() {
+        startUnansweredBolus()
+        let started = delegate.batches.first?.events.first?.dose
+        let patchSentAt = pumpManager.state.pumpTime
+        link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+        guard case .success? = commandCancelBolus() else {
+            XCTFail("Cancel failed")
+            return
+        }
+        settle()
+
+        link.notify("200001" + "3803f700")
+        settle()
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 824, patchId: 247, start: patchSentAt.addingTimeInterval(5 * Self.minute), amount: 0.3, delivered: 0.1)
+        )
+        syncRecords()
+        XCTAssertEqual(delegate.alerts.count, 0)
+        XCTAssertEqual(pumpManager.state.possibleBolusRecords.map(\.sequence), [824])
+
+        link.notify(Self.completion(delivered: 2, record: 824, patch: "f700"))
+        settle()
+        XCTAssertEqual(pumpManager.state.awaitingRecord.first?.confirmation, .confirmed)
+        XCTAssertNil(pumpManager.state.awaitingRecord.first?.recordSequence)
+
+        advanceClock(by: 60 * Self.minute)
+        syncRecords()
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.1, accuracy: 0.001)
+        XCTAssertEqual(delegate.alerts.count, 0)
+        XCTAssertTrue(pumpManager.state.possibleBolusRecords.isEmpty)
+    }
+
+    /// The bolus of 1 U of `testCancelledBolusIsRaisedByItsCompletionAndFinalizedWithoutItsRecord` answered as record
+    /// 490, `progress` - if any - shown, cancelled, the patch's completion of it lost; the patch then names 490 the newest,
+    /// which comes back garbled: skipped, the bolus final from our estimate 15 min later. Returns its first report.
+    private func cancelBolusAndFinalizeItFromOurEstimate(progress: String?) -> DoseEntry? {
+        let state = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 489, reservoir: 119.9)
+        state.basalDose = runningTempBasal(rate: 0.65, startedAgo: 10 * Self.minute, duration: 30 * Self.minute)
+        state.basalState = .tempBasal
+        makeManager(state)
+
+        link.script(CommandType.SET_BOLUS, fragments: "0f1303000000ea01ec0059afa9174700")
+        XCTAssertNil(commandBolus(1.0))
+        let started = reports(of: .bolus).first
+        if let progress {
+            link.notify(progress)
+        }
+        link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+        guard case .success? = commandCancelBolus() else {
+            XCTFail("Cancel failed")
+            return started
+        }
+        settle()
+
+        link.notify("200001" + "ea01ec00")
+        settle()
+        let garbled = FakeMedtrumLink.Answer.garbled(
+            PatchBytes.bolusRecord(sequence: 490, patchId: 236, start: Date.fromMedtrumSeconds(0x17A9_AF59), amount: 1, delivered: 0.5)
+        )
+        link.script(CommandType.GET_RECORD, garbled)
+        link.script(CommandType.GET_RECORD, garbled)
+        syncRecords()
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 490)
+        advanceClock(by: 15 * Self.minute)
+        syncRecords()
+
+        XCTAssertEqual(finals(of: started).count, 1)
+        XCTAssertEqual(delegate.alerts.count, 0)
+        return started
+    }
+
+    /// Record 490 of `cancelBolusAndFinalizeItFromOurEstimate` read again, delivering `delivered`
+    private func readRecordOfTheCancelledBolusAgain(delivered: Double) {
+        pumpManager.state.syncedSequenceNumber = 489
+        link.script(
+            CommandType.GET_RECORD,
+            PatchBytes.bolusRecord(sequence: 490, patchId: 236, start: Date.fromMedtrumSeconds(0x17A9_AF59), amount: 1, delivered: delivered)
+        )
+        syncRecords()
     }
 
     /// Sends a bolus of `units` the patch answers with `answer`, `answerTakes` seconds after it went out. Returns the state
@@ -2732,11 +3496,15 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
     }
 
     /// The SetBolus of 0.3 U of `user.txt:67542` taken over after the app was killed awaiting its answer, reported in
-    /// full; past its deadline a full status ends it - `confirmingRecords`: one telling the newest record, 823. Returns its
-    /// first report.
-    private func takeOverUnansweredBolusAndEndItAtItsDeadline(confirmingRecords: Bool = true) throws -> DoseEntry? {
+    /// full; past its deadline a full status ends it - `confirmingRecords`: one telling the newest record, 823. `answer`:
+    /// what came of its write in the run before - none, or a failure, the host's state still pending. Returns its first
+    /// report.
+    private func takeOverUnansweredBolusAndEndItAtItsDeadline(
+        confirmingRecords: Bool = true,
+        answer: FakeMedtrumLink.Answer = .timeout
+    ) throws -> DoseEntry? {
         makeManager(unansweredBolusState())
-        try restart(from: try sendBolus(0.3, .timeout).atWrite)
+        try restart(from: try sendBolus(0.3, answer).atWrite)
         pumpManager.ensureCurrentPumpData(completion: nil)
         settle()
         let started = delegate.batches.first?.events.first?.dose

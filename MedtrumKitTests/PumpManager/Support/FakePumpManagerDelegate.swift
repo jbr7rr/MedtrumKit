@@ -55,6 +55,7 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
     private var recordedAlerts: [Alert] = []
     private var recordedLogEntries: [LogEntry] = []
     private var recordedHeartbeats = 0
+    private var afterSaving: ((PumpManager.RawStateValue) -> Void)?
 
     // MARK: Steering
 
@@ -216,11 +217,20 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
 
     func pumpManagerDidUpdateState(_ pumpManager: PumpManager) {
         let rawState = pumpManager.rawState
-        lock.withLock {
+        let afterSaving = lock.withLock { () -> ((PumpManager.RawStateValue) -> Void)? in
             recordedStateUpdates += 1
             lastSavedState = rawState
             stateSaves.append((rawState, recordedBatches.count))
+            return afterSaving
         }
+        // What the host does after it saved it - iAPS logs it, and tells of the pump's status - held up, say
+        afterSaving?(rawState)
+    }
+
+    /// Runs on the delegate queue each time the state was saved, before `pumpManagerDidUpdateState` returns
+    var afterSavingState: ((PumpManager.RawStateValue) -> Void)? {
+        get { lock.withLock { afterSaving } }
+        set { lock.withLock { afterSaving = newValue } }
     }
 
     func pumpManager(_: PumpManager, didUpdate status: PumpManagerStatus, oldStatus: PumpManagerStatus) {

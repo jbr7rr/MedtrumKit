@@ -245,8 +245,12 @@ class MedtrumManagerTestCase: XCTestCase {
         return outcome ?? nil
     }
 
-    func commandBolus(_ units: Double, activationType: BolusActivationType = .manualNoRecommendation) -> PumpManagerError? {
-        let outcome: PumpManagerError?? = completion(of: "enactBolus") { done in
+    func commandBolus(
+        _ units: Double,
+        activationType: BolusActivationType = .manualNoRecommendation,
+        timeout: TimeInterval = 5
+    ) -> PumpManagerError? {
+        let outcome: PumpManagerError?? = completion(of: "enactBolus", timeout: timeout) { done in
             self.pumpManager.enactBolus(units: units, activationType: activationType, completion: done)
         }
         return outcome ?? nil
@@ -258,11 +262,46 @@ class MedtrumManagerTestCase: XCTestCase {
         }
     }
 
-    func commandTempBasal(_ unitsPerHour: Double, duration: TimeInterval) -> PumpManagerError? {
-        let outcome: PumpManagerError?? = completion(of: "enactTempBasal") { done in
+    func commandTempBasal(_ unitsPerHour: Double, duration: TimeInterval, timeout: TimeInterval = 5) -> PumpManagerError? {
+        let outcome: PumpManagerError?? = completion(of: "enactTempBasal", timeout: timeout) { done in
             self.pumpManager.enactTempBasal(unitsPerHour: unitsPerHour, for: duration, completion: done)
         }
         return outcome ?? nil
+    }
+
+    /// The command failed, not sent: the host did not take the state in time - see `MedtrumPumpManager.handOverPendingDose`.
+    /// `tempBasalCancelled`: after the temp basal running was cancelled.
+    func isStateNotSaved(_ error: PumpManagerError?, tempBasalCancelled: Bool = false) -> Bool {
+        guard case let .deviceState(error)? = error, case let .stateNotSaved(cancelled)? = error as? MedtrumConnectError else {
+            return false
+        }
+        return cancelled == tempBasalCancelled
+    }
+
+    /// Keeps the host - the delegate queue - busy from now until the returned release is called, 60 s at most: what the
+    /// manager hands it meanwhile waits
+    func stallHost() -> () -> Void {
+        let free = DispatchSemaphore(value: 0)
+        delegate.queue.async { _ = free.wait(timeout: .now() + 60) }
+        return { free.signal() }
+    }
+
+    /// The host saves the first state with `key` in it - a bolus or a temp basal pending - and is then held up before it
+    /// is done, until the returned release is called, 60 s at most
+    func stallHostAfterSaving(_ key: String) -> () -> Void {
+        let free = DispatchSemaphore(value: 0)
+        let stalled = Locked(false)
+        delegate.afterSavingState = { saved in
+            guard saved[key] != nil, !stalled.value else {
+                return
+            }
+            stalled.value = true
+            _ = free.wait(timeout: .now() + 60)
+        }
+        return { [delegate] in
+            delegate?.afterSavingState = nil
+            free.signal()
+        }
     }
 
     func isUncertainDelivery(_ error: PumpManagerError?) -> Bool {
@@ -295,9 +334,9 @@ class MedtrumManagerTestCase: XCTestCase {
         delegate.batches.flatMap(\.events).compactMap(\.dose).filter { $0.type == type }
     }
 
-    /// Starts a manager call that reports through a completion and waits for it. A call that never
+    /// Starts a manager call that reports through a completion and waits for it - `timeout` at most. A call that never
     /// completes fails the test in `wait` and returns nil.
-    func completion<T>(of description: String, _ call: (@escaping (T) -> Void) -> Void) -> T? {
+    func completion<T>(of description: String, timeout: TimeInterval = 5, _ call: (@escaping (T) -> Void) -> Void) -> T? {
         let done = expectation(description: description)
         let result = Locked<T?>(nil)
 
@@ -306,7 +345,7 @@ class MedtrumManagerTestCase: XCTestCase {
             done.fulfill()
         }
 
-        wait(for: [done], timeout: 5)
+        wait(for: [done], timeout: timeout)
         return result.value
     }
 
