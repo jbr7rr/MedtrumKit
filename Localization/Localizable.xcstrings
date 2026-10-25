@@ -1616,6 +1616,7 @@
       }
     },
     "1." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2100,6 +2101,7 @@
       }
     },
     "2." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2260,6 +2262,7 @@
       }
     },
     "3." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2420,6 +2423,7 @@
       }
     },
     "4." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2580,6 +2584,7 @@
       }
     },
     "5." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2740,6 +2745,7 @@
       }
     },
     "6." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2900,6 +2906,7 @@
       }
     },
     "7." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -3060,6 +3067,7 @@
       }
     },
     "8." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -4350,6 +4358,9 @@
           }
         }
       }
+    },
+    "After the patch is deactivated, retract the needle with the needle-eject tool." : {
+
     },
     "Age:" : {
       "comment" : "Text shown while patch is active",
@@ -5809,6 +5820,9 @@
         }
       }
     },
+    "Alert: Pump base restarted" : {
+
+    },
     "Alert: Reservoir empty" : {
       "comment" : "alert reservoir empty",
       "extractionState" : "manual",
@@ -5970,6 +5984,9 @@
           }
         }
       }
+    },
+    "APPLY PATCH" : {
+
     },
     "Are you sure you want to stop using Medtrum TouchCare Nano 200u/300u?" : {
       "comment" : "Message for PumpManager deletion action sheet",
@@ -6294,6 +6311,15 @@
           }
         }
       }
+    },
+    "At least 70 U is required to activate the patch." : {
+
+    },
+    "Attach and Activate the Patch" : {
+
+    },
+    "Attach the patch to your skin." : {
+
     },
     "Attach the pump to the body." : {
       "comment" : "Label for inserting needle step 2",
@@ -7590,6 +7616,9 @@
           }
         }
       }
+    },
+    "Bluetooth is unavailable. Restart the app if this persists." : {
+
     },
     "Bolus" : {
       "comment" : "Pump Event title for UnfinalizedDose with doseType of .bolus",
@@ -9209,6 +9238,9 @@
         }
       }
     },
+    "Choose a site on your abdomen, hips, lower back, upper arms or thighs. Wash your hands, clean the site with an alcohol wipe and let it dry completely." : {
+
+    },
     "Clear alert" : {
       "localizations" : {
         "ar" : {
@@ -9692,6 +9724,12 @@
           }
         }
       }
+    },
+    "CONNECT PUMP BASE" : {
+
+    },
+    "Connect your pump base to a new patch and fill the patch with insulin. Then press the needle button and start priming." : {
+
     },
     "Connect your pump base to the patch." : {
       "comment" : "Label for prime step 2.1",
@@ -11635,6 +11673,9 @@
         }
       }
     },
+    "Decide on the amount of insulin together with your healthcare provider." : {
+
+    },
     "Delete pump" : {
       "comment" : "Button text to confirm PumpManager deletion",
       "extractionState" : "manual",
@@ -12121,6 +12162,9 @@
         }
       }
     },
+    "Discard the used patch according to your local regulations. Keep the pump base: it is reusable." : {
+
+    },
     "Disconnect" : {
       "comment" : "disconnect from patch",
       "extractionState" : "manual",
@@ -12606,6 +12650,12 @@
           }
         }
       }
+    },
+    "Do not attach the patch to your body yet." : {
+
+    },
+    "Do not inject air into the fill port. It may cause unintended or interrupted insulin delivery." : {
+
     },
     "Done" : {
       "comment" : "Button for closing settings",
@@ -14389,6 +14439,12 @@
         }
       }
     },
+    "Fill and Prime the Patch" : {
+
+    },
+    "FILL PATCH" : {
+
+    },
     "Fill the patch with insulin. NOTE: A minimum of 70U is required for activation." : {
       "comment" : "Label for prime step 2.4",
       "extractionState" : "manual",
@@ -14713,6 +14769,9 @@
         }
       }
     },
+    "Fill the syringe with insulin." : {
+
+    },
     "Filled" : {
       "comment" : "Patch state for filled",
       "extractionState" : "manual",
@@ -14875,6 +14934,9 @@
         }
       }
     },
+    "Fold down and break the tab of the patch, then push the pump base up from the bottom to remove it." : {
+
+    },
     "Force remove" : {
       "comment" : "Force remove",
       "extractionState" : "manual",
@@ -15036,6 +15098,9 @@
           }
         }
       }
+    },
+    "Gently remove the entire patch from your body." : {
+
     },
     "Go back to priming" : {
       "comment" : "label for go to prime patch",
@@ -16009,6 +16074,15 @@
         }
       }
     },
+    "How to Attach the Patch" : {
+
+    },
+    "How to Fill and Prime the Patch" : {
+
+    },
+    "How to Remove the Patch" : {
+
+    },
     "Idle" : {
       "comment" : "Patch state for idle",
       "extractionState" : "manual",
@@ -16332,6 +16406,18 @@
           }
         }
       }
+    },
+    "INSERT NEEDLE" : {
+
+    },
+    "Insert the needle straight into the fill port again and slowly fill the patch with insulin." : {
+
+    },
+    "Insert the needle straight into the fill port. Gently pull the plunger back to draw one to two air bubbles into the syringe." : {
+
+    },
+    "Insert the pump base straight down into a new patch and push it all the way until it clicks into place." : {
+
     },
     "Insulin\nSuspended" : {
       "comment" : "Text shown in insulin delivery space when insulin suspended",
@@ -20057,6 +20143,9 @@
         }
       }
     },
+    "Next" : {
+
+    },
     "No active patch" : {
       "comment" : "Text shown when no patch active",
       "extractionState" : "manual",
@@ -21675,6 +21764,9 @@
         }
       }
     },
+    "Note" : {
+
+    },
     "Notification for expirate patch" : {
       "comment" : "Label for expired patch notification",
       "extractionState" : "manual",
@@ -22320,6 +22412,12 @@
           }
         }
       }
+    },
+    "On the abdomen, back or buttocks, apply the patch horizontally. On the upper arm or thigh, apply it vertically." : {
+
+    },
+    "Once the patch is off your skin, do not press the needle button again. Doing so will result in injury." : {
+
     },
     "Patch activation" : {
       "comment" : "Patch activation header",
@@ -26041,6 +26139,12 @@
         }
       }
     },
+    "Peel off the adhesive liners." : {
+
+    },
+    "Pick a site with enough fat, at least 2.5 cm (1 inch) from the last one and away from your navel." : {
+
+    },
     "Place the syringe in the patch and pull out 1 to 2 dashes of air." : {
       "comment" : "Label for prime step 2.3",
       "extractionState" : "manual",
@@ -26202,6 +26306,12 @@
           }
         }
       }
+    },
+    "PREPARE SITE" : {
+
+    },
+    "PREPARE SYRINGE" : {
+
     },
     "Press the needle button and start the priming process." : {
       "comment" : "Label for pressing needle button step 2.5",
@@ -26527,6 +26637,9 @@
         }
       }
     },
+    "Press the needle button with one quick motion to insert the needle, then tap \"Activate Patch\"." : {
+
+    },
     "Previous Patch Details" : {
       "comment" : "label for previous patch details",
       "extractionState" : "manual",
@@ -26688,6 +26801,9 @@
           }
         }
       }
+    },
+    "PRIME PATCH" : {
+
     },
     "Primed" : {
       "comment" : "Patch state for primed",
@@ -27172,6 +27288,12 @@
           }
         }
       }
+    },
+    "Priming is complete. Remove the safety lock, attach the patch to your body and press the needle button to insert the needle. Then activate the patch." : {
+
+    },
+    "Priming takes about 3 minutes. Keep your phone within about 30 cm (1 ft) of the pump." : {
+
     },
     "Priming..." : {
       "localizations" : {
@@ -27981,6 +28103,9 @@
         }
       }
     },
+    "Push air into the insulin vial." : {
+
+    },
     "Rate" : {
       "localizations" : {
         "ar" : {
@@ -28465,6 +28590,12 @@
         }
       }
     },
+    "REMOVE AIR" : {
+
+    },
+    "REMOVE PATCH" : {
+
+    },
     "Remove Pump" : {
       "comment" : "Title for PumpManager deletion action sheet.",
       "extractionState" : "manual",
@@ -28626,6 +28757,9 @@
           }
         }
       }
+    },
+    "Remove the needle from the fill port. Hold the syringe upright, tap it to move the air bubbles to the top, and push the plunger until a drop of insulin appears at the tip." : {
+
     },
     "Remove the safety cover from the patch." : {
       "comment" : "Label for inserting needle step 1",
@@ -30242,6 +30376,9 @@
           }
         }
       }
+    },
+    "Run your finger around the entire edge of the adhesive pad and press the patch in place for 5 to 10 seconds." : {
+
     },
     "Save" : {
       "comment" : "save",
@@ -31863,6 +32000,9 @@
         }
       }
     },
+    "Slide the safety lock off horizontally." : {
+
+    },
     "Start priming" : {
       "comment" : "label for prime start action",
       "extractionState" : "manual",
@@ -32186,6 +32326,9 @@
           }
         }
       }
+    },
+    "Step %1$d of %2$d" : {
+
     },
     "Stop Temp Basal" : {
       "comment" : "Stop temp basal",
@@ -34293,6 +34436,9 @@
         }
       }
     },
+    "The pump beeps 4 times. Check that the serial number on the pump base matches the one in the pump base settings." : {
+
+    },
     "The time on your pump is different from the current time. Do you want to update the time on your pump to the current time?" : {
       "comment" : "Message for pod sync time action sheet",
       "extractionState" : "manual",
@@ -35265,6 +35411,9 @@
         }
       }
     },
+    "Use a medical adhesive remover or baby oil if necessary." : {
+
+    },
     "Use at your own risk!" : {
       "comment" : "warning title",
       "extractionState" : "manual",
@@ -36075,6 +36224,12 @@
         }
       }
     },
+    "Wait at least 5 seconds before connecting the pump base to a new patch." : {
+
+    },
+    "Warning" : {
+
+    },
     "Welcome" : {
       "comment" : "welcome header",
       "extractionState" : "manual",
@@ -36398,6 +36553,9 @@
           }
         }
       }
+    },
+    "With the safety lock still on, press the needle button, then tap \"Start priming\"." : {
+
     },
     "Yes, Disable heartbeat mode" : {
       "comment" : "Button text to disable heartbeat mode",
@@ -38342,6 +38500,9 @@
           }
         }
       }
+    },
+    "Your pump base has restarted unexpectedly and is no longer delivering insulin!" : {
+
     }
   },
   "version" : "1.0"
