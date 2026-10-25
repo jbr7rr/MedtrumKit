@@ -208,7 +208,8 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return hostingController(
                 rootView: PatchPrimingView(viewModel: viewModel)
                     .onAppear { UIApplication.shared.isIdleTimerDisabled = true },
-                title: String(localized: "Patch Priming", comment: "Priming header")
+                title: String(localized: "Patch Priming", comment: "Priming header"),
+                largeTitleDisplayMode: .never
             )
 
         case .patchActivationScreen:
@@ -219,7 +220,8 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             return hostingController(
                 rootView: PatchActivationView(viewModel: viewModel)
                     .onAppear { UIApplication.shared.isIdleTimerDisabled = true },
-                title: String(localized: "Patch Activation", comment: "Patch activation header")
+                title: String(localized: "Patch Activation", comment: "Patch activation header"),
+                largeTitleDisplayMode: .never
             )
 
         case .settingsScreen:

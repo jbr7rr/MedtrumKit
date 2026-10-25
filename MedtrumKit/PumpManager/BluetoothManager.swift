@@ -460,7 +460,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         }
     }
 
-    private func clearPeripheralOnQueue() {
+    private func clearPeripheralOnQueue(forgetIdentifier: Bool = true) {
         if manager.isScanning {
             manager.stopScan()
         }
@@ -475,7 +475,7 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         peripheralManager?.cleanup()
         peripheralManager = nil
 
-        if pumpManager?.state.peripheralIdentifier != nil {
+        if forgetIdentifier, pumpManager?.state.peripheralIdentifier != nil {
             pumpManager?.state.peripheralIdentifier = nil
             pumpManager?.notifyStateDidChange()
         }
@@ -529,6 +529,12 @@ extension BluetoothManager {
 
         guard central.state == .poweredOn else {
             teardownForUnusableRadio()
+
+            // CBPeripheral is invalid after a reset or when Bluetooth is unusable, need to retrieve it again
+            if [.resetting, .unsupported, .unauthorized].contains(central.state) {
+                clearPeripheralOnQueue(forgetIdentifier: false)
+                pumpManager?.notifyStateDidChange()
+            }
             return
         }
 

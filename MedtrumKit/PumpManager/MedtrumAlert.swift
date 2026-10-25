@@ -8,6 +8,7 @@ enum MedtrumAlert {
     case occlusionNotification
     case patchFaultNotification
     case reservoirEmptyNotification
+    case baseResetNotification
 
     var title: String? {
         switch self {
@@ -21,6 +22,8 @@ enum MedtrumAlert {
             return String(localized: "Alert: Patch fault", comment: "alert patch fault")
         case .reservoirEmptyNotification:
             return String(localized: "Alert: Reservoir empty", comment: "alert reservoir empty")
+        case .baseResetNotification:
+            return String(localized: "Alert: Pump base restarted", comment: "alert pump base reset")
         default:
             return nil
         }
@@ -28,7 +31,8 @@ enum MedtrumAlert {
 
     var type: PumpAlarmType? {
         switch self {
-        case .patchDailyMaxNotification,
+        case .baseResetNotification,
+             .patchDailyMaxNotification,
              .patchFaultNotification,
              .patchHourlyMaxNotification:
             return .noDelivery
@@ -83,6 +87,11 @@ enum MedtrumAlert {
             return Alert.Identifier(
                 managerIdentifier: MedtrumAlert.managerIdentifier,
                 alertIdentifier: "com.nightscout.medtrumkit.patch-empty"
+            )
+        case .baseResetNotification:
+            return Alert.Identifier(
+                managerIdentifier: MedtrumAlert.managerIdentifier,
+                alertIdentifier: "com.nightscout.medtrumkit.base-reset"
             )
         case .lowReservoir:
             return Alert.Identifier(
@@ -155,6 +164,18 @@ enum MedtrumAlert {
             return Alert.Content(
                 title: String(localized: "Replace your patch now!", comment: "Title replace patch notification"),
                 body: String(localized: "Your patch is out of insulin!", comment: "Body reservoir empty notification"),
+                acknowledgeActionButtonLabel: String(
+                    localized: "OK",
+                    comment: "Acknoledge alert"
+                )
+            )
+        case .baseResetNotification:
+            return Alert.Content(
+                title: String(localized: "Replace your patch now!", comment: "Title replace patch notification"),
+                body: String(
+                    localized: "Your pump base has restarted unexpectedly and is no longer delivering insulin!",
+                    comment: "Body pump base reset notification"
+                ),
                 acknowledgeActionButtonLabel: String(
                     localized: "OK",
                     comment: "Acknoledge alert"

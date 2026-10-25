@@ -31,8 +31,13 @@ class PatchSettingsViewModel: ObservableObject {
     @Published var noActivePatch = false
     @Published var errorMessage: String = ""
 
-    var allowedOptionsDaily: [Double] = []
-    var allowedOptionsHourly: [Double] = []
+    var allowedOptionsDaily: [Double] {
+        is300u ? Array(1 ... 54).map({ Double($0) * 5 }) : Array(1 ... 36).map({ Double($0) * 5 })
+    }
+
+    var allowedOptionsHourly: [Double] {
+        is300u ? [1, 2, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60] : [1, 2, 5, 10, 15, 20, 25, 30, 35, 40]
+    }
 
     let updatePatch: Bool
     let nextStep: (() -> Void)?
@@ -48,6 +53,7 @@ class PatchSettingsViewModel: ObservableObject {
             return
         }
 
+        loadSettings(pumpManager.state)
         updateState(pumpManager.state)
         pumpManager.addStatusObserver(self, queue: processQueue)
     }
@@ -133,6 +139,7 @@ class PatchSettingsViewModel: ObservableObject {
         }
 
         pumpManager.notifyStateDidChange()
+        checkDirtyState()
 
         pumpManager.pumpDelegate.notify { delegate in
             delegate?.retractAlert(identifier: MedtrumAlert.patchExpiredNotification(after: .hours(1)).alert.identifier)
@@ -151,36 +158,33 @@ extension PatchSettingsViewModel: PumpManagerStatusObserver {
             return
         }
 
+        // Don't reload the settings here, it would overwrite unsaved changes on every sync
         updateState(pumpManager.state)
     }
 
-    func updateState(_ state: MedtrumPumpState) {
+    private func loadSettings(_ state: MedtrumPumpState) {
         DispatchQueue.main.async {
-            self.noActivePatch = state.patchId.isEmpty
             self.maxHourlyInsulin = state.maxHourlyInsulin
             self.maxDailyInsulin = state.maxDailyInsulin
             self.alarmSettings = Double(state.alarmSetting.rawValue)
             self.expirationTimer = Double(state.expiryMode.timer)
             self.notificationAfterActivation = state.notificationAfterActivation.hours
             self.lowReservoirNotification = state.lowReservoirWarning ?? 0
+        }
+    }
 
-            if state.pumpSN.isEmpty {
-                // If no serial number is available, we should show the options that are supported by both 200u & 300u
-                self.is300u = false
-                self.allowedOptionsDaily = Array(1 ... 36).map({ Double($0) * 5 })
-                self.allowedOptionsHourly = [1, 2, 5, 10, 15, 20, 25, 30, 35, 40]
+    func updateState(_ state: MedtrumPumpState) {
+        DispatchQueue.main.async {
+            let noActivePatch = state.patchId.isEmpty
+            // If no serial number is available, we should show the options that are supported by both 200u & 300u
+            let is300u = !state.pumpSN.isEmpty && state.pumpName.contains("300U")
 
-            } else {
-                self.is300u = state.pumpName.contains("300U")
-
-                if self.is300u {
-                    self.allowedOptionsDaily = Array(1 ... 54).map({ Double($0) * 5 })
-                    self.allowedOptionsHourly = [1, 2, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
-
-                } else {
-                    self.allowedOptionsDaily = Array(1 ... 36).map({ Double($0) * 5 })
-                    self.allowedOptionsHourly = [1, 2, 5, 10, 15, 20, 25, 30, 35, 40]
-                }
+            // Only update on change, a redraw resets the picker while scrolling
+            if self.noActivePatch != noActivePatch {
+                self.noActivePatch = noActivePatch
+            }
+            if self.is300u != is300u {
+                self.is300u = is300u
             }
         }
     }
