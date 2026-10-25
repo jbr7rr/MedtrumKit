@@ -11,6 +11,30 @@ enum StateSyncer {
         fullSync: Bool
     ) {
         let syncDate = Date.now
+
+        // Checked on the payload as received: a rebooted base reports a new patch id, and validation
+        // would strip exactly the fields that tell a reset apart - and when it happened
+        switch baseResetCheck(syncResponse: syncResponse, state: state) {
+        case .reset:
+            guard !pumpManager.isDeactivatingPatch else {
+                break
+            }
+
+            // Nothing else in this payload describes the patch we knew
+            pumpManager.handleBaseReset(
+                deliveryStoppedAt: deliveryStoppedAt(syncResponse: syncResponse, state: state, receivedAt: syncDate)
+            )
+            return
+
+        case .unconfirmed:
+            // `.none` is also what an unknown state byte parses to, don't drop an activated patch over it
+            logger.warning("Activated patch reported state none without a new patch id, ignoring")
+            return
+
+        case .noReset:
+            break
+        }
+
         // No session: the id kept can be stale - the previous patch's, or one never started - and would reject the new
         // patch's payloads. The storage gate below decides which id to keep then.
         let expectedPatchId = state.patchSessionEnded ? 0 : state.patchId.toUInt64()
@@ -182,6 +206,49 @@ enum StateSyncer {
         }
 
         return events
+    }
+
+    enum BaseResetCheck {
+        case noReset
+        case reset
+        case unconfirmed
+    }
+
+    /// An activated patch never goes back to a setup state on its own: when it does, the base has
+    /// rebooted and came back as a blank patch - with a new patch id, its age and sequence restarted,
+    /// and no delivery.
+    static func baseResetCheck(syncResponse: SynchronizePacketResponse, state: MedtrumPumpState) -> BaseResetCheck {
+        // No session: the old patch, stopped, is still reported until the new one is set up - that setup is no reset
+        guard !state.pumpState.isSetup, syncResponse.state.isSetup,
+              !(state.patchSessionEnded && state.pumpState.isTerminated)
+        else {
+            return .noReset
+        }
+
+        guard syncResponse.state == .none else {
+            return .reset
+        }
+
+        guard let storage = syncResponse.storage, !state.patchId.isEmpty else {
+            return .unconfirmed
+        }
+
+        return UInt64(storage.patchId) != state.patchId.toUInt64() ? .reset : .unconfirmed
+    }
+
+    /// The base counts the patch age from its boot, which is when delivery stopped - unless we have
+    /// heard from the activated patch after that
+    static func deliveryStoppedAt(
+        syncResponse: SynchronizePacketResponse,
+        state: MedtrumPumpState,
+        receivedAt: Date
+    ) -> Date {
+        guard let patchAge = syncResponse.patchAge else {
+            return receivedAt
+        }
+
+        let bootedAt = receivedAt.addingTimeInterval(-TimeInterval(patchAge))
+        return min(max(bootedAt, state.lastSync), receivedAt)
     }
 
     public static func fetchPatchTimeIfStale(pumpManager: MedtrumPumpManager) {

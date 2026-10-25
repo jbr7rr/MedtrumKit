@@ -186,6 +186,9 @@ public class MedtrumPumpManager: DeviceManager {
         )
     }
 
+    /// While the patch is being stopped on request, the states it reports are not a base reset
+    private(set) var isDeactivatingPatch = false
+
     private var mustProvideBLEHeartbeat = false
     private var lastHeartbeat: Date = .distantPast
 
@@ -835,12 +838,27 @@ public extension MedtrumPumpManager {
     func deactivatePatch(_ completion: @escaping (MedtrumDeactivatePatchResult) -> Void) {
         log.info("Deactivate patch pump...")
 
+        // The sync that runs as part of connecting can find that the base has reset, and end the
+        // session before we get to stop it - see `handleBaseReset`. It also drops the link, which
+        // usually fails the connect. Either way the patch is no longer active.
+        let hadActivePatch = !state.pumpState.isSetup
+        let sessionEndedWhileConnecting = { hadActivePatch && self.state.pumpState.isSetup }
+
         bluetooth.ensureConnected { error in
+            if sessionEndedWhileConnecting() {
+                self.log.info("Patch session already ended while connecting, nothing left to deactivate")
+                completion(.success)
+                return
+            }
+
             if let error = error {
                 self.log.error("Failed to connect to pump: \(error)")
                 completion(.failure(error: .connectionFailure))
                 return
             }
+
+            self.isDeactivatingPatch = true
+            defer { self.isDeactivatingPatch = false }
 
             let result = self.bluetooth.write(StopPatchPacket())
             if case let .failure(error) = result {
@@ -865,6 +883,24 @@ public extension MedtrumPumpManager {
         endPatchSession(at: Date.now, statusIsCurrent: false)
 
         bluetooth.disconnect(force: true)
+    }
+
+    /// The base rebooted underneath an activated patch: it came back as a blank, never activated
+    /// patch and is not delivering anything. The session cannot be resumed, so it ends here.
+    func handleBaseReset(deliveryStoppedAt: Date) {
+        log.error("Pump base has reset, patch session is lost - delivery stopped at \(deliveryStoppedAt)")
+
+        // A terminated patch has already raised its own alert, and was not delivering anyway
+        let wasRunning = state.pumpState.isRunning
+
+        // What the patch did last is as of the last status of it, before the base went down
+        endPatchSession(at: deliveryStoppedAt, statusIsCurrent: false)
+
+        bluetooth.disconnect(force: true)
+
+        if wasRunning {
+            emitAlert(alertType: .baseResetNotification)
+        }
     }
 
     /// The new patch delivers on its schedule from `start` - unless it is not delivering: then the suspend reported stays
@@ -927,7 +963,10 @@ public extension MedtrumPumpManager {
     }
 
     /// The patch session is over: delivery stopped at `stoppedAt`, unless it is known to have stopped already
-    private func endPatchSession(at stoppedAt: Date, statusIsCurrent: Bool) {
+    private func endPatchSession(at deliveryStoppedAt: Date, statusIsCurrent: Bool) {
+        // Delivery cannot have stopped before the running dose began
+        let stoppedAt = max(deliveryStoppedAt, state.basalDose.startDate)
+
         // Ended already - a force after a deactivation, or no session started since: the previous patch is recorded
         if !state.patchSessionEnded {
             state.previousPatch = PreviousPatch(
