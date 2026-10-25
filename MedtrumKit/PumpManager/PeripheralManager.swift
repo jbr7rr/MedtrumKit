@@ -62,7 +62,9 @@ class PeripheralManager: NSObject {
         queue?.leave()
     }
 
-    private func disconnectIfActive() {
+    /// Reports why the connect flow failed, then drops the link.
+    private func failConnect(_ error: MedtrumConnectError) {
+        completion?(error)
         bluetoothManager?.disconnect(ifCurrent: self)
     }
 
@@ -158,14 +160,12 @@ extension PeripheralManager {
             }
 
             log.error("Failed to complete authorization flow: \(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
+            failConnect(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case let .success(data):
             guard let authResponse = data as? AuthorizeResponse else {
                 log.error("Failed to complete authorization flow: invalid response")
-                disconnectIfActive()
-                completion?(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
+                failConnect(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
                 return
             }
 
@@ -183,14 +183,12 @@ extension PeripheralManager {
         switch syncData {
         case let .failure(error):
             log.error("Failed to synchronize: \(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
+            failConnect(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case let .success(data):
             guard let syncResponse = data as? SynchronizePacketResponse else {
                 log.error("Failed to Synchronize packet: invalid response")
-                disconnectIfActive()
-                completion?(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
+                failConnect(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
                 return
             }
 
@@ -206,8 +204,7 @@ extension PeripheralManager {
         switch subscribeData {
         case let .failure(error):
             log.error("Failed to subscribe: \(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
+            failConnect(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case .success:
             guard !isInvalidatedLocked else {
@@ -258,8 +255,7 @@ extension PeripheralManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error = error {
             log.error("\(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToDiscoverServices(localizedError: error.localizedDescription))
+            failConnect(.failedToDiscoverServices(localizedError: error.localizedDescription))
             return
         }
 
@@ -268,8 +264,7 @@ extension PeripheralManager: CBPeripheralDelegate {
             let localizedError = "No Medtrum service found - " +
                 (peripheral.services?.map(\.uuid.uuidString).joined(separator: ", ") ?? "No services discovered")
             log.error(localizedError)
-            disconnectIfActive()
-            completion?(.failedToDiscoverServices(localizedError: localizedError))
+            failConnect(.failedToDiscoverServices(localizedError: localizedError))
             return
         }
 
@@ -279,8 +274,7 @@ extension PeripheralManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         if let error = error {
             log.error("\(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToDiscoverCharacteristics(localizedError: error.localizedDescription))
+            failConnect(.failedToDiscoverCharacteristics(localizedError: error.localizedDescription))
             return
         }
 
@@ -292,8 +286,7 @@ extension PeripheralManager: CBPeripheralDelegate {
                 (service.characteristics?.map(\.uuid.uuidString).joined(separator: ", ") ?? "No characteristics discovered")
 
             log.error(localizedError)
-            disconnectIfActive()
-            completion?(.failedToDiscoverCharacteristics(localizedError: localizedError))
+            failConnect(.failedToDiscoverCharacteristics(localizedError: localizedError))
             return
         }
 
