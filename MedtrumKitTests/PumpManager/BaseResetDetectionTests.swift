@@ -5,6 +5,8 @@ final class BaseResetDetectionTests: XCTestCase {
     private func makeState(pumpState: PatchState, patchId: UInt64 = 256) -> MedtrumPumpState {
         let state = MedtrumPumpState(nil)
         state.pumpState = pumpState
+        // An activated patch's session runs
+        state.patchSessionEnded = pumpState.isSetup
         state.patchId = patchId.toData(length: 4)
         return state
     }
@@ -44,6 +46,16 @@ final class BaseResetDetectionTests: XCTestCase {
                 syncResponse: makeResponse(state: newState, patchId: 257),
                 state: makeState(pumpState: .none, patchId: 0)
             )
+            XCTAssertEqual(check, .noReset)
+        }
+    }
+
+    // After a deactivation the old patch, stopped, is reported until the new one is set up
+    func testSetupOfANewPatchAfterTheOldOneStoppedIsNotAReset() {
+        let ended = makeState(pumpState: .stopped, patchId: 0)
+        ended.patchSessionEnded = true
+        for newState in [PatchState.none, .idle, .filled, .priming, .primed] {
+            let check = StateSyncer.baseResetCheck(syncResponse: makeResponse(state: newState, patchId: 257), state: ended)
             XCTAssertEqual(check, .noReset)
         }
     }

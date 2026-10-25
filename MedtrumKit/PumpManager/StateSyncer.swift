@@ -35,7 +35,10 @@ enum StateSyncer {
             break
         }
 
-        let syncResponse = syncResponse.validated(expectedPatchId: state.patchId.toUInt64())
+        // No session: the id kept can be stale - the previous patch's, or one never started - and would reject the new
+        // patch's payloads. The storage gate below decides which id to keep then.
+        let expectedPatchId = state.patchSessionEnded ? 0 : state.patchId.toUInt64()
+        let syncResponse = syncResponse.validated(expectedPatchId: expectedPatchId)
 
         StateSyncer.updatePumpState(syncResponse: syncResponse, pumpManager: pumpManager)
 
@@ -146,7 +149,12 @@ enum StateSyncer {
         }
 
         if let storage = syncResponse.storage {
-            state.patchId = UInt64(storage.patchId).toData(length: 4)
+            // No session: the old patch can report its id until it disconnects. A running patch with another id is the new
+            // one, its session not started.
+            let patchId = UInt64(storage.patchId).toData(length: 4)
+            if !state.patchSessionEnded || (syncResponse.state.isRunning && patchId != state.previousPatch?.patchId) {
+                state.patchId = patchId
+            }
         }
 
         if let bolusProgress = syncResponse.bolus {
@@ -210,7 +218,10 @@ enum StateSyncer {
     /// rebooted and came back as a blank patch - with a new patch id, its age and sequence restarted,
     /// and no delivery.
     static func baseResetCheck(syncResponse: SynchronizePacketResponse, state: MedtrumPumpState) -> BaseResetCheck {
-        guard !state.pumpState.isSetup, syncResponse.state.isSetup else {
+        // No session: the old patch, stopped, is still reported until the new one is set up - that setup is no reset
+        guard !state.pumpState.isSetup, syncResponse.state.isSetup,
+              !(state.patchSessionEnded && state.pumpState.isTerminated)
+        else {
             return .noReset
         }
 
