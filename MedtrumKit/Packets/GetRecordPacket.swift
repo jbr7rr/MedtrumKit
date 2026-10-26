@@ -10,7 +10,11 @@ enum PumpRecord {
     case bolus(BolusRecord)
     case basal(BasalRecord)
     case tdd(TddRecord)
-    /// A record we know exists but don't parse (alarm, auto mode, time sync, ...)
+    /// An event that delivered nothing - an alarm, a resume, the daily snapshot, the base's counters. Decoded for the log
+    /// and the record screen only: nothing of ours is matched against these, they go wherever `unhandled` goes.
+    case event(EventRecord)
+    /// A record we know exists but don't parse (auto mode, time sync, ...) - or one of the `event` types too short for
+    /// its payload
     case unhandled(type: UInt8)
     /// The record header wasn't 0xAA, so the payload is not a record at all
     case invalid
@@ -59,6 +63,83 @@ struct TddRecord {
     var bolus: Float {
         total - basal
     }
+
+    /// `timeZoneOffset` read as the signed minutes east of UTC it is
+    var signedTimeZoneOffset: Int {
+        Int(Int16(truncatingIfNeeded: timeZoneOffset))
+    }
+}
+
+/// The records of `PumpRecord.event`. Their layouts are not from AndroidAPS, which leaves them undecoded: they were
+/// worked out against the status notifications and Nightscout notes of the same second (jbr7rr/MedtrumKit#217), and
+/// checked against our own device's frames.
+enum EventRecord {
+    case alarm(AlarmRecord)
+    case resumed(ResumedRecord)
+    case dailySnapshot(DailySnapshotRecord)
+    case baseCounters(BaseCountersRecord)
+}
+
+/// Record type 3: an alarm the patch raised, by its bit in the status's alarm field (`MASK_ALARM`)
+struct AlarmRecord {
+    /// Seconds since the patch first powered up on the base - the same counter as the status's patch age
+    let patchAge: UInt64
+    let timestamp: Date
+    /// The number of the bit this alarm sets in the status's alarm field: the same numbering, so 2 is low reservoir
+    let bit: UInt8
+    /// Two values we don't know the meaning of - the first was always 5 for a suspend in #217's records
+    let unknown1: UInt64
+    let unknown2: UInt64
+
+    /// What the bit means, nil for one we have no name for. Bit 14 is one of those: seen in a status on a deactivated
+    /// patch only.
+    var name: String? {
+        switch bit {
+        case 1: "low battery"
+        case 2: "low reservoir"
+        case 3: "expires soon"
+        case 4: "delivery suspended"
+        // From the status of a live occlusion: no occlusion record has been seen yet
+        case 6: "occlusion"
+        // Device 2026-10-26 09:09:00 UTC: record #1643, as the patch ran dry - status state 98, alarm field 0x0104
+        case 8: "reservoir empty"
+        case 10: "patch fault"
+        default: nil
+        }
+    }
+}
+
+/// Record type 8: delivery resumed. It follows the alarm record of the suspend (bit 4).
+struct ResumedRecord {
+    let timestamp: Date
+}
+
+/// Record type 10: written at the patch's local midnight, and at a fault
+struct DailySnapshotRecord {
+    let timestamp: Date
+    /// The patch's time zone, in minutes east of UTC: the one it was given, which a DST change does not move
+    let timeZoneOffset: Int
+    /// Two values we don't know the meaning of
+    let a: Float
+    let b: Float
+}
+
+/// Record type 12: the lifetime counters of the base, written every 8 h
+struct BaseCountersRecord {
+    let timestamp: Date
+    /// Insulin this base has delivered, over every patch it ran, in the patch's 0.05 U steps
+    let lifetimeSteps: UInt64
+    let operatingHours: UInt64
+    let patchesUsed: UInt64
+
+    var lifetimeInsulin: Double {
+        Double(lifetimeSteps) * 0.05
+    }
+
+    /// `lifetimeInsulin` in whole units, rounded down
+    var lifetimeWholeUnits: UInt64 {
+        lifetimeSteps / 20
+    }
 }
 
 struct GetRecordResponse {
@@ -74,6 +155,11 @@ class GetRecordPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     let commandType: UInt8 = CommandType.GET_RECORD
 
     private static let headerOffset = 6
+    /// The record's length, counted from its 0xAA header: 12 bytes of header, the payload, then a CRC-32/MPEG-2 of
+    /// all that (little-endian, 4 bytes). One more byte follows the record in the response.
+    private static let recordLengthOffset = 7
+    private static let recordHeaderSize = 12
+    private static let recordCrcSize = 4
     private static let typeOffset = 8
     private static let serialOffset = 10
     private static let patchIdOffset = 14
@@ -88,24 +174,30 @@ class GetRecordPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     private static let bolusRecordAlt: UInt8 = 65
     private static let basalRecord: UInt8 = 2
     private static let basalRecordAlt: UInt8 = 66
+    private static let alarmRecord: UInt8 = 3
+    private static let resumedRecord: UInt8 = 8
     private static let tddRecord: UInt8 = 9
+    private static let dailySnapshotRecord: UInt8 = 10
+    private static let baseCountersRecord: UInt8 = 12
 
-    /// The record types the patch writes. We only decode bolus, basal and TDD; the rest are named here
-    /// so an unparsed record is still identifiable on the debug screen. AndroidAPS knows the same names
-    /// and does not decode their payloads either.
+    /// The record types the patch writes. We don't decode the auto mode and time sync records; they are named
+    /// here so an unparsed record is still identifiable on the debug screen. AndroidAPS knows the same names
+    /// (type 8 as AUTO3) and does not decode their payloads either.
     static func name(forRecordType type: UInt8) -> String {
         switch type {
         case bolusRecord,
              bolusRecordAlt: "BOLUS"
         case basalRecord,
              basalRecordAlt: "BASAL"
-        case 3: "ALARM"
+        case alarmRecord: "ALARM"
         case 4: "AUTO"
         case 5: "TIME_SYNC"
         case 6: "AUTO1"
         case 7: "AUTO2"
-        case 8: "AUTO3"
+        case resumedRecord: "RESUMED"
         case tddRecord: "TDD"
+        case dailySnapshotRecord: "DAILY"
+        case baseCountersRecord: "BASE"
         default: "UNKNOWN"
         }
     }
@@ -115,6 +207,12 @@ class GetRecordPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     private static let bolusRecordSize = 24
     private static let basalRecordSize = 16
     private static let tddRecordSize = 24
+    // The event records' payloads are read by the length they give themselves, so their CRC is never read as payload:
+    // alarm and resumed are this long, the snapshot 20 (four zero bytes after what we read), the base counters 12
+    private static let alarmRecordSize = 16
+    private static let resumedRecordSize = 8
+    private static let dailySnapshotRecordSize = 16
+    private static let baseCountersRecordSize = 12
 
     let mimimumDataSize: Int = GetRecordPacket.dataOffset
 
@@ -166,6 +264,33 @@ class GetRecordPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
             }
             return .tdd(parseTddRecord())
 
+        // Too short for its payload, an event record is left unparsed rather than `truncated`: it is not read again
+        // or skipped for that, as it wasn't before these were decoded. Its length is the one it gives itself (byte 7);
+        // dose records are still read by the response's length - `has`.
+        case Self.alarmRecord:
+            guard hasEventPayload(Self.alarmRecordSize) else {
+                return .unhandled(type: type)
+            }
+            return .event(.alarm(parseAlarmRecord()))
+
+        case Self.resumedRecord:
+            guard hasEventPayload(Self.resumedRecordSize) else {
+                return .unhandled(type: type)
+            }
+            return .event(.resumed(parseResumedRecord()))
+
+        case Self.dailySnapshotRecord:
+            guard hasEventPayload(Self.dailySnapshotRecordSize) else {
+                return .unhandled(type: type)
+            }
+            return .event(.dailySnapshot(parseDailySnapshotRecord()))
+
+        case Self.baseCountersRecord:
+            guard hasEventPayload(Self.baseCountersRecordSize) else {
+                return .unhandled(type: type)
+            }
+            return .event(.baseCounters(parseBaseCountersRecord()))
+
         default:
             return .unhandled(type: type)
         }
@@ -214,6 +339,49 @@ class GetRecordPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
             basal: float(16),
             glucose: float(20)
         )
+    }
+
+    /// Patch age (4), time (4), the alarm's bit (1), `00`, `ffff`, two unknown UInt16
+    private func parseAlarmRecord() -> AlarmRecord {
+        AlarmRecord(
+            patchAge: data(0, 4),
+            timestamp: Date.fromMedtrumSeconds(data(4, 4)),
+            bit: data(8),
+            unknown1: data(12, 2),
+            unknown2: data(14, 2)
+        )
+    }
+
+    /// `01 00 ff ff`, then the time (4)
+    private func parseResumedRecord() -> ResumedRecord {
+        ResumedRecord(timestamp: Date.fromMedtrumSeconds(data(4, 4)))
+    }
+
+    /// Time (4), time-zone offset in minutes (Int16), `ffff`, two Float32, then four zero bytes (payload, not the CRC)
+    private func parseDailySnapshotRecord() -> DailySnapshotRecord {
+        DailySnapshotRecord(
+            timestamp: Date.fromMedtrumSeconds(data(0, 4)),
+            timeZoneOffset: Int(Int16(truncatingIfNeeded: data(4, 2))),
+            a: float(8),
+            b: float(12)
+        )
+    }
+
+    /// Time (4), lifetime insulin in 0.05 U steps (4), operating hours (2), patches used (2)
+    private func parseBaseCountersRecord() -> BaseCountersRecord {
+        BaseCountersRecord(
+            timestamp: Date.fromMedtrumSeconds(data(0, 4)),
+            lifetimeSteps: data(4, 4),
+            operatingHours: data(8, 2),
+            patchesUsed: data(10, 2)
+        )
+    }
+
+    /// Does the record say it has at least `size` bytes of payload, and are they there? The length byte counts the
+    /// header and the CRC, which `has` alone would read as payload in a record shorter than its type's.
+    private func hasEventPayload(_ size: Int) -> Bool {
+        let payload = Int(totalData[Self.recordLengthOffset]) - Self.recordHeaderSize - Self.recordCrcSize
+        return payload >= size && has(size)
     }
 
     /// Is there at least `size` bytes of record payload?

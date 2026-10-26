@@ -49,9 +49,30 @@ enum PatchBytes {
         return answer(command: CommandType.GET_RECORD, body: recordHeader(type: 2, sequence: sequence, patchId: patchId) + payload)
     }
 
-    /// A GET_RECORD answer with a record of a type we do not parse - an ALARM (3), a type 10, ...
+    /// A GET_RECORD answer with a record no dose is matched against - an ALARM (3), a type 10, ... - its payload zeros
     static func otherRecord(type: UInt8, sequence: Int, patchId: UInt64) -> [String] {
         answer(command: CommandType.GET_RECORD, body: recordHeader(type: type, sequence: sequence, patchId: patchId) + Data(count: 16))
+    }
+
+    /// A GET_RECORD answer with a record framed as the patch frames it: the length byte counting the record from 0xAA,
+    /// the payload, the record's CRC-32/MPEG-2 (little-endian), then the one byte that follows a record
+    static func framedRecord(type: UInt8, sequence: Int, patchId: UInt64, payload: Data) -> [String] {
+        var record = recordHeader(type: type, sequence: sequence, patchId: patchId) + payload
+        record[1] = UInt8(record.count + 4)
+        record += UInt64(crc32Mpeg2(record)).toData(length: 4)
+        return answer(command: CommandType.GET_RECORD, body: record + Data([0]))
+    }
+
+    /// CRC-32/MPEG-2: poly 0x04C11DB7, init 0xFFFFFFFF, not reflected, no final xor - what a record ends in
+    static func crc32Mpeg2(_ data: Data) -> UInt32 {
+        var crc: UInt32 = 0xFFFF_FFFF
+        for byte in data {
+            crc ^= UInt32(byte) << 24
+            for _ in 0 ..< 8 {
+                crc = crc & 0x8000_0000 != 0 ? (crc << 1) ^ 0x04C1_1DB7 : crc << 1
+            }
+        }
+        return crc
     }
 
     /// An answer to CancelTempBasal, SetTempBasal or ResumePump: the segment the command started

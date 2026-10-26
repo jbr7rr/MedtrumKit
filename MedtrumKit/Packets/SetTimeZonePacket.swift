@@ -15,15 +15,14 @@ class SetTimeZonePacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
 
     /// The offset the patch is set to
     var utcOffset: TimeInterval {
-        var offset = TimeInterval(seconds: Double(timeZone.secondsFromGMT(for: date)))
+        Self.patchOffset(TimeInterval(seconds: Double(timeZone.secondsFromGMT(for: date))))
+    }
 
+    /// The offset a patch is set to for a zone `offset` east of UTC
+    static func patchOffset(_ offset: TimeInterval) -> TimeInterval {
         // Workaround for bug where it fails to set timezone > GMT + 12
         // if offset is > 12 hours, subtract 24 hours
-        if offset > .hours(12) {
-            offset -= .hours(24)
-        }
-
-        return offset
+        offset > .hours(12) ? offset - .hours(24) : offset
     }
 
     func getRequestBytes() -> Data {

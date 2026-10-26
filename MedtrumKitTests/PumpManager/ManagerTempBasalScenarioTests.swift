@@ -280,7 +280,8 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(link.writtenCommands, [CommandType.CANCEL_TEMP_BASAL] + Array(repeating: CommandType.GET_RECORD, count: 4))
         XCTAssertEqual(pumpManager.state.currentSequenceNumber, 949)
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 949)
-        XCTAssertEqual(pumpManager.recordStore.records.map(\.kind), ["BASAL", "TDD", "UNHANDLED", "BASAL"])
+        XCTAssertEqual(pumpManager.recordStore.records.map(\.kind), ["BASAL", "TDD", "DAILY", "BASAL"])
+        XCTAssertEqual(pumpManager.recordStore.records.map(\.label), [nil, nil, "Daily snapshot · UTC+2", nil])
         XCTAssertEqual(
             pumpManager.recordStore.records.filter { $0.outcome?.hasPrefix("finalized temp basal") == true }.map(\.id),
             [949, 946]

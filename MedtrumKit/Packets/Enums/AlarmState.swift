@@ -1,7 +1,7 @@
 enum AlarmState: UInt16, Codable {
     case None = 0
     case PumpLowBattery = 1 // Mapped from error flag 1
-    case PumpLowReservoir = 2 // Mapped from error flag
+    case PumpLowReservoir = 2 // Mapped from error flag 2
     case PumpExpiresSoon = 4 // Mapped from error flag 3
     case LowBgSuspended // Mapped from pump status 64
     case LowBgSuspended2 // Mapped from pump status 65
@@ -12,7 +12,7 @@ enum AlarmState: UInt16, Codable {
     case Paused // Mapped from pump status 70
     case Occlusion // Mapped from pump status 96
     case Expired // Mapped from pump status 97
-    case ReservoirEmpty // Mapped from pump status 98
+    case ReservoirEmpty // Mapped from pump status 98, and from alarm bit 8
     case PatchFault // Mapped from pump status 99
     case PatchFault2 // Mapped from pump status 100
     case BaseFault // Mapped from pump status 101

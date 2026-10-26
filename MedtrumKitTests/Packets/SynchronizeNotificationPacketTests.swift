@@ -153,7 +153,7 @@ final class NotificationPacketTests: XCTestCase {
         XCTAssertEqual(actual.reservoir, 0)
         XCTAssertEqual(actual.storage?.sequence, 1643)
         XCTAssertEqual(actual.storage?.patchId, 274)
-        XCTAssertEqual(actual.activeAlarms, [.PumpExpiresSoon])
+        XCTAssertEqual(actual.activeAlarms, [.PumpLowReservoir, .ReservoirEmpty]) // 0x0104: bits 2 and 8
     }
 
     /// The same after fields that come before it: the suspend time, and a bolus too - the basal field's offset past them
@@ -206,5 +206,57 @@ final class NotificationPacketTests: XCTestCase {
             XCTAssertNil(actual.reservoir, hex)
             XCTAssertNil(actual.basal, hex)
         }
+    }
+
+    /// Device 2026-10-25 22:31:28 (patch 274): bit 2 of the alarm field first set as the reservoir went 20.0 to 19.9 U -
+    /// low reservoir, as AAPS reads it (jbr7rr/MedtrumKit#217), not expires soon
+    func testAlarmBitOfLowReservoirFromDevice() {
+        let packet = NotificationPacket()
+        packet.totalData = FakeMedtrumLink.bytes("2022038013008e018605120104000000")
+
+        let actual = packet.parseResponse()
+        XCTAssertFalse(actual.truncated)
+        XCTAssertEqual(actual.reservoir ?? 0, 19.9, accuracy: 0.001)
+        XCTAssertEqual(actual.storage?.sequence, 1414)
+        XCTAssertEqual(actual.activeAlarms, [.PumpLowReservoir])
+    }
+
+    /// Bit i of the alarm field is the i-th alarm state as AAPS lists them: none at 0, then the three warnings
+    private func alarms(_ flags: UInt16, file: StaticString = #filePath, line: UInt = #line) -> [AlarmState] {
+        let packet = NotificationPacket()
+        packet.totalData = Data([32, 0x00, 0x02, UInt8(flags & 0xFF), UInt8(flags >> 8), 0, 0])
+        let actual = packet.parseResponse()
+        XCTAssertFalse(actual.truncated, file: file, line: line)
+        return actual.activeAlarms
+    }
+
+    func testAlarmBit0IsNone() {
+        XCTAssertEqual(alarms(0x0001), [])
+        XCTAssertEqual(alarms(0x0000), [])
+    }
+
+    func testAlarmBit1IsLowBattery() {
+        XCTAssertEqual(alarms(0x0002), [.PumpLowBattery])
+    }
+
+    func testAlarmBit2IsLowReservoir() {
+        XCTAssertEqual(alarms(0x0004), [.PumpLowReservoir])
+    }
+
+    func testAlarmBit3IsExpiresSoon() {
+        XCTAssertEqual(alarms(0x0008), [.PumpExpiresSoon])
+    }
+
+    /// Bit 8 is reservoir empty: set with state 98 as patch 274 ran dry, as its alarm record #1643 of bit 8 shows
+    func testAlarmBit8IsReservoirEmpty() {
+        XCTAssertEqual(alarms(0x0100), [.ReservoirEmpty])
+    }
+
+    /// Several at once, and the other bits above 3 left to the patch state
+    func testAlarmBitsCombined() {
+        XCTAssertEqual(alarms(0x000F), [.PumpLowBattery, .PumpLowReservoir, .PumpExpiresSoon])
+        XCTAssertEqual(alarms(0x010A), [.PumpLowBattery, .PumpExpiresSoon, .ReservoirEmpty])
+        XCTAssertEqual(alarms(0xFEF1), [])
+        XCTAssertEqual(alarms(0xFFF1), [.ReservoirEmpty])
     }
 }

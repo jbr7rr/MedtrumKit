@@ -10,10 +10,13 @@ public struct StoredPumpRecord: Identifiable, Equatable {
     public let id: Int
     /// When we read it, as opposed to when the event it describes happened
     public let fetchedAt: Date
-    /// BOLUS, BASAL, TDD, or a note about why we couldn't parse it
+    /// BOLUS, BASAL, TDD, ALARM, RESUMED, DAILY, BASE, or a note about why we couldn't parse it
     public let kind: String
     /// The fields, in the same order the log writes them
     public let summary: String
+    /// What an event record is, in words, with its key values - "Reservoir empty", "Base: 11,419 U · 8000 h · 44
+    /// patches". Nil for the others, which `kind` names well enough.
+    public let label: String?
     /// When the event started according to the patch - nil for records we don't decode. This is what a
     /// dose of ours will eventually be matched against, so it is worth seeing next to our own times.
     public let eventDate: Date?

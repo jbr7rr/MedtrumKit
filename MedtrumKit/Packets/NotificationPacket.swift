@@ -236,13 +236,14 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
         },
         Field(mask: MASK_ALARM, size: 4) { data, offset, output in
             let flags = UInt16(data.subdata(in: offset ..< offset + 2).toUInt64())
-            if flags != AlarmState.None.rawValue {
-                // Alarms list available, only need to check the first 3
-                for i in 0 ..< 3 {
-                    if flags & (1 << i) != 0, let alarmState = AlarmState(rawValue: 1 << i) {
-                        output.activeAlarms.append(alarmState)
-                    }
-                }
+            // Bit i is the i-th alarm state as AAPS lists them, none at 0: bits 1 to 3 are the warnings, the rest comes
+            // from the patch state. Not the raw values - those only number the cases. Bit 8 is reservoir empty, which
+            // AAPS doesn't map: device 2026-10-26 09:08:55, 0x0104 with state 98, and the alarm record #1643 of bit 8.
+            let warnings: [(bit: UInt16, alarm: AlarmState)] = [
+                (1, .PumpLowBattery), (2, .PumpLowReservoir), (3, .PumpExpiresSoon), (8, .ReservoirEmpty)
+            ]
+            for (bit, alarm) in warnings where flags & (1 << bit) != 0 {
+                output.activeAlarms.append(alarm)
             }
 
             // Unused parameter

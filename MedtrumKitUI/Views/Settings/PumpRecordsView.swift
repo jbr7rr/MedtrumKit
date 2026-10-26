@@ -143,7 +143,8 @@ struct PumpRecordsView: View {
                     ForEach(store.records) { record in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
-                                Text("#\(record.id)  \(record.kind)")
+                                // An event record by what it is - "Reservoir empty", "Base: ..." - the rest by kind
+                                Text("#\(record.id)  \(record.label ?? record.kind)")
                                     .font(.caption.bold())
                                 Spacer()
                                 if let eventDate = record.eventDate {

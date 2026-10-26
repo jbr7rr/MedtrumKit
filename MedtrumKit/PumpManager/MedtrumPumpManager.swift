@@ -3878,7 +3878,8 @@ public extension MedtrumPumpManager {
                 return "unmatched"
             }
 
-        case .invalid,
+        case .event,
+             .invalid,
              .tdd,
              .truncated,
              .unhandled:
@@ -4070,6 +4071,7 @@ public extension MedtrumPumpManager {
     internal func noteAnsweredBolusRecordTaken(by response: GetRecordResponse) {
         switch response.record {
         case .basal,
+             .event,
              .tdd,
              .unhandled:
             break
