@@ -3438,6 +3438,266 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
     }
 
+    // MARK: - A cancel waiting for the link
+
+    /// iAPS review 2026-10-26: a cancel waits for the command lock behind another operation - as long as a command may
+    /// take - while the bolus it was asked for completes and the loop's next starts, taking the lock first. It shows
+    /// `.canceling` only while its own bolus runs, and once it has the link writes nothing: the new bolus runs on and is
+    /// finalized by its record.
+    func testCancelOfABolusOverByTheTimeItHasTheLinkDoesNotStopTheNextOne() throws {
+        startAnsweredBolus()
+        let release = holdCommandLock()
+        let cancel = startCancel()
+        XCTAssertEqual(pumpManager.state.bolusState, .canceling)
+
+        link.notify("202211802800040d7b00ec000000000000") // 2.0 U, complete, record 123
+        settle()
+        XCTAssertEqual(pumpManager.state.bolusState, .noBolus, "the bolus it was asked for is over")
+        XCTAssertNil(pumpManager.state.cancelingBolusSince)
+
+        // The loop's next bolus, ahead of the cancel on the lock
+        let next = UnfinalizedDose(units: 0.5, duration: 20, activationType: .automatic, insulinType: nil)
+        next.noteAnswer(recordSequence: 124)
+        pumpManager.withDoseReportLock { pumpManager.state.bolusDose = next }
+        XCTAssertEqual(pumpManager.state.bolusState, .inProgress, "not shown as cancelled")
+
+        release()
+        guard case .success? = cancel() else {
+            XCTFail("The cancel did not succeed")
+            return
+        }
+        settle()
+
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS], "no CancelBolus")
+        XCTAssertTrue(pumpManager.state.bolusDose === next)
+        XCTAssertFalse(next.isFinished)
+
+        link.notify(Self.completion(delivered: 10, record: 124))
+        settle()
+        link.script(CommandType.GET_RECORD, PatchBytes.bolusRecord(sequence: 123, patchId: 236, start: Date.now, amount: 2, delivered: 2))
+        link.script(CommandType.GET_RECORD, PatchBytes.bolusRecord(sequence: 124, patchId: 236, start: Date.now, amount: 0.5, delivered: 0.45))
+        syncRecords()
+
+        let nextFinal = finals(of: reports(of: .bolus).first { $0.programmedUnits == 0.5 })
+        XCTAssertFalse(nextFinal.isEmpty)
+        XCTAssertEqual(nextFinal.first?.deliveredUnits ?? 0, 0.45, accuracy: 0.001, "by its record, not cancelled")
+    }
+
+    /// A cancel waiting for the link while its bolus completes on its own: nothing is written, the bolus ends as
+    /// completed - not cancelled - and it succeeds
+    func testCancelOfABolusThatCompletedBeforeTheLinkWritesNothing() {
+        startAnsweredBolus()
+        let release = holdCommandLock()
+        let cancel = startCancel()
+
+        link.notify("202211802800040d7b00ec000000000000")
+        settle()
+        release()
+        guard case .success? = cancel() else {
+            XCTFail("The cancel did not succeed")
+            return
+        }
+        settle()
+
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS])
+        XCTAssertEqual(pumpManager.state.awaitingRecord.first?.snapshot.finishReason, .completed)
+        XCTAssertEqual(pumpManager.state.bolusState, .noBolus)
+    }
+
+    /// Two cancels of the same bolus - the host's retry while the first waits: one CancelBolus goes out, the bolus ends
+    /// once, and both succeed, whichever runs first
+    func testTwoCancelsOfTheSameBolusWriteOneCancel() {
+        startAnsweredBolus()
+        link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+        let release = holdCommandLock()
+        let first = startCancel()
+        let second = startCancel()
+        XCTAssertEqual(pumpManager.state.bolusState, .canceling)
+
+        release()
+        guard case .success? = first(), case .success? = second() else {
+            XCTFail("A cancel did not succeed")
+            return
+        }
+        settle()
+
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS, CommandType.CANCEL_BOLUS])
+        XCTAssertNil(pumpManager.state.bolusDose)
+        XCTAssertEqual(pumpManager.state.awaitingRecord.filter { $0.type == .bolus }.count, 1)
+        XCTAssertEqual(pumpManager.state.awaitingRecord.first?.snapshot.finishReason, .cancelled)
+        XCTAssertEqual(pumpManager.state.bolusState, .noBolus)
+        XCTAssertNil(pumpManager.state.cancelingBolusSince)
+    }
+
+    /// A cancel asked for while the SetBolus waits for the host to take the state - its command out, no dose yet: it
+    /// is of that bolus, by when it went out. Answered, the dose registered with it, the cancel stops it.
+    func testCancelAskedWhileTheSetBolusIsOutStopsItOnceAnswered() {
+        let bolus = sendBolusCancelledAsItIsOut(.fragments(["0f13280000007b00ec009786a8178900"]), cancelWritten: true)
+        XCTAssertNil(bolus.error ?? nil)
+        guard case .success? = bolus.cancel else {
+            XCTFail("The cancel did not succeed")
+            return
+        }
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS, CommandType.CANCEL_BOLUS])
+        XCTAssertNil(pumpManager.state.bolusDose)
+        XCTAssertEqual(pumpManager.state.awaitingRecord.first?.snapshot.finishReason, .cancelled)
+    }
+
+    /// The same, the SetBolus turned down: no bolus runs, and the cancel writes nothing
+    func testCancelAskedWhileTheSetBolusIsOutWritesNothingOnceItFailed() {
+        let bolus = sendBolusCancelledAsItIsOut(.failure(.invalidResponse(code: 8)), cancelWritten: false)
+        XCTAssertNotNil(bolus.error ?? nil)
+        guard case .success? = bolus.cancel else {
+            XCTFail("The cancel did not succeed")
+            return
+        }
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS])
+        XCTAssertNil(pumpManager.state.bolusDose)
+        XCTAssertEqual(pumpManager.state.bolusState, .noBolus)
+    }
+
+    /// The same, the SetBolus's answer lost: the bolus may be running, registered with when it went out - the cancel
+    /// stops it
+    func testCancelAskedWhileTheSetBolusIsOutStopsItWithItsAnswerLost() {
+        let bolus = sendBolusCancelledAsItIsOut(.timeout, cancelWritten: true)
+        XCTAssertTrue(isUncertainDelivery(bolus.error ?? nil))
+        guard case .success? = bolus.cancel else {
+            XCTFail("The cancel did not succeed")
+            return
+        }
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS, CommandType.CANCEL_BOLUS])
+        XCTAssertNil(pumpManager.state.bolusDose)
+    }
+
+    /// A cancel with no bolus known - none running nor out - is written as before, with none by then either. It shows
+    /// no `.canceling`, nor refuses dosing meanwhile: it stops nothing that runs.
+    func testCancelWithNoBolusKnownIsWrittenWithNoneRunning() {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+        let release = holdCommandLock()
+        let cancel = startCancel()
+        XCTAssertEqual(pumpManager.state.bolusState, .noBolus, "not shown cancelling")
+        XCTAssertNil(pumpManager.state.cancelingBolusSince)
+
+        release()
+        guard case .success? = cancel() else {
+            XCTFail("The cancel did not succeed")
+            return
+        }
+        XCTAssertEqual(link.writtenCommands, [CommandType.CANCEL_BOLUS])
+    }
+
+    /// The same, a bolus out by the time it has the link - its SetBolus waiting on the host: not written
+    func testCancelWithNoBolusKnownWritesNothingWithABolusOut() {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        let release = holdCommandLock()
+        let cancel = startCancel()
+        pumpManager.withDoseReportLock {
+            pumpManager.state.pendingBolus = PendingBolus(units: 1, sentAt: Date.now, sequenceAtSend: 122, automatic: true)
+        }
+
+        release()
+        guard case .success? = cancel() else {
+            XCTFail("The cancel did not succeed")
+            return
+        }
+        XCTAssertEqual(link.writtenCommands, [])
+        pumpManager.withDoseReportLock { pumpManager.state.pendingBolus = nil }
+    }
+
+    /// The same, a bolus running by the time it has the link: not written, the bolus runs on
+    func testCancelWithNoBolusKnownWritesNothingWithABolusRunning() {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        let release = holdCommandLock()
+        let cancel = startCancel()
+        let running = UnfinalizedDose(units: 0.5, duration: 20, activationType: .automatic, insulinType: nil)
+        pumpManager.withDoseReportLock { pumpManager.state.bolusDose = running }
+        XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
+
+        release()
+        guard case .success? = cancel() else {
+            XCTFail("The cancel did not succeed")
+            return
+        }
+        XCTAssertEqual(link.writtenCommands, [])
+        XCTAssertTrue(pumpManager.state.bolusDose === running)
+        XCTAssertFalse(running.isFinished)
+        pumpManager.withDoseReportLock { pumpManager.state.bolusDose = nil }
+    }
+
+    /// 2 U sent, its SetBolus answered with `answer`, a cancel asked for while it waits for the host to take the state -
+    /// held up after saving it, the command going on once its bound is up - the CancelBolus answered if `cancelWritten`.
+    /// Returns both outcomes.
+    private func sendBolusCancelledAsItIsOut(
+        _ answer: FakeMedtrumLink.Answer,
+        cancelWritten: Bool
+    ) -> (error: PumpManagerError??, cancel: PumpManagerResult<DoseEntry?>?) {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        pumpManager.dosingHandOverTimeout = 1
+        let releaseHost = stallHostAfterSaving("pendingBolus")
+        defer { releaseHost() }
+        link.script(CommandType.SET_BOLUS, answer)
+        if cancelWritten {
+            link.script(CommandType.CANCEL_BOLUS, fragments: "0714040000004800")
+        }
+
+        let sent = expectation(description: "enactBolus")
+        let error = Locked<PumpManagerError??>(nil)
+        pumpManager.enactBolus(units: 2, activationType: .manualNoRecommendation) { outcome in
+            error.value = outcome
+            sent.fulfill()
+        }
+        let until = Date.now.addingTimeInterval(5)
+        while pumpManager.state.pendingBolus == nil, Date.now < until {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        XCTAssertNotNil(pumpManager.state.pendingBolus, "out")
+        let cancel = startCancel()
+        XCTAssertEqual(pumpManager.state.bolusState, .canceling, "of the bolus out")
+
+        wait(for: [sent], timeout: 10)
+        let cancelled = cancel()
+        releaseHost()
+        settle()
+        return (error.value, cancelled)
+    }
+
+    /// 2 U answered as record 123, running - `user.txt:11229`
+    private func startAnsweredBolus() {
+        makeManager(activePatchState(patchId: 236, scheduledRate: 0.6, sequence: 122, reservoir: 168.6))
+        link.script(CommandType.SET_BOLUS, fragments: "0f13280000007b00ec009786a8178900")
+        XCTAssertNil(commandBolus(2.0))
+        XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
+    }
+
+    /// Holds the command lock on another thread, as an operation in flight does, until the returned release is called
+    private func holdCommandLock() -> () -> Void {
+        let held = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { [pumpManager] in
+            pumpManager?.withCommandLock {
+                held.signal()
+                _ = release.wait(timeout: .now() + 30)
+            }
+        }
+        held.wait()
+        return { release.signal() }
+    }
+
+    /// A cancel asked for now, its outcome waited for by the returned call - 5 s at most
+    private func startCancel() -> () -> PumpManagerResult<DoseEntry?>? {
+        let done = expectation(description: "cancelBolus")
+        let result = Locked<PumpManagerResult<DoseEntry?>?>(nil)
+        pumpManager.cancelBolus { outcome in
+            result.value = outcome
+            done.fulfill()
+        }
+        return { [unowned self] in
+            wait(for: [done], timeout: 5)
+            return result.value
+        }
+    }
+
     /// `user.txt:11229-11295`: 2 U answered as record 123 from patch second 0x17A88697, completed at 2.0 U - waiting on
     /// its record. Returns its first report.
     private func completeAnsweredBolus() -> DoseEntry? {

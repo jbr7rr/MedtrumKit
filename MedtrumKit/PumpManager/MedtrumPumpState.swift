@@ -868,17 +868,46 @@ public class MedtrumPumpState: RawRepresentable {
     public var expiryMode: ExpiryMode
     public var notificationAfterActivation: TimeInterval
 
-    /// Resetting "cancelingBolusSince" to nil depends on `ensureConnected` calling the callback.
-    /// `ensureConnected` orphans its completion in a few places.
-    /// So instead of a boolean, we use a date, which "auto-expires" after this timeout.
-    /// This timeout is longer than the 30s write timeout plus a reconnect.
-    private static let cancelBolusTimeout: TimeInterval = .minutes(2)
+    /// A cancel of a bolus asked for and not yet over (`MedtrumPumpManager.cancelBolus`): of the bolus running when it was
+    /// asked for - or, none running, the one whose SetBolus was out (`pendingSentAt`) - else of none known. It shows
+    /// `.canceling` only while that bolus is still the one running: a new bolus is never shown, nor refused, as being
+    /// cancelled by a cancel of the one before - and the cancel, once it has the link, writes nothing for it. One of none
+    /// known never shows: it stops nothing that runs (`isOfTheRunningBolus`), and showing would only refuse dosing.
+    struct BolusCancel {
+        let id = UUID()
+        let since: Date
+        let dose: UnfinalizedDose?
+        let pendingSentAt: Date?
+    }
+
+    /// The cancels of a bolus not yet over - see `BolusCancel`. Ended as each completes; a completion `ensureConnected`
+    /// orphans would leave one for good, so each also runs out after `cancelBolusBackstop`.
+    private let bolusCancels = Locked<[BolusCancel]>([])
+
+    /// A cancel's longest run: a connect - joining one past didConnect, its session watchdog 150 s
+    /// (`BluetoothManager`), the steps before it 15 s each - the wait for the command lock (`commandActivityTimeout`,
+    /// 3 min) and the write (`PeripheralManager.writeTimeout`, 30 s): some 6 min, rounded up. Only a backstop for one
+    /// orphaned: its bolus over, a cancel shows `.canceling` no longer anyway, and one of none known never does.
+    static let cancelBolusBackstop: TimeInterval = .minutes(7)
+
+    /// The manager's `doseReportLock`, which `bolusDose` and `pendingBolus` change under: a cancel outstanding, whether
+    /// it is of the running bolus is read under it (`cancelingBolusSince`)
+    weak var doseLock: NSRecursiveLock?
 
     // **** THESE VALUES SHOULD NOT BE PERSISTED ****
     public var primeProgress: UInt8 = 0
     public var isConnected: Bool = false
-    // if it was persisted, and we happen to restore a date - there will be nothing left to reset it to `nil`
-    public var cancelingBolusSince: Date?
+    /// When the earliest cancel still showing `.canceling` was asked for - see `BolusCancel`. Not persisted: restored,
+    /// nothing would end it.
+    public var cancelingBolusSince: Date? {
+        let cancels = bolusCancels.value
+        guard !cancels.isEmpty else {
+            return nil
+        }
+        let now = Date.now
+        let since = { cancels.filter { self.isShowing($0, at: now) }.map(\.since).min() }
+        return doseLock.map { $0.withLock(since) } ?? since()
+    }
     // last state CoreBluetooth reported
     public var bluetoothState: CBManagerState = .unknown
     /// The latest start of a basal segment the patch reported, on its clock - from statuses and command answers.
@@ -1019,11 +1048,43 @@ public class MedtrumPumpState: RawRepresentable {
     }
 
     private var isCancelingBolus: Bool {
-        guard let since = cancelingBolusSince else {
-            return false
-        }
+        cancelingBolusSince != nil
+    }
 
-        return Date.now.timeIntervalSince(since) < MedtrumPumpState.cancelBolusTimeout
+    /// A cancel of a bolus is asked for, of the one running now - or whose SetBolus is out - if any. Ended with
+    /// `endBolusCancel`.
+    func beginBolusCancel(at date: Date = Date.now) -> BolusCancel {
+        let cancel: BolusCancel
+        if let running = bolusDose, !running.isFinished {
+            cancel = BolusCancel(since: date, dose: running, pendingSentAt: nil)
+        } else {
+            cancel = BolusCancel(since: date, dose: nil, pendingSentAt: pendingBolus?.sentAt)
+        }
+        bolusCancels.mutate { $0.append(cancel) }
+        return cancel
+    }
+
+    func endBolusCancel(_ cancel: BolusCancel) {
+        bolusCancels.mutate { $0.removeAll { $0.id == cancel.id } }
+    }
+
+    /// Whether `cancel` is of the bolus running now: the one it was asked for, still running - the one whose SetBolus
+    /// was out, running or its command still out - or, of none known, none running nor out. A new bolus since is not
+    /// what it was asked to stop.
+    func isOfTheRunningBolus(_ cancel: BolusCancel) -> Bool {
+        let running = bolusDose.flatMap { $0.isFinished ? nil : $0 }
+        if let dose = cancel.dose {
+            return running === dose
+        }
+        if let sentAt = cancel.pendingSentAt {
+            return running?.sentAt == sentAt || (running == nil && pendingBolus?.sentAt == sentAt)
+        }
+        return running == nil && pendingBolus == nil
+    }
+
+    private func isShowing(_ cancel: BolusCancel, at now: Date) -> Bool {
+        (cancel.dose != nil || cancel.pendingSentAt != nil) &&
+            now.timeIntervalSince(cancel.since) < Self.cancelBolusBackstop && isOfTheRunningBolus(cancel)
     }
 
     public var bolusState: BolusState {

@@ -134,6 +134,10 @@ public class UnfinalizedDose {
         /// known - and for a state saved before these were kept: our estimate stands in.
         public fileprivate(set) var endReadLastRecord: Int?
         public fileprivate(set) var endReadPatchEnd: Date?
+        /// Of one a halt ended with no record named - its status cut short, say: the newest record the next status names
+        /// is its last (`MedtrumPumpManager.TempBasalEnd.awaitsRecord`) - saved, so that a run killed meanwhile waits for
+        /// that status too. `endReadPatchEnd` where it ends, if known.
+        public fileprivate(set) var endReadAwaitsRecord = false
 
         /// The final report, once there is one. Every report of the final is rebuilt from exactly these, so a final
         /// sent again until the host confirms storing it is byte for byte the same.
@@ -389,6 +393,7 @@ public class UnfinalizedDose {
         state.patchEndTime = rawValue["patchEndTime"] as? Date
         state.endReadLastRecord = rawValue["endReadLastRecord"] as? Int
         state.endReadPatchEnd = rawValue["endReadPatchEnd"] as? Date
+        state.endReadAwaitsRecord = rawValue["endReadAwaitsRecord"] as? Bool ?? false
 
         // Both or neither: a final is only ever set whole
         if let finalEndDate = rawValue["finalEndDate"] as? Date {
@@ -451,6 +456,9 @@ public class UnfinalizedDose {
         raw["patchEndTime"] = state.patchEndTime
         raw["endReadLastRecord"] = state.endReadLastRecord
         raw["endReadPatchEnd"] = state.endReadPatchEnd
+        if state.endReadAwaitsRecord {
+            raw["endReadAwaitsRecord"] = true
+        }
         raw["finalDeliveredUnits"] = state.finalDeliveredUnits
         raw["finalEndDate"] = state.finalEndDate
         raw["finalizedAt"] = state.finalizedAt
@@ -776,6 +784,21 @@ public class UnfinalizedDose {
             }
             state.endReadLastRecord = lastRecord
             state.endReadPatchEnd = patchEnd
+            state.endReadAwaitsRecord = false
+        }
+    }
+
+    /// This temp basal, ended, waits for the next status that names a record - its last - ending at `patchEnd` on the
+    /// patch clock, where known - see `State.endReadAwaitsRecord`. As `noteEndRead`, only before its final, and not for
+    /// one ended open.
+    func noteEndAwaitsRecord(patchEnd: Date?) {
+        transition { state in
+            guard type == .tempBasal, state.isFinished, !state.isFinalized, !state.endedOpen else {
+                return
+            }
+            state.endReadLastRecord = nil
+            state.endReadPatchEnd = patchEnd
+            state.endReadAwaitsRecord = true
         }
     }
 

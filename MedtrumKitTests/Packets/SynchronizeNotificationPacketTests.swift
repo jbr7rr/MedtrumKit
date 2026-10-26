@@ -138,4 +138,73 @@ final class NotificationPacketTests: XCTestCase {
             XCTAssertFalse(response.validated().invalidPayload) // No known patch yet during setup.
         }
     }
+
+    /// Device 2026-10-26 10:08:55 (patch 274, the reservoir run dry): the mask announces basal, reservoir, storage, alarm
+    /// and cgm - 27 bytes - and 16 come: the basal field of type none is its type byte alone. The rest is in place.
+    func testBasalFieldOfTypeNoneAsItsTypeByteAlone() {
+        let packet = NotificationPacket()
+        packet.totalData = FakeMedtrumLink.bytes("6228130000006b061201040100000000000000")
+
+        let actual = packet.parseResponse()
+        XCTAssertEqual(actual.state, .reservoirEmpty)
+        XCTAssertFalse(actual.truncated)
+        XCTAssertFalse(actual.invalidPayload)
+        XCTAssertNil(actual.basal)
+        XCTAssertEqual(actual.reservoir, 0)
+        XCTAssertEqual(actual.storage?.sequence, 1643)
+        XCTAssertEqual(actual.storage?.patchId, 274)
+        XCTAssertEqual(actual.activeAlarms, [.PumpExpiresSoon])
+    }
+
+    /// The same after fields that come before it: the suspend time, and a bolus too - the basal field's offset past them
+    func testBasalFieldOfTypeNoneAsItsTypeByteAloneAfterOtherFields() {
+        let suspendedAt = Date.fromMedtrumSeconds(400_000_000)
+        let storage = Data([0x6B, 0x06, 0x12, 0x01])
+        let packets: [(mask: [UInt8], bolus: Data)] = [([0x09, 0x01], Data()), ([0x0B, 0x01], Data([0x80, 0x06, 0x00]))]
+        for (mask, bolus) in packets {
+            let packet = NotificationPacket()
+            packet.totalData = Data([98] + mask) + suspendedAt.toMedtrumSeconds() + bolus + Data([0]) + storage
+
+            let actual = packet.parseResponse()
+            XCTAssertFalse(actual.truncated)
+            XCTAssertNil(actual.basal)
+            XCTAssertEqual(actual.suspendTime, suspendedAt)
+            XCTAssertEqual(actual.storage?.sequence, 1643)
+            XCTAssertEqual(actual.storage?.patchId, 274)
+            if !bolus.isEmpty {
+                XCTAssertEqual(actual.bolus?.completed, true)
+                XCTAssertEqual(actual.bolus?.delivered ?? 0, 0.3, accuracy: 0.001)
+            }
+        }
+    }
+
+    /// A basal field of type none in full, 12 bytes, parses as it always did
+    func testBasalFieldOfTypeNoneInFull() {
+        let packet = NotificationPacket()
+        packet.totalData = Data([98, 0x28, 0x00, 0, 1, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0])
+
+        let actual = packet.parseResponse()
+        XCTAssertFalse(actual.truncated)
+        XCTAssertEqual(actual.basal?.type, BasalType.NONE)
+        XCTAssertEqual(actual.basal?.sequence, 1)
+        XCTAssertEqual(actual.basal?.patchId, 14)
+        XCTAssertEqual(actual.reservoir ?? 0, 1.0, accuracy: 0.001)
+    }
+
+    /// Short of that by anything else - a byte less, or the basal field of another type - is cut short, as before
+    func testShortPayloadIsStillTruncated() {
+        for hex in [
+            "6228130000006b0612010401000000000000", // a byte short of the type-only basal field's length
+            "6228130600006b061201040100000000000000" // 16 bytes, the basal field of a temp basal
+        ] {
+            let packet = NotificationPacket()
+            packet.totalData = FakeMedtrumLink.bytes(hex)
+
+            let actual = packet.parseResponse()
+            XCTAssertTrue(actual.truncated, hex)
+            XCTAssertNil(actual.storage, hex)
+            XCTAssertNil(actual.reservoir, hex)
+            XCTAssertNil(actual.basal, hex)
+        }
+    }
 }

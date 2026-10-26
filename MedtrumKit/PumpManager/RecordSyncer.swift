@@ -181,6 +181,18 @@ enum RecordSyncer {
             if trigger == .awaitingDoses {
                 runState.mutate { $0.lastAwaitingDosesRun = .distantPast }
             }
+        } else if trigger != .beforeStop, let ending = pumpManager.pendingTempBasalEnd, ending.awaitsRecord {
+            // Its record unnamed, and maybe among those to read - read here, behind the cursor, it would make no final of
+            // it. Read once a status names it, `tempBasalEndRecordWait` at most. Not before the stop: the last chance,
+            // and the session's end takes it out from our estimate anyway.
+            logger.info(
+                "Not reading records (\(trigger.rawValue)): the temp basal of \(ending.dose.startDate) waits for a status to " +
+                    "name its record"
+            )
+            // Turned away, it read nothing: no run of the cooldown's, as for a command in flight
+            if trigger == .awaitingDoses {
+                runState.mutate { $0.lastAwaitingDosesRun = .distantPast }
+            }
         } else {
             // A temp basal that ended has its records read first: read here, they would make no final of it
             _ = pumpManager.withCommandLockIfFree {
@@ -454,8 +466,13 @@ enum RecordSyncer {
         pumpManager.lastRecordToRead(for: ending) != nil && pumpManager.state.bolusDose == nil
     }
 
-    /// Whether the records of `ending` are to be read at all - if not, it is settled from our estimate here
+    /// Whether the records of `ending` are to be read at all - if not, it is settled from our estimate here. Not yet
+    /// while it waits for a status to name its last record (`TempBasalEnd.awaitsRecord`): read once one does.
     private static func mayRead(_ ending: MedtrumPumpManager.TempBasalEnd, pumpManager: MedtrumPumpManager) -> Bool {
+        guard !ending.awaitsRecord else {
+            logger.debug("The records of the temp basal of \(ending.dose.startDate) are read once a status names its last")
+            return false
+        }
         guard wouldRead(ending, pumpManager: pumpManager) else {
             _ = pumpManager.settleTempBasalEnd(
                 ending,
@@ -469,7 +486,8 @@ enum RecordSyncer {
 
     /// `finishTempBasalEnd`, the run already this one's, reading until `deadline` on the manager's clock
     private static func finishTempBasalEndInFlight(pumpManager: MedtrumPumpManager, until deadline: Date) {
-        guard let ending = pumpManager.pendingTempBasalEnd else {
+        // Its last record named by a status yet to come: read then - not settled here meanwhile
+        guard let ending = pumpManager.pendingTempBasalEnd, !ending.awaitsRecord else {
             return
         }
         pumpManager.noteTempBasalEndReadBegins(ending)
@@ -585,6 +603,15 @@ enum RecordSyncer {
         }
         guard last - first < MedtrumPumpManager.tempBasalEndMaxRecords else {
             logger.info("Records \(first)...\(last) are too many to read in the command, of \(what): left to the sync")
+            return
+        }
+
+        // A temp basal's record unnamed may be among them: left to the sync, which reads them once it is named
+        if let ending = pumpManager.pendingTempBasalEnd, ending.awaitsRecord {
+            logger.info(
+                "The temp basal of \(ending.dose.startDate) waits for a status to name its record: the records of \(what) " +
+                    "are left to the sync"
+            )
             return
         }
 

@@ -130,12 +130,25 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
             magnetoPlacement: nil
         )
 
-        let expectedLength = NotificationPacket.fields
-            .filter { fieldMask & $0.mask != 0 }
-            .reduce(0) { $0 + $1.size }
+        let present = NotificationPacket.fields.filter { fieldMask & $0.mask != 0 }
+        let expectedLength = present.reduce(0) { $0 + $1.size }
+
+        // A basal field of type none can come as its type byte alone - device 2026-10-26 10:08:55, a halt as the reservoir
+        // ran dry: 16 bytes for the 27 its mask announces, storage and the rest in their places after it. Told by the
+        // length: exactly that much short, the type byte none. It carries no basal: none is taken from it.
+        let basalOffset = present.prefix(while: { $0.mask != MASK_BASAL }).reduce(0) { $0 + $1.size }
+        let isBasalTypeOnly = fieldMask & MASK_BASAL != 0 &&
+            syncData.count == expectedLength - (NotificationPacket.basalSize - 1) &&
+            syncData.count > basalOffset && syncData[basalOffset] == BasalType.NONE.rawValue
+        if isBasalTypeOnly {
+            NotificationPacket.log.info(
+                "Notification basal field of type none is its type byte alone, no basal taken from it - mask: " +
+                    "\(String(fieldMask, radix: 2)), \(syncData.count) bytes: \(syncData.hexEncodedString())"
+            )
+        }
 
         // validate the entire mask before parsing, short payload -> keep only the state
-        guard syncData.count >= expectedLength else {
+        guard isBasalTypeOnly || syncData.count >= expectedLength else {
             NotificationPacket.log.error(
                 "Notification payload too short - mask: \(String(fieldMask, radix: 2)) expects " +
                     "\(expectedLength) bytes, got \(syncData.count): \(syncData.hexEncodedString())"
@@ -144,7 +157,12 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
             return output
         }
 
-        for field in NotificationPacket.fields where fieldMask & field.mask != 0 {
+        for field in present {
+            if isBasalTypeOnly, field.mask == MASK_BASAL {
+                offset += 1
+                continue
+            }
+
             guard offset + field.size <= syncData.count else {
                 output.truncated = true
                 break
@@ -163,6 +181,9 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
         let parse: (Data, Int, inout SynchronizePacketResponse) -> Void
     }
 
+    /// The basal field in full - see `handle` for the one of type none that is its type byte alone
+    private static let basalSize = 12
+
     private static let fields: [Field] = [
         Field(mask: MASK_SUSPEND, size: 4) { data, offset, output in
             output.suspendTime = Date.fromMedtrumSeconds(data.subdata(in: offset ..< offset + 4).toUInt64())
@@ -176,7 +197,7 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
         },
         // Just ignore this flag
         Field(mask: MASK_EXTENDED_BOLUS, size: 3) { _, _, _ in },
-        Field(mask: MASK_BASAL, size: 12) { data, offset, output in
+        Field(mask: MASK_BASAL, size: basalSize) { data, offset, output in
             let rateDelivery = UInt32(data.subdata(in: offset + 9 ..< offset + 12).toDouble())
             let delivery = rateDelivery >> 12
             let rate = rateDelivery & 0x0FFF

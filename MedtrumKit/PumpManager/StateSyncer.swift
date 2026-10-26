@@ -120,6 +120,26 @@ enum StateSyncer {
             halted: syncResponse.state.isDeliveryHalted || syncResponse.basal.map { $0.type.isSuspendedByPump() } == true
         )
 
+        // The temp basal a halt ended, its status naming no record - cut short: this one names the newest, its last or
+        // after it - read now, as if this status ended it (`MedtrumPumpManager.namesRecordOfTempBasalEnd`). Before what
+        // this status ends: a temp basal set since - held behind it - ended here too would take it out from our estimate
+        // first (`beginTempBasalEnd`). So with one running it is read right here, a full status's thread free to block on
+        // the link - a command's own, asking for it (`askForTheRecordOfTheWaitingEnd`), or the heartbeat's.
+        var namedTempBasalEnd = false
+        if let storage = syncResponse.storage,
+           pumpManager.namesRecordOfTempBasalEnd(
+               Int(storage.sequence),
+               patchId: UInt64(storage.patchId),
+               receivedUptime: receivedUptime
+           )
+        {
+            let tempBasalRunning = pumpManager.withDoseReportLock {
+                pumpManager.state.basalDose.type == .tempBasal && !pumpManager.state.basalDose.isFinished
+            }
+            let readNow = fullSync && !duringReconnect && tempBasalRunning && pumpManager.finishPendingTempBasalEndIfFree()
+            namedTempBasalEnd = !readNow
+        }
+
         var events: [NewPumpEvent] = []
         // A temp basal this status ended, reported once its records are read
         var endedTempBasal = false
@@ -128,6 +148,7 @@ enum StateSyncer {
             if let suspended = recordSuspendIfDelivering(
                 pumpManager: pumpManager,
                 basal: syncResponse.basal,
+                basalIsCurrent: false,
                 suspendTime: syncResponse.suspendTime,
                 storage: syncResponse.storage,
                 receivedAt: receivedAt,
@@ -173,6 +194,7 @@ enum StateSyncer {
                 if let suspended = recordSuspendIfDelivering(
                     pumpManager: pumpManager,
                     basal: basal,
+                    basalIsCurrent: true,
                     suspendTime: syncResponse.suspendTime,
                     storage: syncResponse.storage,
                     receivedAt: receivedAt,
@@ -189,6 +211,10 @@ enum StateSyncer {
                     endedTempBasal = resumed.endedTempBasal
                 }
             }
+        }
+
+        if namedTempBasalEnd {
+            endedTempBasal = true
         }
 
         // The first status of this run, the run before killed as it read the records of a temp basal that ended: read
@@ -330,12 +356,15 @@ enum StateSyncer {
     /// The patch stopped delivering: the running basal ends, and the suspend starts, when the patch says it suspended
     /// (`suspendTime`, exact on its clock), or when a suspend segment started - else when this was received. A suspend
     /// ends a temp basal for good: the patch resumes on its schedule. The temp basal is reported final with the
-    /// suspend, once its records up to the newest one this status names (`storage`) are read. Nil when this status says
+    /// suspend, once its records up to the newest one this status names are read: `storage`'s, else the sequence of a
+    /// `basalIsCurrent` - the suspend segment this status shows, not one cached in a halted state - else the next status
+    /// naming one (`MedtrumPumpManager.TempBasalEnd.awaitsRecord`). Nil when this status says
     /// nothing of the basal running - received before the running temp basal's command went out - so the caller leaves
     /// the basal state as it is: marking it suspended would refuse dosing with nothing suspended as far as the doses go.
     private static func recordSuspendIfDelivering(
         pumpManager: MedtrumPumpManager,
         basal: BasalData?,
+        basalIsCurrent: Bool,
         suspendTime: Date?,
         storage: StorageData?,
         receivedAt: Date,
@@ -371,10 +400,14 @@ enum StateSyncer {
 
             let suspendDose = UnfinalizedDose(suspendStartTime: eventTime)
             let suspended = NewPumpEvent.suspend(dose: suspendDose.toDoseEntry())
+            // The suspend segment shown names the newest record too, as the scheduled one does (`resumeSchedule`). With no
+            // record named - the status cut short, or without storage, in a halted state - the next status names it.
+            let lastRecord = storage.map { Int($0.sequence) } ?? (basalIsCurrent ? basal.map { Int($0.sequence) } : nil)
             let ending = pumpManager.beginTempBasalEnd(
                 endedAt: eventTime,
                 patchEnd: patchTime,
-                lastRecord: storage.map { Int($0.sequence) },
+                lastRecord: lastRecord,
+                awaitsRecordAfter: lastRecord == nil ? receivedUptime : nil,
                 then: (suspendDose, suspended)
             )
             state.basalDose = suspendDose

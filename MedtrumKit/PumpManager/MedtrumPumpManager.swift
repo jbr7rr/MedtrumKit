@@ -130,7 +130,11 @@ public class MedtrumPumpManager: DeviceManager {
         }
     }
 
-    public var state: MedtrumPumpState
+    public var state: MedtrumPumpState {
+        didSet {
+            state.doseLock = doseReportLock
+        }
+    }
     var oldState: MedtrumPumpState
 
     /// Records read off the patch, for the debug screen. Not part of `state` - see `PumpRecordStore`.
@@ -177,6 +181,7 @@ public class MedtrumPumpManager: DeviceManager {
 
     init(state: MedtrumPumpState) {
         self.state = state
+        state.doseLock = doseReportLock
         oldState = MedtrumPumpState(rawValue: state.rawValue)
         link = BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
         refreshLogDeviceIdentifier()
@@ -207,6 +212,7 @@ public class MedtrumPumpManager: DeviceManager {
     /// and registers nothing global: no app lifecycle observers, and `MedtrumLogger` keeps no reference.
     init(state: MedtrumPumpState, link: MedtrumLink) {
         self.state = state
+        state.doseLock = doseReportLock
         oldState = MedtrumPumpState(rawValue: state.rawValue)
         self.link = link
         refreshLogDeviceIdentifier()
@@ -621,6 +627,8 @@ public extension MedtrumPumpManager {
             // the connect's status leaving it to the queue, which waits on this command: read first, as a command that
             // ends one reads it, within the same budget. The bolus's batch would take it out from our estimate.
             if self.pendingTempBasalEnd != nil {
+                // One a halt ended, naming no record: named first
+                self.askForTheRecordOfTheWaitingEnd()
                 RecordSyncer.finishTempBasalEnd(
                     pumpManager: self,
                     inCommandUntil: self.now().addingTimeInterval(Self.tempBasalEndReadBudget)
@@ -819,29 +827,45 @@ public extension MedtrumPumpManager {
     /// Records that cannot be read for long pile them up: past this many, the oldest go
     private static let answeredBolusRecordsKept = 50
 
+    /// Cancels the bolus running now - the one whose SetBolus is out, if none runs yet - and that one only: the cancel
+    /// waits for the command lock, as long as a command may take, and that bolus may be over by then, a new one running
+    /// - the loop's, once the old one's end showed no bolus. Written then, the cancel would stop the new one. So once it
+    /// has the link it cancels only if the bolus it was asked for still runs (`MedtrumPumpState.isOfTheRunningBolus`);
+    /// otherwise there is nothing to cancel, and it succeeds writing nothing. A second cancel of the same bolus - a retry
+    /// the host offers - finds it ended by the first, whichever runs first. Asked for with no bolus known - none running
+    /// nor out - it is written as before only if none is by then.
     func cancelBolus(completion: @escaping (LoopKit.PumpManagerResult<LoopKit.DoseEntry?>) -> Void) {
         log.info("Cancelling bolus...")
 
-        state.cancelingBolusSince = Date.now
+        let cancel = doseReportLock.withLock { state.beginBolusCancel() }
         notifyStateDidChange()
+
+        let finish = { (result: LoopKit.PumpManagerResult<LoopKit.DoseEntry?>) in
+            self.doseReportLock.withLock { self.state.endBolusCancel(cancel) }
+            self.notifyStateDidChange()
+            completion(result)
+        }
 
         ensureConnectedAndActive { error in
             if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
-                self.state.cancelingBolusSince = nil
-                self.notifyStateDidChange()
+                finish(.failure(.communication(error)))
+                return
+            }
 
-                completion(.failure(.communication(error)))
+            // Holding the command lock: no bolus starts from here on until this is over
+            guard self.doseReportLock.withLock({ self.state.isOfTheRunningBolus(cancel) }) else {
+                let target = cancel.dose.map { "of \($0.startDate)" } ??
+                    cancel.pendingSentAt.map { "sent at \($0)" } ?? "none known"
+                self.log.info("The bolus this cancel was asked for (\(target)) is over, or another runs: nothing to cancel, not writing it")
+                finish(.success(nil))
                 return
             }
 
             let result = self.link.write(CancelBolusPacket())
             if case let .failure(error) = result {
                 self.log.error("Failed to cancel bolus: \(error.localizedDescription)")
-                self.state.cancelingBolusSince = nil
-                self.notifyStateDidChange()
-
-                completion(.failure(.communication(error)))
+                finish(.failure(.communication(error)))
                 return
             }
 
@@ -850,26 +874,22 @@ public extension MedtrumPumpManager {
             // Ended at the last amount the patch reported, and off the running bolus in one step - only if it still is
             // the running one: a completion seen meanwhile ended it already. The completion the patch sends after the
             // cancel raises the amount (`raiseCancelledBolus`), its record fixes it.
-            let ended = self.doseReportLock.withLock { () -> Bool in
-                guard let doseEntry = self.state.bolusDose, !doseEntry.isFinished else {
-                    return false
+            self.doseReportLock.withLock {
+                guard let doseEntry = self.state.bolusDose, !doseEntry.isFinished,
+                      cancel.dose.map({ $0 === doseEntry }) ?? true,
+                      cancel.pendingSentAt.map({ $0 == doseEntry.sentAt }) ?? true
+                else {
+                    return
                 }
 
                 var events = self.runningTempBasal()
                 events.append(contentsOf: self.awaitRecord(doseEntry, .cancelled, endedAt: Date.now))
                 self.state.bolusDose = nil
-                self.state.cancelingBolusSince = nil
                 self.state.lastSync = Date.now
                 self.emitBolusEvents(events)
-                return true
             }
 
-            if !ended {
-                self.state.cancelingBolusSince = nil
-            }
-            self.notifyStateDidChange()
-
-            completion(.success(nil))
+            finish(.success(nil))
         }
     }
 
@@ -1433,6 +1453,8 @@ public extension MedtrumPumpManager {
     /// which block on the link for `tempBasalEndReadBudget` at most. The host has the state before they start - handed
     /// over first, outside that budget (`stateHandOverTimeout`): killed during them, the app comes back with the new
     /// basal running and the temp basal ended, its records read on the first link (`takeOverTempBasalEndFromLastRun`).
+    /// So too before the full status asked for a temp basal a halt ended naming no record (`askForTheRecordOfTheWaitingEnd`),
+    /// whose status may have its records read right away: the app comes back waiting on it, the new basal running.
     /// With no cancel, `lastRecord` is the record the patch wrote as the command ended it, where known: a suspend's, a
     /// resume's - read in the same way.
     private func replaceRunningBasal(
@@ -1515,8 +1537,18 @@ public extension MedtrumPumpManager {
             return
         }
 
+        // Ended by a halt whose status named no record: named here, not with what this command did held behind it - the
+        // state handed over first, its status may have the records read at once. Not after a command that went
+        // unanswered: the link may be gone, and the ask would only wait out its timeout.
+        var handedOver = false
+        if readsRecords, ending.awaitsRecord {
+            handOverState(before: "asking for the status that names the records")
+            handedOver = true
+            askForTheRecordOfTheWaitingEnd()
+        }
+
         // Nothing to hand over for when nothing will be read: the batch settling it saves the state with it
-        if RecordSyncer.wouldRead(ending, pumpManager: self) {
+        if !handedOver, RecordSyncer.wouldRead(ending, pumpManager: self) {
             handOverState(before: "reading the records")
         }
         RecordSyncer.finishTempBasalEnd(
@@ -2116,6 +2148,16 @@ public extension MedtrumPumpManager {
             // Or while it waited for the operation ahead of it
             if sessionEndedWhileConnecting() {
                 self.log.info("Patch session ended while waiting to deactivate, nothing left to deactivate")
+                completion(.success)
+                return
+            }
+
+            // The temp basal a halt ended, naming no record, has it named first - read with the rest, not taken out from
+            // our estimate as the session ends. Before the deactivation is under way: the status may tell of a base reset
+            // instead, which ends the session as any status's would (`handleBaseReset`) - nothing left to deactivate then.
+            self.askForTheRecordOfTheWaitingEnd()
+            if sessionEndedWhileConnecting() {
+                self.log.info("Patch session ended with the status asked for, nothing left to deactivate")
                 completion(.success)
                 return
             }
@@ -2796,8 +2838,15 @@ public extension MedtrumPumpManager {
         // Its records are being read, on the link: a full status's Synchronize would go out ahead of them, eating into
         // their budget. The next heartbeat syncs instead.
         if let ending = pendingTempBasalEnd {
-            log.debug("Skipping sync, the records of the temp basal of \(ending.dose.startDate) are being read")
-            return nil
+            // Ended by a halt whose status named no record: a full status names it - asked for now, not left to the
+            // freshness interval, its records read as it comes in (`namesRecordOfTempBasalEnd`). Not with a bolus
+            // running: its end comes first.
+            guard ending.awaitsRecord, state.bolusState == .noBolus else {
+                log.debug("Skipping sync, the records of the temp basal of \(ending.dose.startDate) are being read")
+                return nil
+            }
+            log.info("Asking for a full status: it names the record of the temp basal of \(ending.dose.startDate) that ended")
+            return .full
         }
 
         let age = Date.now.timeIntervalSince(state.lastSync)
@@ -4477,8 +4526,24 @@ public extension MedtrumPumpManager {
         let dose: UnfinalizedDose
         /// Where its last record ends, on the patch clock: where the segment after it started
         let patchEnd: Date?
-        /// The number of its last record
-        let lastRecord: Int?
+        /// The number of its last record - named by a status after the one that ended it, where that one named none
+        /// (`awaitsRecord`)
+        var lastRecord: Int? {
+            named.value.lastRecord
+        }
+
+        /// Ended by a status that named no record - a halt's, cut short (device 2026-10-26 10:08:55): the newest record
+        /// the next status names is its last, the patch writes it as it ends it - see `namesRecordOfTempBasalEnd`. Until
+        /// then its records are not read, nor is it settled from our estimate - for `tempBasalEndRecordWait` at most.
+        var awaitsRecord: Bool {
+            named.value.awaits
+        }
+
+        /// When the status that ended it, naming no record, was received, on the monotonic clock: one received before
+        /// says nothing of its record. Nil, restored after a restart: every status of this run came after it.
+        let awaitsAfterUptime: TimeInterval?
+
+        private let named: Locked<(lastRecord: Int?, awaits: Bool)>
         /// No record of its own end known, those of the temp basals ended open before it are read all the same - unless
         /// the command that ended it went unanswered: the link may be gone
         let readsOpenEnds: Bool
@@ -4489,11 +4554,24 @@ public extension MedtrumPumpManager {
         /// from the dose as it is then (`emitBolusEvents`). Under `doseReportLock`.
         var bolusReports: [NewPumpEvent] = []
 
-        init(dose: UnfinalizedDose, patchEnd: Date?, lastRecord: Int?, readsOpenEnds: Bool = true) {
+        init(
+            dose: UnfinalizedDose,
+            patchEnd: Date?,
+            lastRecord: Int?,
+            readsOpenEnds: Bool = true,
+            awaitsRecord: Bool = false,
+            awaitsAfterUptime: TimeInterval? = nil
+        ) {
             self.dose = dose
             self.patchEnd = patchEnd
-            self.lastRecord = lastRecord
+            named = Locked((lastRecord, awaitsRecord && lastRecord == nil))
             self.readsOpenEnds = readsOpenEnds
+            self.awaitsAfterUptime = awaitsAfterUptime
+        }
+
+        /// A status names `record` its last. Under `doseReportLock`.
+        fileprivate func name(_ record: Int) {
+            named.value = (record, false)
         }
     }
 
@@ -4575,14 +4653,15 @@ public extension MedtrumPumpManager {
     /// patch clock, where known - and `next` follows it: neither goes out before its final, see `TempBasalEnd`. It is
     /// kept in `awaitingRecord` meanwhile, its last record and patch end with it - and `next` in `heldBasalDoses`: a run
     /// killed during the read has the next one read them on its first link, `next` reported after its final all the
-    /// same (`takeOverTempBasalEndFromLastRun`). The caller replaces `state.basalDose` with `next`, then has it
-    /// finished. Returns false when no temp basal was running: the caller reports `next` itself. Only under
-    /// `doseReportLock`.
+    /// same (`takeOverTempBasalEndFromLastRun`). `awaitsRecordAfter`, no last record known: a status received after
+    /// then - the status that ended it - names it, see `TempBasalEnd.awaitsRecord`. The caller replaces `state.basalDose` with `next`, then has it finished. Returns
+    /// false when no temp basal was running: the caller reports `next` itself. Only under `doseReportLock`.
     internal func beginTempBasalEnd(
         endedAt: Date,
         patchEnd: Date?,
         lastRecord: Int?,
         readsOpenEnds: Bool = true,
+        awaitsRecordAfter receivedUptime: TimeInterval? = nil,
         then next: (dose: UnfinalizedDose, event: NewPumpEvent)
     ) -> Bool {
         doseReportLock.withLock { () -> Bool in
@@ -4601,9 +4680,12 @@ public extension MedtrumPumpManager {
             }
 
             dose.finish(endedAt >= dose.estimatedEndDate ? .completed : .cancelled, endedAt: endedAt, at: now())
-            // Saved with it: a restart before its final reads them after all
+            // Saved with it: a restart before its final reads them after all - or waits for the status that names them
+            let awaitsRecord = receivedUptime != nil && lastRecord == nil
             if let lastRecord {
                 dose.noteEndRead(lastRecord: lastRecord, patchEnd: patchEnd)
+            } else if awaitsRecord {
+                dose.noteEndAwaitsRecord(patchEnd: patchEnd)
             }
             state.mutateAwaitingRecord { doses in
                 guard !doses.contains(where: { $0 === dose }) else {
@@ -4611,17 +4693,109 @@ public extension MedtrumPumpManager {
                 }
                 doses.append(dose)
             }
-            let ending = TempBasalEnd(dose: dose, patchEnd: patchEnd, lastRecord: lastRecord, readsOpenEnds: readsOpenEnds)
+            let ending = TempBasalEnd(
+                dose: dose,
+                patchEnd: patchEnd,
+                lastRecord: lastRecord,
+                readsOpenEnds: readsOpenEnds,
+                awaitsRecord: awaitsRecord,
+                awaitsAfterUptime: receivedUptime
+            )
             pendingTempBasalEndStorage = ending
             hold(next, after: ending)
 
-            log.info(
-                "Temp basal of \(dose.startDate) ended at \(endedAt), reported once its records up to " +
-                    "\(lastRecord.map { "#\($0)" } ?? "-") are read"
-            )
+            if awaitsRecord {
+                log.info(
+                    "Temp basal of \(dose.startDate) ended at \(endedAt), its status naming no record: reported once its " +
+                        "records up to the one the next status names are read, \(Int(Self.tempBasalEndRecordWait)) s at most"
+                )
+                boundTheWaitForItsRecord(ending, after: Self.tempBasalEndRecordWait)
+            } else {
+                log.info(
+                    "Temp basal of \(dose.startDate) ended at \(endedAt), reported once its records up to " +
+                        "\(lastRecord.map { "#\($0)" } ?? "-") are read"
+                )
+            }
             return true
         }
     }
+
+    /// A status received at `receivedUptime` names `newest` the newest record of the patch `patchId` has written: the
+    /// temp basal a halt ended with no record named (`TempBasalEnd.awaitsRecord`), if one waits, has it for its last -
+    /// written as the patch ended it, it is that one or one before - saved with it, as one named so from the start.
+    /// Returns whether one did: the caller has its records read, as for one this status ended. Not for another patch,
+    /// nor once the session ended. Nor from a status received before the one that ended it, handled after it - a full
+    /// status's thread against the notifications' - nor one naming no record past those read: from before the patch wrote
+    /// its record. It waits on then.
+    internal func namesRecordOfTempBasalEnd(_ newest: Int, patchId: UInt64, receivedUptime: TimeInterval) -> Bool {
+        doseReportLock.withLock { () -> Bool in
+            guard let ending = pendingTempBasalEndStorage, ending.awaitsRecord, !state.patchSessionEnded,
+                  !state.patchId.isEmpty, RecordSyncer.isSamePatch(patchId, state.patchId.toUInt64())
+            else {
+                return false
+            }
+            guard newest > state.syncedSequenceNumber, ending.awaitsAfterUptime.map({ receivedUptime >= $0 }) ?? true else {
+                log.info(
+                    "A status names record #\(newest), from before the temp basal of \(ending.dose.startDate) ended - " +
+                        "read up to #\(state.syncedSequenceNumber): waiting on for one that names its record"
+                )
+                return false
+            }
+            ending.name(newest)
+            ending.dose.noteEndRead(lastRecord: newest, patchEnd: ending.patchEnd)
+            log.info("A status names record #\(newest): the records of the temp basal of \(ending.dose.startDate) are read up to it")
+            return true
+        }
+    }
+
+    /// The temp basal whose end waits for a status to name its record (`TempBasalEnd.awaitsRecord`), on a command's thread
+    /// holding `commandLock` - a command that changes the basal behind it, a bolus, the deactivation: a full status is
+    /// asked for here, its storage naming it (`namesRecordOfTempBasalEnd`), and the command reads it, as one named from
+    /// the start. Not left to the heartbeat: what the command reports would be held behind it meanwhile - a temp basal so
+    /// is not saved with the state (`hold`) - and the deactivation would report it from our estimate. Returns whether it
+    /// is named now.
+    @discardableResult internal func askForTheRecordOfTheWaitingEnd() -> Bool {
+        guard let ending = pendingTempBasalEnd, ending.awaitsRecord else {
+            return false
+        }
+        log.info("Asking for a full status in the command: it names the record of the temp basal of \(ending.dose.startDate)")
+
+        let result = link.write(SynchronizePacket(), timeout: Self.tempBasalEndRecordTimeout)
+        guard case let .success(data) = result, let response = data as? SynchronizePacketResponse else {
+            log.warning("The full status asked for did not come: the temp basal of \(ending.dose.startDate) waits on")
+            return false
+        }
+        handleStatus(response, duringReconnect: false, fullSync: true)
+        return !ending.awaitsRecord
+    }
+
+    /// `ending` waits for a status to name its last record (`TempBasalEnd.awaitsRecord`) - not for good: none by `delay`
+    /// from now, the link likely gone, its final goes out from our estimate, what followed it with it. Only under
+    /// `doseReportLock`.
+    private func boundTheWaitForItsRecord(_ ending: TempBasalEnd, after delay: TimeInterval) {
+        tempBasalEndQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.backgroundReadsStopped.value else {
+                return
+            }
+            self.doseReportLock.withLock {
+                guard self.pendingTempBasalEndStorage === ending, ending.awaitsRecord else {
+                    return
+                }
+                _ = self.settleTempBasalEnd(
+                    ending,
+                    records: [],
+                    unread: "no status named its record within \(Int(Self.tempBasalEndRecordWait)) s of its end"
+                )
+            }
+        }
+    }
+
+    /// How long the temp basal a halt ended waits for a status to name its record (`TempBasalEnd.awaitsRecord`): the full
+    /// status a heartbeat asks for at once names it (`heartbeatSync`) - 3 s later on the device, 2026-10-26 10:08:58.
+    /// Past that, the link likely gone, our estimate stands in: the host has the temp basal delivering through the halt
+    /// meanwhile, as when the restart's read waits for the link (`tempBasalEndFromLastRunLinkWait`). On the wall clock;
+    /// only tests change it.
+    internal static var tempBasalEndRecordWait: TimeInterval = tempBasalEndFromLastRunLinkWait
 
     /// In a new run's state, a temp basal whose records were being read as it ended (`TempBasalEnd`), the app gone
     /// before its final: its last record saved with it (`UnfinalizedDose.State.endReadLastRecord`), it waits on its
@@ -4630,7 +4804,8 @@ public extension MedtrumPumpManager {
     /// meanwhile: the host has it as the run before left it. Our estimate stands in if that read fails, if the patch
     /// session is not the one it was saved with by then, if no status comes within `tempBasalEndFromLastRunLinkWait` of
     /// the restart, and before any batch that goes out first - as in the run that ended it. Not one with no last record
-    /// known, one saved by an earlier build, one that ended `tempBasalEndFromLastRunLinkWait` ago or more, nor one whose
+    /// known - unless it waits for a status to name it (`TempBasalEnd.awaitsRecord`): it waits on here, what is left of
+    /// `tempBasalEndRecordWait` - one saved by an earlier build, one that ended `tempBasalEndFromLastRunLinkWait` ago or more, nor one whose
     /// record is overdue: from our estimate with the first batch, as before (`emitPumpEvents`).
     ///
     /// The restart used to finalize it from our estimate at once - its end was kept in memory only, and the first batch
@@ -4645,8 +4820,8 @@ public extension MedtrumPumpManager {
             let checkedAt = now()
             let waiting = state.awaitingRecord.filter { dose in
                 let ended = dose.snapshot
-                guard dose.type == .tempBasal, !ended.isFinalized, !ended.endedOpen, ended.endReadLastRecord != nil,
-                      let finishedAt = ended.finishedAt
+                guard dose.type == .tempBasal, !ended.isFinalized, !ended.endedOpen,
+                      ended.endReadLastRecord != nil || ended.endReadAwaitsRecord, let finishedAt = ended.finishedAt
                 else {
                     return false
                 }
@@ -4660,13 +4835,17 @@ public extension MedtrumPumpManager {
                 return RecordSyncer.fallbackRule(since: finishedAt, caughtUp: isCaughtUp(after: finishedAt), now: checkedAt) == nil
             }
             // One at a time in a run: any other is an older one's, from our estimate ahead of it
-            guard let dose = waiting.max(by: { $0.startDate < $1.startDate }), let lastRecord = dose.snapshot.endReadLastRecord,
-                  let finishedAt = dose.snapshot.finishedAt
-            else {
+            guard let dose = waiting.max(by: { $0.startDate < $1.startDate }), let finishedAt = dose.snapshot.finishedAt else {
                 return
             }
+            let lastRecord = dose.snapshot.endReadLastRecord
 
-            let ending = TempBasalEnd(dose: dose, patchEnd: dose.snapshot.endReadPatchEnd, lastRecord: lastRecord)
+            let ending = TempBasalEnd(
+                dose: dose,
+                patchEnd: dose.snapshot.endReadPatchEnd,
+                lastRecord: lastRecord,
+                awaitsRecord: dose.snapshot.endReadAwaitsRecord
+            )
             // What followed it, held back - as `hold` had it, as it ended or after: in this batch with its final, after
             // it. Not a suspend or resume kept from before (`keepUntilStored`) that is dated at its start or later - its
             // first, of what followed it, would have its final end there.
@@ -4674,10 +4853,20 @@ public extension MedtrumPumpManager {
                 .map(\.dose).compactMap(Self.heldEvent(of:))
             pendingTempBasalEndStorage = ending
             tempBasalEndFromLastRun = (ending, state.patchId, checkedAt)
-            log.info(
-                "The temp basal of \(dose.startDate) was saved as its records up to #\(lastRecord) were read: read on the " +
-                    "first link, \(ending.then.count) dose(s) held back behind its final"
-            )
+            if let lastRecord {
+                log.info(
+                    "The temp basal of \(dose.startDate) was saved as its records up to #\(lastRecord) were read: read on the " +
+                        "first link, \(ending.then.count) dose(s) held back behind its final"
+                )
+            } else {
+                log.info(
+                    "The temp basal of \(dose.startDate) was saved waiting for a status to name its record: read once one " +
+                        "does, \(ending.then.count) dose(s) held back behind its final"
+                )
+                // What is left of the wait it began with - the restart's own bound, below, ends with the first status
+                let waited = max(0, checkedAt.timeIntervalSince(finishedAt))
+                boundTheWaitForItsRecord(ending, after: max(0, Self.tempBasalEndRecordWait - waited))
+            }
 
             // At the bound, the loop's next run maybe minutes off - the patch out of reach, no status comes
             tempBasalEndQueue.asyncAfter(deadline: .now() + Self.tempBasalEndFromLastRunCheckDelay) { [weak self] in
@@ -4774,7 +4963,9 @@ public extension MedtrumPumpManager {
         ending.then.append(next.event)
         // A temp basal is not saved here: killed before the final, the next run rebuilds `then` from `heldBasalDoses`
         // only (`takeOverTempBasalEndFromLastRun`) - a set held behind the read, a halt after it moving `basalDose` on,
-        // is then reported by nothing. The read's budget at most of a temp basal, seconds on the patch: left so.
+        // is then reported by nothing. The read's budget at most of a temp basal, seconds on the patch: left so. Behind
+        // an end waiting for its record the command names it first (`askForTheRecordOfTheWaitingEnd`) - held longer only
+        // if that status does not come.
         guard next.dose.type != .tempBasal else {
             return
         }
@@ -5032,7 +5223,8 @@ public extension MedtrumPumpManager {
         if let last = ending.lastRecord {
             return last
         }
-        guard ending.readsOpenEnds else {
+        // Its own named by a status yet to come: those ended open before it are read with it then
+        guard ending.readsOpenEnds, !ending.awaitsRecord else {
             return nil
         }
         // The temp basal whose command went unanswered, kept, with no cancel's answer naming its record - a set with no
