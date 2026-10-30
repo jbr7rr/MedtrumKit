@@ -489,7 +489,144 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.previousPatch?.patchId, previousPatch)
     }
 
+    // MARK: The loop while no session runs
+
+    /// 2026-10-30: the old patch reported itself stopped as it was deactivated. The loop syncs nothing with it - every
+    /// loop until the new patch's setup scanned 15 s for a base that was not there.
+    func testLoopSyncsNothingWithTheOldPatchStoppedAfterItsSessionEnded() {
+        makeManager(activePatchState(patchId: Self.oldPatchId, scheduledRate: Self.scheduledRate, sequence: 10, reservoir: 50))
+        XCTAssertEqual(deactivate(), true)
+        link.notify(Self.notification(state: .stopped, storage: (sequence: 12, patchId: Self.oldPatchId)))
+        settle()
+        XCTAssertEqual(pumpManager.state.pumpState, .stopped)
+
+        // Past the freshness interval
+        let lastSync = Date.now.addingTimeInterval(-10 * Self.minute)
+        pumpManager.state.lastSync = lastSync
+        let connects = link.connects
+        let writes = link.writtenCommands
+
+        XCTAssertEqual(loopSync(), .some(nil))
+        settle()
+
+        XCTAssertEqual(link.connects, connects)
+        XCTAssertEqual(link.writtenCommands, writes)
+        XCTAssertEqual(pumpManager.state.lastSync, lastSync, "not synced")
+    }
+
+    /// Nor with a patch that ended otherwise - expired, faulted - its session ended since
+    func testLoopSyncsNothingWithAnyTerminatedPatchAfterItsSessionEnded() {
+        for pumpState in [PatchState.expired, .patchFault] {
+            let state = endedSessionState()
+            state.pumpState = pumpState
+            let lastSync = Date.now.addingTimeInterval(-10 * Self.minute)
+            state.lastSync = lastSync
+            makeManager(state)
+
+            XCTAssertEqual(loopSync(), .some(nil), "\(pumpState)")
+            settle()
+
+            XCTAssertEqual(link.connects, 0, "\(pumpState)")
+            XCTAssertEqual(pumpManager.state.lastSync, lastSync, "not synced: \(pumpState)")
+        }
+    }
+
+    /// A patch in its session syncs as before. In the simulator the sync never touches the link: `lastSync` tells it ran.
+    func testLoopSyncsAPatchInItsSession() {
+        let state = activePatchState(patchId: Self.oldPatchId, scheduledRate: Self.scheduledRate, sequence: 10, reservoir: 50)
+        let lastSync = Date.now.addingTimeInterval(-10 * Self.minute)
+        state.lastSync = lastSync
+        makeManager(state)
+
+        XCTAssertNotNil(loopSync())
+        settle()
+
+        XCTAssertGreaterThan(pumpManager.state.lastSync, lastSync)
+    }
+
+    /// So does a running patch with no session - its activation's answer lost: its statuses are all that follow it
+    /// until the retry starts the session
+    func testLoopSyncsARunningPatchWithNoSession() {
+        let state = endedSessionState()
+        state.pumpState = .active
+        let lastSync = Date.now.addingTimeInterval(-10 * Self.minute)
+        state.lastSync = lastSync
+        makeManager(state)
+
+        XCTAssertNotNil(loopSync())
+        settle()
+
+        XCTAssertGreaterThan(pumpManager.state.lastSync, lastSync)
+    }
+
+    // MARK: The priming screen
+
+    /// The state the old patch stopped in, kept until the new patch's first status, is not the new patch failing. Once it
+    /// is seen being set up, a terminated state is - before priming and while priming.
+    func testPrimingScreenTakesATerminatedStateForAFailureOnlyOnceThePatchWasSeenBeingSetUp() {
+        let state = endedSessionState()
+        state.pumpState = .stopped
+        // The deactivation's forced disconnect
+        state.isConnected = false
+        makeManager(state)
+        let viewModel = PatchPrimingViewModel(pumpManager, {}, {})
+
+        viewModel.statusDidUpdate()
+        XCTAssertEqual(viewModel.primingError, "", "the old patch's state")
+
+        pumpManager.state.pumpState = .filled
+        viewModel.statusDidUpdate()
+        XCTAssertEqual(viewModel.primingError, "")
+
+        pumpManager.state.pumpState = .patchFault
+        viewModel.statusDidUpdate()
+        XCTAssertEqual(viewModel.primingError, MedtrumPrimePatchError.patchNotPrimeable(state: .patchFault).description)
+
+        let priming = PatchPrimingViewModel(pumpManager, {}, {})
+        pumpManager.state.pumpState = .priming
+        priming.statusDidUpdate()
+        priming.isPriming = true
+        pumpManager.state.pumpState = .occlusion
+        priming.statusDidUpdate()
+        XCTAssertFalse(priming.isPriming)
+        XCTAssertEqual(priming.primingError, MedtrumPrimePatchError.patchNotPrimeable(state: .occlusion).description)
+    }
+
+    /// Opened on a patch being primed - after a restart, say - that faulted since: its first update shows the failure
+    func testPrimingScreenOpenedOnAPrimingPatchShowsItsFaultOnTheFirstUpdate() {
+        let state = endedSessionState()
+        state.pumpState = .priming
+        state.isConnected = false
+        makeManager(state)
+        let viewModel = PatchPrimingViewModel(pumpManager, {}, {})
+
+        pumpManager.state.pumpState = .patchFault
+        viewModel.statusDidUpdate()
+
+        XCTAssertEqual(viewModel.primingError, MedtrumPrimePatchError.patchNotPrimeable(state: .patchFault).description)
+    }
+
+    /// Connected, a terminated state is current - the base still on the old, stopped patch: it can't be primed
+    func testPrimingScreenShowsAStoppedPatchReportedOverTheLink() {
+        let state = endedSessionState()
+        state.pumpState = .stopped
+        state.isConnected = true
+        makeManager(state)
+        let viewModel = PatchPrimingViewModel(pumpManager, {}, {})
+
+        viewModel.statusDidUpdate()
+
+        XCTAssertEqual(viewModel.primingError, MedtrumPrimePatchError.patchNotPrimeable(state: .stopped).description)
+    }
+
     // MARK: Driving
+
+    /// What the loop's `ensureCurrentPumpData` hands back - nil if it never completes
+    private func loopSync() -> Date?? {
+        completion(of: "ensureCurrentPumpData") { done in
+            self.pumpManager.ensureCurrentPumpData(completion: done)
+        }
+    }
 
     /// The old patch suspended since `since` - the host told so in a run before - its last status at `lastHeardAt`,
     /// showing `state`

@@ -468,6 +468,13 @@ public extension MedtrumPumpManager {
             return
         }
 
+        // Nothing to sync until the next session starts - the setup screens connect on their own
+        guard !state.stoppedWithNoSession else {
+            log.info("(ensureCurrentPumpData) patch session ended, nothing to sync: \(state.pumpState.description)")
+            completion?(nil)
+            return
+        }
+
         syncPumpData { syncedAt in
             // The patch out of reach: the doses waiting on its records must not wait for good
             if syncedAt == nil {
@@ -574,8 +581,8 @@ public extension MedtrumPumpManager {
     }
 
     func estimatedDuration(toBolus units: Double) -> TimeInterval {
-        // 1.5 unit per minute
-        units / 1.5 * TimeInterval(minutes: 1)
+        // At the rate the patch was seen delivering
+        units / UnfinalizedDose.observedBolusUnitsPerMinute * TimeInterval(minutes: 1)
     }
 
     func enactBolus(

@@ -1445,6 +1445,23 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertNil(pumpManager.heartbeatSync(), "not on every heartbeat")
     }
 
+    /// 2026-10-30: the patch delivers about 1 U/min - 3 U took 180 s, 2 U 154 s. The running bolus's end, which the host
+    /// stores as its duration, is estimated at that rate.
+    func testRunningBolusEndIsEstimatedAtTheObservedRate() {
+        let state = activePatchState(patchId: 236, scheduledRate: 0.7, sequence: 936, reservoir: 75.35)
+        alignPatchClock(state, patchTime: Self.patchTime(397_084_665))
+        makeManager(state)
+        XCTAssertEqual(pumpManager.estimatedDuration(toBolus: 2), 120, accuracy: 0.001)
+
+        link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
+        XCTAssertNil(commandBolus(2))
+        settle()
+
+        let started = delegate.batches.first?.events.first?.dose
+        XCTAssertEqual(started?.isMutable, true)
+        XCTAssertEqual(started.map { $0.endDate.timeIntervalSince($0.startDate) } ?? 0, 120, accuracy: 0.001)
+    }
+
     // MARK: - Killed while a SetBolus awaits its answer
 
     /// A bolus is saved pending, and handed to the host, before its SetBolus goes out; answered, it is registered in its

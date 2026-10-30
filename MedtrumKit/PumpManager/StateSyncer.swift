@@ -543,7 +543,7 @@ enum StateSyncer {
     /// stopped, is followed by the new one's setup.
     static func baseResetCheck(syncResponse: SynchronizePacketResponse, state: MedtrumPumpState) -> BaseResetCheck {
         guard !state.pumpState.isSetup, syncResponse.state.isSetup,
-              !(state.patchSessionEnded && state.pumpState.isTerminated)
+              !state.stoppedWithNoSession
         else {
             return .noReset
         }

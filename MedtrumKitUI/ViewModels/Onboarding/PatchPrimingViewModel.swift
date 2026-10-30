@@ -60,6 +60,11 @@ class PatchPrimingViewModel: ObservableObject {
 
     @Published var reservoirLevel: Double?
 
+    /// A state of the patch being set up was seen - filled, priming: a terminated state is its own from then on. Before,
+    /// unless connected, it is the one the previous patch stopped in, kept until the new patch's first status.
+    /// A new patch whose first status, before any connection, is terminated can't be told from that one.
+    private var sawPatchBeingSetUp = false
+
     let reservoirVolumeFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.roundingMode = .floor
@@ -121,6 +126,8 @@ class PatchPrimingViewModel: ObservableObject {
         }
 
         is300u = pumpManager.state.pumpName.contains("300U")
+        // Opened on a patch being primed, say
+        sawPatchBeingSetUp = pumpManager.state.pumpState.isAwaitingActivation
         pumpManager.addStatusObserver(self, queue: processQueue)
     }
 
@@ -211,12 +218,42 @@ class PatchPrimingViewModel: ObservableObject {
             patchState = newPatchState
             primingError = ""
         }
+        if newPatchState.isAwaitingActivation {
+            sawPatchBeingSetUp = true
+        }
+    }
+
+    /// The pump manager's state changed, on the main queue
+    func statusDidUpdate() {
+        guard let pumpManager = self.pumpManager else {
+            return
+        }
+
+        updateState()
+        primeProgress = Double(pumpManager.state.primeProgress) / 240
+
+        let pumpState = pumpManager.state.pumpState
+
+        if pumpState.hasCompletedPriming {
+            pumpManager.removeStatusObserver(self)
+            nextStep()
+        } else if pumpState.isRunning {
+            // Patch already activated, ready to jump to settings
+            pumpManager.removeStatusObserver(self)
+            done()
+        } else if pumpState.isTerminated, isConnected || sawPatchBeingSetUp {
+            // Connected, it is current: the connect's status is handled before the link counts as connected
+            isPriming = false
+            primingError = MedtrumPrimePatchError
+                .patchNotPrimeable(state: pumpState)
+                .description
+        }
     }
 }
 
 extension PatchPrimingViewModel: PumpManagerStatusObserver {
     func pumpManager(
-        _ pumpManager: any LoopKit.PumpManager,
+        _: any LoopKit.PumpManager,
         didUpdate _: LoopKit.PumpManagerStatus,
         oldStatus _: LoopKit.PumpManagerStatus
     ) {
@@ -225,29 +262,8 @@ extension PatchPrimingViewModel: PumpManagerStatusObserver {
                 self.isPriming = false
             }
         #else
-            guard let pumpManager = self.pumpManager else {
-                return
-            }
-
             DispatchQueue.main.async {
-                self.updateState()
-                self.primeProgress = Double(pumpManager.state.primeProgress) / 240
-
-                let pumpState = pumpManager.state.pumpState
-
-                if pumpState.hasCompletedPriming {
-                    pumpManager.removeStatusObserver(self)
-                    self.nextStep()
-                } else if pumpState.isRunning {
-                    // Patch already activated, ready to jump to settings
-                    pumpManager.removeStatusObserver(self)
-                    self.done()
-                } else if pumpState.isTerminated {
-                    self.isPriming = false
-                    self.primingError = MedtrumPrimePatchError
-                        .patchNotPrimeable(state: pumpState)
-                        .description
-                }
+                self.statusDidUpdate()
             }
         #endif
     }

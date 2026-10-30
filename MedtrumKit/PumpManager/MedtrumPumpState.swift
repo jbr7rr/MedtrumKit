@@ -1029,6 +1029,13 @@ public class MedtrumPumpState: RawRepresentable {
         }
     }
 
+    /// No session runs, and the patch last reported a state it never leaves: the old patch, stopped as its session ended -
+    /// nothing to sync with it, and the new patch's setup that follows is no base reset. Not a running patch with no
+    /// session: its activation's answer was lost.
+    var stoppedWithNoSession: Bool {
+        patchSessionEnded && pumpState.isTerminated
+    }
+
     /// A bolus whose command went unanswered, still running as far as we know, or a temp basal whose command went
     /// unanswered and is not settled - or a cancel of the running one. For the host's `deliveryIsUncertain`. One that
     /// ended has its count settled by its record or the fallback, counting the more insulin meanwhile.
