@@ -23,6 +23,10 @@ public class MedtrumPumpManager: DeviceManager {
     private let logDeviceIdentifierLock = NSLock()
     private var logDeviceIdentifierStorage = ""
 
+    // Claimed before the bolus is sent: bolusDose is only set once the patch has accepted it
+    private let bolusEnactLock = NSLock()
+    private var isEnactingBolus = false
+
     /// for host-app logging
     var logDeviceIdentifier: String {
         logDeviceIdentifierLock.withLock { logDeviceIdentifierStorage }
@@ -34,10 +38,10 @@ public class MedtrumPumpManager: DeviceManager {
     }
 
     var bluetooth: BluetoothManager!
-    init(state: MedtrumPumpState) {
+    init(state: MedtrumPumpState, bluetooth: BluetoothManager? = nil) {
         self.state = state
         oldState = MedtrumPumpState(rawValue: state.rawValue)
-        bluetooth = BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
+        self.bluetooth = bluetooth ?? BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
         refreshLogDeviceIdentifier()
 
         NotificationCenter.default.addObserver(
@@ -53,7 +57,7 @@ public class MedtrumPumpManager: DeviceManager {
             object: nil
         )
 
-        bluetooth.pumpManager = self
+        self.bluetooth.pumpManager = self
         MedtrumLogger.pumpManager = self
     }
 
@@ -364,10 +368,22 @@ public extension MedtrumPumpManager {
         activationType: LoopKit.BolusActivationType,
         completion: @escaping (LoopKit.PumpManagerError?) -> Void
     ) {
-        guard state.bolusState == .noBolus else {
+        let claimed = bolusEnactLock.withLock {
+            guard !isEnactingBolus, state.bolusState == .noBolus else {
+                return false
+            }
+            isEnactingBolus = true
+            return true
+        }
+        guard claimed else {
             log.error("Pump is in bolus state...")
             completion(.deviceState(MedtrumConnectError.isBolussing))
             return
+        }
+
+        let completion: (LoopKit.PumpManagerError?) -> Void = { error in
+            self.bolusEnactLock.withLock { self.isEnactingBolus = false }
+            completion(error)
         }
 
         guard state.basalState != .suspended else {
@@ -382,8 +398,6 @@ public extension MedtrumPumpManager {
         ensureConnectedAndActive { error in
             if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
-                self.resetBolusState()
-
                 completion(.communication(error))
                 return
             }
@@ -391,8 +405,6 @@ public extension MedtrumPumpManager {
             let writeResult = self.bluetooth.write(SetBolusPacket(bolusAmount: units))
             if case let .failure(error) = writeResult {
                 self.log.error("Failed to write: \(error.localizedDescription)")
-                self.resetBolusState()
-
                 completion(.communication(error))
                 return
             }
@@ -412,12 +424,6 @@ public extension MedtrumPumpManager {
 
             completion(nil)
         }
-    }
-
-    private func resetBolusState() {
-        state.bolusDose = nil
-        state.cancelingBolusSince = nil
-        notifyStateDidChange()
     }
 
     func cancelBolus(completion: @escaping (LoopKit.PumpManagerResult<LoopKit.DoseEntry?>) -> Void) {
