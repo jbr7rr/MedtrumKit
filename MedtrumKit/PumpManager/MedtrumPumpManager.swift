@@ -34,10 +34,10 @@ public class MedtrumPumpManager: DeviceManager {
     }
 
     var bluetooth: BluetoothManager!
-    init(state: MedtrumPumpState) {
+    init(state: MedtrumPumpState, bluetooth: BluetoothManager? = nil) {
         self.state = state
         oldState = MedtrumPumpState(rawValue: state.rawValue)
-        bluetooth = BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
+        self.bluetooth = bluetooth ?? BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
         refreshLogDeviceIdentifier()
 
         NotificationCenter.default.addObserver(
@@ -376,8 +376,15 @@ public extension MedtrumPumpManager {
             return
         }
 
-        let duration = estimatedDuration(toBolus: units)
-        log.info("Enact bolus - \(units)U, \(duration)sec")
+        let enactUnits = roundToSupportedBolusVolume(units: units)
+        guard enactUnits > 0 else {
+            log.error("Bolus of \(units)U is below the minimum bolus...")
+            completion(.configuration(nil))
+            return
+        }
+
+        let duration = estimatedDuration(toBolus: enactUnits)
+        log.info("Enact bolus - \(enactUnits)U, \(duration)sec")
 
         ensureConnectedAndActive { error in
             if let error = error {
@@ -388,7 +395,7 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let writeResult = self.bluetooth.write(SetBolusPacket(bolusAmount: units))
+            let writeResult = self.bluetooth.write(SetBolusPacket(bolusAmount: enactUnits))
             if case let .failure(error) = writeResult {
                 self.log.error("Failed to write: \(error.localizedDescription)")
                 self.resetBolusState()
@@ -398,7 +405,7 @@ public extension MedtrumPumpManager {
             }
 
             let doseEntry = UnfinalizedDose(
-                units: units,
+                units: enactUnits,
                 duration: duration,
                 activationType: activationType,
                 insulinType: self.state.insulinType
@@ -485,7 +492,8 @@ public extension MedtrumPumpManager {
         automatic: Bool,
         completion: @escaping (LoopKit.PumpManagerError?) -> Void
     ) {
-        log.info("Setting temp basal at \(unitsPerHour)U/hr for \(duration)s")
+        let rate = roundToSupportedBasalRate(unitsPerHour: unitsPerHour)
+        log.info("Setting temp basal at \(rate)U/hr for \(duration)s")
 
         guard state.bolusState == .noBolus else {
             log.error("Pump is in bolus state...")
@@ -522,7 +530,7 @@ public extension MedtrumPumpManager {
                 return
             }
 
-            let packet = SetTempBasalPacket(rate: unitsPerHour, duration: duration)
+            let packet = SetTempBasalPacket(rate: rate, duration: duration)
             let tempBasalResult = self.bluetooth.write(packet)
 
             if case let .failure(error) = tempBasalResult {
@@ -538,7 +546,7 @@ public extension MedtrumPumpManager {
             self.log.info("Set temp basal!")
 
             let tempBasalDose = UnfinalizedDose(
-                tempRate: unitsPerHour,
+                tempRate: rate,
                 duration: duration,
                 insulinType: self.state.insulinType,
                 automatic: automatic
