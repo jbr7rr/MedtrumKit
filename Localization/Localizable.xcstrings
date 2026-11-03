@@ -7942,6 +7942,17 @@
         }
       }
     },
+    "Bolus issue. Bolus is below the minimum of 0.05U" : {
+      "comment" : "MedtrumError bolus below minimum",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bolus issue. Bolus is below the minimum of 0.05U"
+          }
+        }
+      }
+    },
     "Bolus issue. Patch is already bolussing" : {
       "comment" : "MedtrumError patch bolussing",
       "extractionState" : "manual",
