@@ -53,7 +53,7 @@ public class MedtrumPumpManager: DeviceManager {
             object: nil
         )
 
-        bluetooth.pumpManager = self
+        self.bluetooth.pumpManager = self
         MedtrumLogger.pumpManager = self
     }
 
@@ -379,7 +379,7 @@ public extension MedtrumPumpManager {
         let enactUnits = roundToSupportedBolusVolume(units: units)
         guard enactUnits > 0 else {
             log.error("Bolus of \(units)U is below the minimum bolus...")
-            completion(.configuration(nil))
+            completion(.deviceState(MedtrumConnectError.isBelowMinimumBolus))
             return
         }
 
