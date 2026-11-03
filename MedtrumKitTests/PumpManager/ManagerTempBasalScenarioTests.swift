@@ -3323,7 +3323,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
 
     /// The same unanswered cancel, then a cancel answered whose record cannot be read: final from our estimate - shown
     /// so, not as settled by its record
-    func testUnansweredCancelOfATempBasalFinalizedFromOurEstimateIsShownSo() {
+    func testUnansweredCancelOfATempBasalFinalizedFromOurEstimateIsShownSo() throws {
         runTempBasalOfOurs()
 
         link.script(CommandType.CANCEL_TEMP_BASAL, .timeout)
@@ -3340,6 +3340,184 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
 
         XCTAssertEqual(uncertain.map(\.phase), [.settled(.byEstimate)])
         XCTAssertEqual(uncertain.first?.delivered ?? 0, 0.4, accuracy: 0.001, "our estimate")
+        // No status showed it still running
+        let delivery = try XCTUnwrap(pumpManager.state.uncertainDeliveries.first)
+        XCTAssertFalse(delivery.cancelDidNotStop)
+        let status = settingsNotice(for: delivery).status
+        XCTAssertFalse(status.contains("The cancel did not stop it"), status)
+    }
+
+    /// The same, a full status showing the temp basal still running after the cancel, then its record: the settled
+    /// note keeps saying the cancel did not stop it - saved and read back too
+    func testSettledCancelThatDidNotStopItsTempBasalKeepsSayingSo() throws {
+        runTempBasalOfOurs()
+
+        link.script(CommandType.CANCEL_TEMP_BASAL, .timeout)
+        guard case .uncertainDelivery? = commandTempBasal(0.5, duration: 30 * Self.minute) else {
+            XCTFail("Not uncertain")
+            return
+        }
+        settle()
+        link.deliverFullStatus(
+            notification: PatchBytes.basalNotification(type: .ABSOLUTE_TEMP, sequence: 130, patchId: 251, start: Self.ourStart, rate: 1.2),
+            duringReconnect: false
+        )
+        settle()
+        XCTAssertEqual(pumpManager.state.uncertainDeliveries.first?.cancelDidNotStop, true, "shown still running")
+
+        scriptCancelAndSet()
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+        XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
+        settle()
+
+        let delivery = try XCTUnwrap(pumpManager.state.uncertainDeliveries.first)
+        XCTAssertEqual(pumpManager.state.phase(of: delivery), .settled(.byRecord))
+        XCTAssertTrue(delivery.cancelDidNotStop)
+        let status = settingsNotice(for: delivery).status
+        XCTAssertTrue(status.hasPrefix("The cancel did not stop it: the patch kept running it. "), status)
+        XCTAssertTrue(status.contains("Settled by the patch's records"), status)
+
+        let data = try PropertyListSerialization.data(fromPropertyList: pumpManager.state.rawValue, format: .binary, options: 0)
+        let saved = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        XCTAssertEqual(MedtrumPumpState(rawValue: saved).uncertainDeliveries.first?.cancelDidNotStop, true)
+
+        // Its day counted on the manager's clock, which settled it
+        advanceClock(by: 23 * Self.hour)
+        XCTAssertEqual(pumpManager.state.uncertainDeliveries.count, 1)
+        advanceClock(by: 2 * Self.hour)
+        XCTAssertTrue(pumpManager.state.uncertainDeliveries.isEmpty)
+    }
+
+    /// A cancel unanswered, a status showing the temp basal still running, then a second cancel unanswered: the one
+    /// note forgets the first cancel's, and its record settles it with no word of a cancel that did not stop it
+    func testSecondUnansweredCancelClearsWhatTheFirstOneShowed() throws {
+        let status = try settledStatusAfterTwoUnansweredCancels(shownRunningAfterTheSecond: false)
+        XCTAssertFalse(status.contains("The cancel did not stop it"), status)
+    }
+
+    /// The same, a status showing it still running after the second cancel too: said again, of that one
+    func testSecondUnansweredCancelShownNotToStopItIsSaidSo() throws {
+        let status = try settledStatusAfterTwoUnansweredCancels(shownRunningAfterTheSecond: true)
+        XCTAssertTrue(status.hasPrefix("The cancel did not stop it: the patch kept running it. "), status)
+    }
+
+    /// What the settings screen says of the one cancel note once its temp basal's record settled it
+    private func settledStatusAfterTwoUnansweredCancels(shownRunningAfterTheSecond: Bool) throws -> String {
+        runTempBasalOfOurs()
+        let stillRunning = PatchBytes.basalNotification(type: .ABSOLUTE_TEMP, sequence: 130, patchId: 251, start: Self.ourStart, rate: 1.2)
+
+        link.script(CommandType.CANCEL_TEMP_BASAL, .timeout)
+        guard case .uncertainDelivery? = commandTempBasal(0.5, duration: 30 * Self.minute) else {
+            XCTFail("Not uncertain")
+            return ""
+        }
+        settle()
+        link.deliverFullStatus(notification: stillRunning, duringReconnect: false)
+        settle()
+        XCTAssertEqual(pumpManager.state.uncertainDeliveries.first?.cancelDidNotStop, true, "shown still running")
+
+        link.script(CommandType.CANCEL_TEMP_BASAL, .timeout)
+        guard case .uncertainDelivery? = commandTempBasal(0.5, duration: 30 * Self.minute) else {
+            XCTFail("Second not uncertain")
+            return ""
+        }
+        settle()
+        XCTAssertEqual(uncertain.map(\.kind), [.tempBasalCancel], "one note of the dose")
+        XCTAssertEqual(uncertain.first?.phase, .countedRunning)
+        XCTAssertEqual(pumpManager.state.uncertainDeliveries.first?.cancelDidNotStop, false, "the second cancel's not known")
+
+        if shownRunningAfterTheSecond {
+            link.deliverFullStatus(notification: stillRunning, duringReconnect: false)
+            settle()
+            XCTAssertEqual(pumpManager.state.uncertainDeliveries.first?.cancelDidNotStop, true, "shown still running again")
+        }
+
+        scriptCancelAndSet()
+        link.script(CommandType.GET_RECORD, recordOfOurTempBasal(delivered: 0.35))
+        XCTAssertNil(commandTempBasal(0.5, duration: 30 * Self.minute))
+        settle()
+
+        let delivery = try XCTUnwrap(pumpManager.state.uncertainDeliveries.first)
+        XCTAssertEqual(pumpManager.state.phase(of: delivery), .settled(.byRecord))
+        XCTAssertEqual(delivery.cancelDidNotStop, shownRunningAfterTheSecond)
+        return settingsNotice(for: delivery).status
+    }
+
+    /// Shown still running, then ended, waiting on its record: it still says the cancel did not stop it
+    func testCancelThatDidNotStopItsTempBasalSaysSoWhileItsRecordIsAwaited() {
+        var delivery = UncertainDelivery(
+            kind: .tempBasalCancel,
+            cause: .unanswered,
+            sentAt: Self.ourStart,
+            amount: 1.2,
+            duration: 30 * Self.minute,
+            notedAt: Self.ourStart.addingTimeInterval(10 * Self.minute)
+        )
+        delivery.cancelDidNotStop = true
+        let viewModel = MedtrumKitSettingsViewModel(nil, {}, { _ in }, {}, {}, {}, {}, {}, {}, {}, {})
+
+        let awaiting = viewModel.notice(for: delivery, phase: .awaitingRecord).status
+        XCTAssertTrue(awaiting.hasPrefix("The cancel did not stop it: the patch kept running it. "), awaiting)
+        XCTAssertTrue(awaiting.contains("Final once its record is read."), awaiting)
+
+        let running = viewModel.notice(for: delivery, phase: .stillRunning).status
+        XCTAssertFalse(running.contains("The cancel did not stop it: the patch kept running it."), "said once: \(running)")
+    }
+
+    /// A note saved by a build that did not keep whether a cancel stopped its temp basal reads back as not shown so
+    func testUncertainDeliverySavedWithoutTheCancelFlagReadsBack() throws {
+        var delivery = UncertainDelivery(
+            kind: .tempBasalCancel,
+            cause: .unanswered,
+            sentAt: Self.ourStart,
+            amount: 1.2,
+            duration: 30 * Self.minute,
+            notedAt: Self.ourStart.addingTimeInterval(10 * Self.minute)
+        )
+        XCTAssertNil(delivery.rawValue["cancelDidNotStop"])
+        delivery.cancelDidNotStop = true
+        XCTAssertEqual(UncertainDelivery(rawValue: delivery.rawValue), delivery)
+
+        var raw = delivery.rawValue
+        raw["cancelDidNotStop"] = nil
+        let old = try XCTUnwrap(UncertainDelivery(rawValue: raw))
+        XCTAssertFalse(old.cancelDidNotStop)
+        XCTAssertEqual(old.kind, .tempBasalCancel)
+        XCTAssertEqual(old.sentAt, Self.ourStart)
+    }
+
+    /// Settled notes drop out a day after they were settled - as they are read, and from the state saved. Never one
+    /// not settled, however old.
+    func testSettledUncertainDeliveriesDropOutADayAfterTheyWereSettled() throws {
+        let now = Date.now
+        func note(_ index: Int, settledAgo: TimeInterval?) -> UncertainDelivery {
+            let sentAt = now.addingTimeInterval(-30 * Self.hour + TimeInterval(index))
+            var delivery = UncertainDelivery(kind: .tempBasalCancel, cause: .unanswered, sentAt: sentAt, amount: 0, notedAt: sentAt)
+            if let settledAgo {
+                delivery.outcome = .byRecord
+                delivery.delivered = 0
+                delivery.settledAt = now.addingTimeInterval(-settledAgo)
+            }
+            return delivery
+        }
+        let old = note(0, settledAgo: 25 * Self.hour)
+        let recent = note(1, settledAgo: 23 * Self.hour)
+        let unsettled = note(2, settledAgo: nil)
+
+        XCTAssertEqual(UncertainDelivery.kept([old, recent, unsettled], at: now), [recent, unsettled])
+        XCTAssertEqual(UncertainDelivery.kept([recent, unsettled], at: now.addingTimeInterval(2 * Self.hour)), [unsettled])
+
+        // Settled with no time of it: counted from when it was noted
+        var undated = note(3, settledAgo: Self.hour)
+        undated.settledAt = nil
+        XCTAssertEqual(UncertainDelivery.kept([undated], at: undated.notedAt.addingTimeInterval(23 * Self.hour)), [undated])
+        XCTAssertEqual(UncertainDelivery.kept([undated], at: undated.notedAt.addingTimeInterval(25 * Self.hour)), [])
+
+        let state = MedtrumPumpState(nil)
+        state.mutateUncertainDeliveries { $0 = [old, recent, unsettled] }
+        XCTAssertEqual(state.uncertainDeliveries, [recent, unsettled])
+        let saved = try XCTUnwrap(state.rawValue["uncertainDeliveries"] as? [UncertainDelivery.RawValue])
+        XCTAssertEqual(saved.compactMap(UncertainDelivery.init(rawValue:)), [recent, unsettled])
     }
 
     /// The record of a temp basal that is final, read again - the cursor saved before it moved past it - by a sync:
@@ -5226,6 +5404,12 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
     /// Where our temp basal started, on the patch clock, and where the cancel ended it 20 min later
     private static let ourStart = patchTime(400_000_000)
     private static let ourEnd = patchTime(400_001_200)
+
+    /// What the settings screen says of `delivery`
+    private func settingsNotice(for delivery: UncertainDelivery) -> UncertainDeliveryNotice {
+        MedtrumKitSettingsViewModel(nil, {}, { _ in }, {}, {}, {}, {}, {}, {}, {}, {})
+            .notice(for: delivery, phase: pumpManager.state.phase(of: delivery))
+    }
 
     /// 1.2 U/h of ours, 30 min, running for 20 min, every record read up to `sequence`
     @discardableResult private func runTempBasalOfOurs(patchId: UInt64 = 251, sequence: Int = 130) -> UnfinalizedDose {

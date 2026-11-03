@@ -274,7 +274,8 @@ public struct HeldBasalDose {
 }
 
 /// A dose the driver could not be sure of - what the warning of uncertain delivery was about - for the settings
-/// screen: why, and, once it is final, how it was settled. Kept until the user clears it.
+/// screen: why, and, once it is final, how it was settled. Kept until the user clears it, or a day after it was settled
+/// (`keptSettled`).
 public struct UncertainDelivery: RawRepresentable, Equatable {
     public typealias RawValue = [String: Any]
 
@@ -350,6 +351,9 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
     /// The record that settled it, where known
     public internal(set) var record: Int?
     public internal(set) var settledAt: Date?
+    /// A cancel's: a status showed its temp basal still running after it - told of once settled too. False in a state
+    /// saved before it was kept.
+    public internal(set) var cancelDidNotStop = false
 
     public init(kind: Kind, cause: Cause, sentAt: Date, amount: Double, duration: TimeInterval? = nil, notedAt: Date) {
         self.kind = kind
@@ -380,6 +384,7 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
         delivered = rawValue["delivered"] as? Double
         record = rawValue["record"] as? Int
         settledAt = rawValue["settledAt"] as? Date
+        cancelDidNotStop = rawValue["cancelDidNotStop"] as? Bool ?? false
     }
 
     public var rawValue: RawValue {
@@ -395,11 +400,27 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
         raw["delivered"] = delivered
         raw["record"] = record
         raw["settledAt"] = settledAt
+        if cancelDidNotStop {
+            raw["cancelDidNotStop"] = true
+        }
         return raw
     }
 
     public var isSettled: Bool {
         outcome != nil
+    }
+
+    /// How long one stays listed once settled
+    static let keptSettled: TimeInterval = .hours(24)
+
+    /// `deliveries` without the ones settled more than `keptSettled` before `now`. Never one not settled.
+    static func kept(_ deliveries: [UncertainDelivery], at now: Date) -> [UncertainDelivery] {
+        deliveries.filter { delivery in
+            guard delivery.isSettled else {
+                return true
+            }
+            return now.timeIntervalSince(delivery.settledAt ?? delivery.notedAt) <= keptSettled
+        }
     }
 
     /// Whether it is about `dose`
@@ -969,8 +990,9 @@ public class MedtrumPumpState: RawRepresentable {
     private let awaitingRecordStorage: Locked<[UnfinalizedDose]>
 
     /// The doses the driver could not be sure of, oldest first - see `UncertainDelivery`. Locked, as `awaitingRecord`.
+    /// Without the ones settled over a day ago: they drop out as the settings screen reads them and as the state is saved.
     public var uncertainDeliveries: [UncertainDelivery] {
-        uncertainDeliveriesStorage.value
+        UncertainDelivery.kept(uncertainDeliveriesStorage.value, at: wallClock())
     }
 
     func mutateUncertainDeliveries(_ changes: (inout [UncertainDelivery]) -> Void) {
@@ -1127,6 +1149,8 @@ public class MedtrumPumpState: RawRepresentable {
     var basalDoseSince: TimeInterval?
     /// The manager's monotonic clock (`MedtrumPumpManager.uptime`) - only tests move it
     var monotonicClock: () -> TimeInterval = { .continuousUptime }
+    /// The manager's `now`, which settles uncertain deliveries: the one their day is counted on
+    var wallClock: () -> Date = { Date.now }
     public var basalSchedule: BasalSchedule
 
     public var basalDeliveryState: PumpManagerStatus.BasalDeliveryState {

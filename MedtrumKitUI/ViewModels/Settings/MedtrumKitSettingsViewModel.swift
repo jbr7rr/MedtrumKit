@@ -481,7 +481,7 @@ extension MedtrumKitSettingsViewModel {
         uncertainDeliveries = state.uncertainDeliveries.reversed().map { notice(for: $0, phase: state.phase(of: $0)) }
     }
 
-    private func notice(for delivery: UncertainDelivery, phase: UncertainDelivery.Phase) -> UncertainDeliveryNotice {
+    func notice(for delivery: UncertainDelivery, phase: UncertainDelivery.Phase) -> UncertainDeliveryNotice {
         let amount = unitsFormatter.string(from: delivery.amount as NSNumber) ?? "\(delivery.amount)"
         let delivered = delivery.delivered.map { unitsFormatter.string(from: $0 as NSNumber) ?? "\($0)" } ?? "-"
 
@@ -536,7 +536,7 @@ extension MedtrumKitSettingsViewModel {
             )
         }
 
-        let status: String
+        var status: String
         switch phase {
         case .countedInFull:
             status = String(
@@ -632,6 +632,13 @@ extension MedtrumKitSettingsViewModel {
                 localized: "Not counted: what it delivered is not known.",
                 comment: "uncertain delivery status: an unknown temp basal, not counted"
             )
+        }
+        // A cancel the patch did not act on: still so once its temp basal ended, waiting on its record or settled
+        if delivery.cancelDidNotStop, phase != .stillRunning {
+            status = String(
+                localized: "The cancel did not stop it: the patch kept running it.",
+                comment: "uncertain delivery status: settled cancel, its temp basal shown still running after it"
+            ) + " " + status
         }
 
         let advice: String?

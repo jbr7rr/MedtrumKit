@@ -34342,6 +34342,9 @@
         }
       }
     },
+    "The cancel did not stop it: the patch kept running it." : {
+      "comment" : "uncertain delivery status: settled cancel, its temp basal shown still running after it"
+    },
     "The patch did not answer the command for a bolus of %@ U, and its records do not show it. The full amount was counted as delivered." : {
 
     },

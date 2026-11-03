@@ -184,6 +184,44 @@ final class PatchRecordTests: XCTestCase {
         XCTAssertEqual(RecordSyncer.cursorAfterReading(reported: 3, requested: 30, current: 40), 30)
     }
 
+    // MARK: - Empty-reservoir end
+
+    private func tempBasalRecord(
+        type: BasalType = .ABSOLUTE_TEMP,
+        endReason: BasalEndReason = .STOP_EMPTY,
+        minutes: Double,
+        rate: Double,
+        delivered: Double
+    ) -> PumpRecord {
+        .basal(BasalRecord(
+            type: type,
+            endReason: endReason,
+            rawEndReason: endReason.rawValue,
+            startTime: t0,
+            endTime: t0.addingTimeInterval(.minutes(minutes)),
+            rate: rate,
+            delivered: delivered,
+            percent: 0
+        ))
+    }
+
+    /// The dry-outs' records: 11-03 #2043 and 10-30 #1704 claim a step or more over rate × duration, 10-26 #1641 only
+    /// its rounding
+    func testEmptyStopOvercountIsToldOfOnlyAStepOrMoreOverRateTimesDuration() throws {
+        let overcount = try XCTUnwrap(RecordSyncer.emptyStopOvercount(of: tempBasalRecord(minutes: 1.5, rate: 0.35, delivered: 0.1)))
+        XCTAssertTrue(overcount.contains("claiming 0.10U"), overcount)
+        XCTAssertTrue(overcount.contains("0.35U/h × 1.5min = 0.009U"), overcount)
+
+        XCTAssertNotNil(RecordSyncer.emptyStopOvercount(of: tempBasalRecord(minutes: 1.4, rate: 5.7, delivered: 0.2)))
+        XCTAssertNil(RecordSyncer.emptyStopOvercount(of: tempBasalRecord(minutes: 3.2, rate: 4.6, delivered: 0.25)))
+        XCTAssertNil(RecordSyncer.emptyStopOvercount(of: tempBasalRecord(minutes: 2, rate: 0, delivered: 0)))
+    }
+
+    func testEmptyStopOvercountIsNotToldOfForOtherEndsOrScheduledBasal() {
+        XCTAssertNil(RecordSyncer.emptyStopOvercount(of: tempBasalRecord(endReason: .SUCCESS, minutes: 1.5, rate: 0.35, delivered: 0.1)))
+        XCTAssertNil(RecordSyncer.emptyStopOvercount(of: tempBasalRecord(type: .STANDARD, minutes: 1.5, rate: 0.35, delivered: 0.1)))
+    }
+
     // MARK: - Fallback
 
     func testFallbackIsDueCaughtUpAfter15MinutesOrAfter60MinutesAnyway() {

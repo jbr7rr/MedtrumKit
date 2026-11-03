@@ -830,6 +830,10 @@ enum RecordSyncer {
             logger.warning("\(prefix): \(mismatch)")
         }
 
+        if let overcount = emptyStopOvercount(of: response.record) {
+            logger.warning("\(prefix): \(overcount)")
+        }
+
         store.store(StoredPumpRecord(
             id: response.sequence,
             fetchedAt: Date.now,
@@ -868,6 +872,23 @@ enum RecordSyncer {
         let set = patchUTCOffset.map { "the one set on the patch \(offsetText(Int($0 / 60)))" } ?? "none known set on the patch"
         let phoneText = "the phone's \(offsetText(phone))" + (phoneAsSet != phone ? ", set on a patch as \(offsetText(phoneAsSet))" : "")
         return "the record's time-zone offset is \(offsetText(offset)), \(set), \(phoneText)"
+    }
+
+    /// A temp basal's record ended on an empty reservoir claims more than its rate over its duration, in 0.05 U steps:
+    /// seen on dry-outs (0.10 U for 0.35 U/h over 1.5 min), the reservoir's drop short of it. Told of in the log only, as
+    /// evidence: the record is taken as it is. Nil for any other record.
+    static func emptyStopOvercount(of record: PumpRecord) -> String? {
+        guard case let .basal(basal) = record, basal.type.isTempBasal(), basal.endReason == .STOP_EMPTY else {
+            return nil
+        }
+
+        let byRate = basal.rate * basal.duration.hours
+        guard steps(basal.delivered) > steps(byRate) else {
+            return nil
+        }
+
+        return "ended on an empty reservoir claiming \(units(basal.delivered)), more than its rate × duration: " +
+            "\(units(basal.rate))/h × \(minutes(basal.duration)) = \(String(format: "%.3fU", byRate)) - taken as it is"
     }
 
     /// An offset as "120 min (UTC+2)"

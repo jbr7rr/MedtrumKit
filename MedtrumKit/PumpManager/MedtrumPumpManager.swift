@@ -119,8 +119,13 @@ public class MedtrumPumpManager: DeviceManager {
     /// arrive on, nor on the delegate queue. Recursive: the stop command reads the last records under it.
     private let commandLock = NSRecursiveLock()
 
-    /// The clock the record fallbacks and a bolus's deadline go by. Only tests move it.
-    var now: () -> Date = { Date.now }
+    /// The clock the record fallbacks and a bolus's deadline go by - and the settled uncertain deliveries' day
+    /// (`MedtrumPumpState.wallClock`). Only tests move it.
+    var now: () -> Date = { Date.now } {
+        didSet {
+            state.wallClock = now
+        }
+    }
     /// The monotonic clock, which a change of the wall clock does not move and which counts sleep
     /// (`TimeInterval.continuousUptime`): commands and the record counter's tellings are stamped on it, as statuses are
     /// (`SynchronizePacketResponse.receivedUptime`). Only tests move it.
@@ -133,6 +138,7 @@ public class MedtrumPumpManager: DeviceManager {
     public var state: MedtrumPumpState {
         didSet {
             state.doseLock = doseReportLock
+            state.wallClock = now
         }
     }
     var oldState: MedtrumPumpState
@@ -3587,7 +3593,8 @@ public extension MedtrumPumpManager {
     static let uncertainDeliveriesKept = 20
 
     /// `dose` became uncertain, as `kind` - for the settings screen, see `UncertainDelivery`. Once per dose and kind: the
-    /// first cause stays. Only under `doseReportLock`.
+    /// first cause stays. A cancel's note noted again is for a later cancel: its `cancelDidNotStop` is cleared, that
+    /// cancel's own still to be shown. Only under `doseReportLock`.
     internal func noteUncertainDelivery(_ kind: UncertainDelivery.Kind, _ cause: UncertainDelivery.Cause, of dose: UnfinalizedDose) {
         // Final, nothing would settle it
         guard !dose.isFinalized else {
@@ -3604,7 +3611,12 @@ public extension MedtrumPumpManager {
             notedAt: now()
         )
         state.mutateUncertainDeliveries { deliveries in
-            guard !deliveries.contains(where: { $0.kind == kind && $0.isOf(key) && !$0.isSettled }) else {
+            if let index = deliveries.firstIndex(where: { $0.kind == kind && $0.isOf(key) && !$0.isSettled }) {
+                // Another cancel of it unanswered: whether this one stopped it is not known - a status showing it still
+                // running marks it again (`noteCancelDidNotStop`), so the settled note tells of the last cancel
+                if kind == .tempBasalCancel {
+                    deliveries[index].cancelDidNotStop = false
+                }
                 return
             }
             deliveries.append(delivery)
@@ -3633,6 +3645,19 @@ public extension MedtrumPumpManager {
                 case .notConfirmed, .final, .untracked, .notCounted:
                     break
                 }
+            }
+        }
+    }
+
+    /// A status showed `dose` still running after its cancel went unanswered: its cancel's note keeps saying so once
+    /// settled. Only under `doseReportLock`.
+    private func noteCancelDidNotStop(_ dose: UnfinalizedDose) {
+        let key = UncertainDelivery.DoseKey(dose)
+        state.mutateUncertainDeliveries { deliveries in
+            for index in deliveries.indices
+                where deliveries[index].kind == .tempBasalCancel && !deliveries[index].isSettled && deliveries[index].isOf(key)
+            {
+                deliveries[index].cancelDidNotStop = true
             }
         }
     }
@@ -6218,6 +6243,7 @@ public extension MedtrumPumpManager {
                         if fullSync, let stopUnansweredAt = running.stopUnansweredAt, receivedAt > stopUnansweredAt,
                            dose.clearStopUnanswered()
                         {
+                            noteCancelDidNotStop(dose)
                             log.info("A full status shows the temp basal of \(dose.startDate) still running after its unanswered cancel")
                         }
                         return

@@ -36,8 +36,9 @@ public class UnfinalizedDose {
         case uncertain
     }
 
-    /// A running bolus's end is estimated, and an end we never saw extrapolated, at this rate: the slow end of what the
-    /// patch was seen delivering, so the estimated end errs late
+    /// A running bolus's end is estimated, and an end we never saw extrapolated, at this rate. Patches were seen
+    /// delivering at 0.77–1.67 U/min, so on a slow patch the estimated end is early: 3 U ran about 55 s past it at
+    /// 0.77 U/min. Deadlines go by `deadlineBolusUnitsPerMinute`, not this.
     static let observedBolusUnitsPerMinute = 1.0
 
     /// What a bolus's deadline assumes the patch delivers at least - slow patches reach 0.77 U/min - plus
