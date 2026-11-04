@@ -13,7 +13,7 @@ import LoopKit
 /// while a bolus is running or a command is in flight, and stops between records when one starts: they share the link.
 /// Each record is read holding the manager's command lock, never waiting for it (`withCommandLockIfFree`).
 enum RecordSyncer {
-    private static let logger = MedtrumLogger(category: "RecordSyncer")
+    static let logger = MedtrumLogger(category: "RecordSyncer")
 
     enum Trigger: String {
         /// The full sync the loop asks for, before the loop hears back: a few records only
@@ -62,7 +62,7 @@ enum RecordSyncer {
     private static let awaitingDosesInterval: TimeInterval = .minutes(1)
 
     /// The before-stop read waits this long for a run in progress - which yields to the stop between two records
-    private static let beforeStopWait: TimeInterval = 35
+    static let beforeStopWait: TimeInterval = 35
 
     private struct RunState {
         var isRunning = false
@@ -123,7 +123,7 @@ enum RecordSyncer {
     }
 
     /// Waits out a run in progress rather than skipping it: it yields between two records to the command this runs for
-    private static func beginWaiting(_ trigger: Trigger?, timeout: TimeInterval) -> Bool {
+    static func beginWaiting(_ trigger: Trigger?, timeout: TimeInterval) -> Bool {
         let deadline = Date.now.addingTimeInterval(timeout)
 
         while begin(trigger) != .began {
@@ -136,7 +136,7 @@ enum RecordSyncer {
         return true
     }
 
-    private static func end() {
+    static func end() {
         runState.mutate { $0.isRunning = false }
     }
 
@@ -375,7 +375,7 @@ enum RecordSyncer {
 
     /// Reconciles a record read off the patch - unless it was applied already (`outcome`) - stores it for the debug
     /// screen, and moves the cursor past it - after what it finalizes has been handed to the host
-    private static func apply(
+    static func apply(
         _ response: GetRecordResponse,
         requested: Int,
         current: Int,
@@ -418,267 +418,7 @@ enum RecordSyncer {
         pumpManager.settleReleasedBolusBacklogRecord()
     }
 
-    /// Reads the records the patch wrote for a temp basal of ours as it ended, up to the last one it named, and has it
-    /// reported final with what followed it - see `MedtrumPumpManager.TempBasalEnd`. On the caller's thread, which may
-    /// block on the link, holding the command lock: a full status's, or the end queue's. A run in progress is waited
-    /// out: it yields between two records to the lock held here. Each record is asked for once: on the first that can't
-    /// be read, or the first that is not the one asked for, it stops, and our estimate stands in. Not while a bolus
-    /// runs: its notifications and a cancel have the link - read once it is over
-    /// (`MedtrumPumpManager.readsTempBasalEndAfterBolus`).
-    static func finishTempBasalEnd(pumpManager: MedtrumPumpManager) {
-        guard let ending = pumpManager.pendingTempBasalEnd else {
-            return
-        }
-        // A bolus running - a halt's notification ahead of its completion: read once it is over
-        if pumpManager.readsTempBasalEndAfterBolus(ending) {
-            return
-        }
-        guard mayRead(ending, pumpManager: pumpManager) else {
-            return
-        }
-
-        guard beginWaiting(nil, timeout: beforeStopWait) else {
-            _ = pumpManager.settleTempBasalEnd(ending, records: [], unread: "a record sync held the link")
-            return
-        }
-        defer { end() }
-
-        finishTempBasalEndInFlight(
-            pumpManager: pumpManager,
-            until: pumpManager.now().addingTimeInterval(MedtrumPumpManager.tempBasalEndReadBudget)
-        )
-    }
-
-    /// The same, on a command's own thread, holding the command lock: no other command comes between its answer and
-    /// these reads. They end by `deadline`. A run in progress stops at its next record, seeing the command: it is given
-    /// `inCommandRunWait` of that time to, then our estimate stands in.
-    static func finishTempBasalEnd(pumpManager: MedtrumPumpManager, inCommandUntil deadline: Date) {
-        guard let ending = pumpManager.pendingTempBasalEnd, mayRead(ending, pumpManager: pumpManager) else {
-            return
-        }
-
-        let wait = min(inCommandRunWait, max(0, deadline.timeIntervalSince(pumpManager.now())))
-        guard beginWaiting(nil, timeout: wait) else {
-            _ = pumpManager.settleTempBasalEnd(ending, records: [], unread: "a record sync was running")
-            return
-        }
-        defer { end() }
-
-        finishTempBasalEndInFlight(pumpManager: pumpManager, until: deadline)
-    }
-
-    /// How long a command's read waits for a run in progress to stop - the loop's own sync, say, that its follow-up
-    /// started just before
-    static let inCommandRunWait: TimeInterval = 1.5
-
-    /// Whether the records of `ending` would be read now: it names its last - or the temp basals ended open before it
-    /// do, see `MedtrumPumpManager.lastRecordToRead` - and no bolus runs. Those of the temp basals ended open before it are
-    /// read with them, numbered before.
-    static func wouldRead(_ ending: MedtrumPumpManager.TempBasalEnd, pumpManager: MedtrumPumpManager) -> Bool {
-        pumpManager.lastRecordToRead(for: ending) != nil && pumpManager.state.bolusDose == nil
-    }
-
-    /// Whether the records of `ending` are to be read at all - if not, it is settled from our estimate here. Not yet
-    /// while it waits for a status to name its last record (`TempBasalEnd.awaitsRecord`): read once one does.
-    private static func mayRead(_ ending: MedtrumPumpManager.TempBasalEnd, pumpManager: MedtrumPumpManager) -> Bool {
-        guard !ending.awaitsRecord else {
-            logger.debug("The records of the temp basal of \(ending.dose.startDate) are read once a status names its last")
-            return false
-        }
-        guard wouldRead(ending, pumpManager: pumpManager) else {
-            _ = pumpManager.settleTempBasalEnd(
-                ending,
-                records: [],
-                unread: pumpManager.lastRecordToRead(for: ending) == nil ? "no record of its end is known" : "a bolus is running"
-            )
-            return false
-        }
-        return true
-    }
-
-    /// `finishTempBasalEnd`, the run already this one's, reading until `deadline` on the manager's clock
-    private static func finishTempBasalEndInFlight(pumpManager: MedtrumPumpManager, until deadline: Date) {
-        // Its last record named by a status yet to come: read then - not settled here meanwhile
-        guard let ending = pumpManager.pendingTempBasalEnd, !ending.awaitsRecord else {
-            return
-        }
-        pumpManager.noteTempBasalEndReadBegins(ending)
-
-        let state = pumpManager.state
-        let patchId = state.patchId
-        let store = pumpManager.recordStore
-        var records: [GetRecordResponse] = []
-        var unread: String?
-
-        // Off a command, the patch suspended: longer, for a slow link - see `tempBasalEndSuspendedReadBudget`
-        let suspendedDeadline = max(
-            deadline,
-            pumpManager.now().addingTimeInterval(MedtrumPumpManager.tempBasalEndSuspendedReadBudget)
-        )
-
-        if let last = pumpManager.lastRecordToRead(for: ending), !patchId.isEmpty {
-            let first = state.syncedSequenceNumber + 1
-
-            if last < first {
-                unread = "its record \(last) was read before it ended"
-            } else if last - first >= MedtrumPumpManager.tempBasalEndMaxRecords {
-                unread = "records \(first)...\(last) are too many to read now"
-            } else {
-                logger.info("Reading records \(first)...\(last), of the temp basal of \(ending.dose.startDate) that ended")
-
-                reading: for sequence in first ... last {
-                    // Less than a round trip left, and the record would be asked for only to be given up on
-                    let longer = pumpManager.readsLongerAsTempBasalEnds
-                    let left = (longer ? suspendedDeadline : deadline).timeIntervalSince(pumpManager.now())
-                    guard left >= MedtrumPumpManager.tempBasalEndRecordReadMinimum else {
-                        let budget = longer ? MedtrumPumpManager.tempBasalEndSuspendedReadBudget : MedtrumPumpManager.tempBasalEndReadBudget
-                        unread = "the \(Int(budget)) s to read them ran out at \(sequence)"
-                        break reading
-                    }
-
-                    store.setStatus(.syncing(sequence: sequence, upTo: last))
-
-                    let timeout = min(left, MedtrumPumpManager.tempBasalEndRecordTimeout)
-                    switch readOnce(sequence, patchId: patchId, pumpManager: pumpManager, timeout: timeout) {
-                    case let .record(response):
-                        guard response.sequence == sequence, isSamePatch(response.patchId, patchId.toUInt64()) else {
-                            unread = "record \(sequence) came back as \(response.sequence) of patch \(response.patchId)"
-                            break reading
-                        }
-                        records.append(response)
-
-                        // Its own records read, adding up to where it is shown to have ended: the ones after them say
-                        // nothing of it - left to the sync
-                        if sequence < last, pumpManager.settlesTempBasalEnd(ending, records: records) {
-                            logger.info(
-                                "Record(s) up to \(sequence) settle the temp basal of \(ending.dose.startDate), " +
-                                    "\(sequence + 1)...\(last) are left to the sync"
-                            )
-                            break reading
-                        }
-
-                    case let .bad(problem):
-                        unread = "record \(sequence): \(problem)"
-                        break reading
-
-                    case let .linkLost(error):
-                        unread = "record \(sequence): \(error.errorDescription)"
-                        break reading
-                    }
-                }
-
-                if let unread {
-                    logger.warning("Stopped reading the records of the temp basal of \(ending.dose.startDate): \(unread)")
-                    store.setStatus(.failed(unread))
-                }
-            }
-        } else {
-            unread = "no record of its end is known"
-        }
-
-        // The session ended meanwhile - a base reset, a stop: these records are moot, and not this session's to keep
-        guard state.patchId == patchId else {
-            logger.warning("The patch session changed while the records of the temp basal of \(ending.dose.startDate) were read")
-            _ = pumpManager.settleTempBasalEnd(ending, records: [], unread: "the patch session changed while they were read")
-            return
-        }
-
-        let outcomes = pumpManager.settleTempBasalEnd(ending, records: records, unread: unread)
-
-        // As a sync would: stored, and the cursor past them - after the final went out
-        for response in records {
-            apply(
-                response,
-                requested: response.sequence,
-                current: state.currentSequenceNumber,
-                patchId: patchId,
-                pumpManager: pumpManager,
-                outcome: outcomes[response.sequence]
-            )
-        }
-        if !records.isEmpty, unread == nil {
-            store.finishedSync()
-        }
-    }
-
-    /// Reads the records from the cursor up to `last`, in order, on a command's own thread, holding the command lock,
-    /// and reconciles each as a sync would - every one: a bolus's between the cursor and `last` is not skipped. For
-    /// `what`, its record among them. Each is asked for once, `tempBasalEndRecordTimeout` at most, all of them by
-    /// `deadline`; on the first that can't be read it stops - the rest are left to the sync. A run in progress stops at
-    /// its next record, seeing the command: it is given `inCommandRunWait` to. Not more than `tempBasalEndMaxRecords`.
-    static func readInCommand(pumpManager: MedtrumPumpManager, through last: Int, until deadline: Date, of what: String) {
-        let state = pumpManager.state
-        let patchId = state.patchId
-        let first = state.syncedSequenceNumber + 1
-        guard !patchId.isEmpty, first <= last else {
-            return
-        }
-        guard last - first < MedtrumPumpManager.tempBasalEndMaxRecords else {
-            logger.info("Records \(first)...\(last) are too many to read in the command, of \(what): left to the sync")
-            return
-        }
-
-        // A temp basal's record unnamed may be among them: left to the sync, which reads them once it is named
-        if let ending = pumpManager.pendingTempBasalEnd, ending.awaitsRecord {
-            logger.info(
-                "The temp basal of \(ending.dose.startDate) waits for a status to name its record: the records of \(what) " +
-                    "are left to the sync"
-            )
-            return
-        }
-
-        let wait = min(inCommandRunWait, max(0, deadline.timeIntervalSince(pumpManager.now())))
-        guard beginWaiting(nil, timeout: wait) else {
-            logger.warning("A record sync was running: the records of \(what) are left to the next")
-            return
-        }
-        defer { end() }
-
-        logger.info("Reading records \(first)...\(last) in the command, of \(what)")
-        let store = pumpManager.recordStore
-        var unread: String?
-
-        reading: for sequence in first ... last {
-            // The cursor can run ahead, following a record that came back with a later number
-            guard sequence > state.syncedSequenceNumber else {
-                continue
-            }
-            let left = deadline.timeIntervalSince(pumpManager.now())
-            guard left >= MedtrumPumpManager.tempBasalEndRecordReadMinimum else {
-                unread = "the \(Int(MedtrumPumpManager.tempBasalEndReadBudget)) s to read them ran out at \(sequence)"
-                break reading
-            }
-
-            store.setStatus(.syncing(sequence: sequence, upTo: last))
-            let timeout = min(left, MedtrumPumpManager.tempBasalEndRecordTimeout)
-            switch readOnce(sequence, patchId: patchId, pumpManager: pumpManager, timeout: timeout) {
-            case let .record(response):
-                // The session ended while it was read: not this session's to keep
-                guard state.patchId == patchId else {
-                    unread = "the patch session changed while record \(sequence) was read"
-                    break reading
-                }
-                apply(response, requested: sequence, current: state.currentSequenceNumber, patchId: patchId, pumpManager: pumpManager)
-
-            case let .bad(problem):
-                unread = "record \(sequence): \(problem)"
-                break reading
-
-            case let .linkLost(error):
-                unread = "record \(sequence): \(error.errorDescription)"
-                break reading
-            }
-        }
-
-        if let unread {
-            logger.warning("Stopped reading the records of \(what): \(unread) - left to the sync")
-            store.setStatus(.failed(unread))
-        } else {
-            store.finishedSync()
-        }
-    }
-
-    private enum ReadResult {
+    enum ReadResult {
         case record(GetRecordResponse)
         /// The patch answered twice with nothing we can use: an error code, a garbled answer, a record that does not parse
         case bad(String)
@@ -702,7 +442,7 @@ enum RecordSyncer {
         return result
     }
 
-    private static func readOnce(
+    static func readOnce(
         _ sequence: Int,
         patchId: Data,
         pumpManager: MedtrumPumpManager,
@@ -807,241 +547,5 @@ enum RecordSyncer {
         }
 
         return nil
-    }
-
-    private static func log(
-        _ response: GetRecordResponse,
-        requested: Int,
-        expectedPatchId: UInt64,
-        outcome: String?,
-        patchUTCOffset: TimeInterval?,
-        to store: PumpRecordStore
-    ) {
-        let prefix = "record \(response.sequence)"
-
-        if response.sequence != requested {
-            logger.warning("Requested record \(requested) but got \(response.sequence)")
-        }
-
-        if !isSamePatch(response.patchId, expectedPatchId) {
-            logger.warning("\(prefix): patch id \(response.patchId), expected \(expectedPatchId)")
-        }
-
-        let (kind, summary, label, eventDate) = describe(response.record)
-        logger.info("\(prefix) \(kind): \(summary)")
-
-        let phoneOffset = TimeInterval(TimeZone.current.secondsFromGMT())
-        if let mismatch = timeZoneMismatch(of: response.record, patchUTCOffset: patchUTCOffset, phoneOffset: phoneOffset) {
-            logger.warning("\(prefix): \(mismatch)")
-        }
-
-        if let overcount = emptyStopOvercount(of: response.record) {
-            logger.warning("\(prefix): \(overcount)")
-        }
-
-        store.store(StoredPumpRecord(
-            id: response.sequence,
-            fetchedAt: Date.now,
-            kind: kind,
-            summary: summary,
-            label: label,
-            eventDate: eventDate,
-            outcome: outcome
-        ))
-    }
-
-    /// The patch keeps the time zone it was given - at activation, or a time sync - which a DST change since does not
-    /// move: its TDD and daily snapshot fall on its midnight. A record's zone is compared with the one we last set on the
-    /// patch - `patchUTCOffset`, what patch-midnight splits go by (`MedtrumPumpManager.crossesPatchMidnight`) - or, with
-    /// none known, the one we would set: the phone's, as `SetTimeZonePacket` sends it (past UTC+12 a day less). Told of
-    /// in the log only. Nil if `record` has no time zone, or it is that one. Offsets are east of UTC.
-    static func timeZoneMismatch(of record: PumpRecord, patchUTCOffset: TimeInterval?, phoneOffset: TimeInterval) -> String? {
-        let offset: Int
-        switch record {
-        case let .tdd(tdd):
-            offset = tdd.signedTimeZoneOffset
-        case let .event(.dailySnapshot(snapshot)):
-            offset = snapshot.timeZoneOffset
-        default:
-            return nil
-        }
-
-        let phone = Int(phoneOffset / 60)
-        let phoneAsSet = Int(SetTimeZonePacket.patchOffset(phoneOffset) / 60)
-        let expected = patchUTCOffset.map { Int($0 / 60) } ?? phoneAsSet
-
-        guard offset != expected else {
-            return nil
-        }
-
-        let set = patchUTCOffset.map { "the one set on the patch \(offsetText(Int($0 / 60)))" } ?? "none known set on the patch"
-        let phoneText = "the phone's \(offsetText(phone))" + (phoneAsSet != phone ? ", set on a patch as \(offsetText(phoneAsSet))" : "")
-        return "the record's time-zone offset is \(offsetText(offset)), \(set), \(phoneText)"
-    }
-
-    /// A temp basal's record ended on an empty reservoir claims more than its rate over its duration, in 0.05 U steps:
-    /// seen on dry-outs (0.10 U for 0.35 U/h over 1.5 min), the reservoir's drop short of it. Told of in the log only, as
-    /// evidence: the record is taken as it is. Nil for any other record.
-    static func emptyStopOvercount(of record: PumpRecord) -> String? {
-        guard case let .basal(basal) = record, basal.type.isTempBasal(), basal.endReason == .STOP_EMPTY else {
-            return nil
-        }
-
-        let byRate = basal.rate * basal.duration.hours
-        guard steps(basal.delivered) > steps(byRate) else {
-            return nil
-        }
-
-        return "ended on an empty reservoir claiming \(units(basal.delivered)), more than its rate × duration: " +
-            "\(units(basal.rate))/h × \(minutes(basal.duration)) = \(String(format: "%.3fU", byRate)) - taken as it is"
-    }
-
-    /// An offset as "120 min (UTC+2)"
-    private static func offsetText(_ offset: Int) -> String {
-        "\(offset) min (\(utcOffset(offset)))"
-    }
-
-    /// Flattens a record into what both the log and the debug screen want: what kind it is, its fields as one line,
-    /// what an event record is in words, and when the patch says it happened.
-    static func describe(_ record: PumpRecord) -> (kind: String, summary: String, label: String?, eventDate: Date?) {
-        switch record {
-        case let .bolus(bolus):
-            let fields: [String] = [
-                "type=\(bolus.type)",
-                "wizard=\(bolus.wizard)",
-                "cause=\(bolus.cause)",
-                "start=\(format(bolus.startTime))",
-                "requested=\(units(bolus.normalAmount))",
-                "delivered=\(units(bolus.normalDelivered))",
-                "extended=\(units(bolus.extendedAmount))/\(minutes(bolus.extendedDuration))",
-                "extendedDelivered=\(units(bolus.extendedDelivered))",
-                "carbs=\(bolus.carbs)",
-                "glucose=\(bolus.glucose)",
-                "iob=\(bolus.iob)"
-            ]
-            return ("BOLUS", fields.joined(separator: " "), nil, bolus.startTime)
-
-        case let .basal(basal):
-            let endReason: String = basal.endReason.map { "\($0)" } ?? "unknown(\(basal.rawEndReason))"
-            let fields: [String] = [
-                "type=\(basal.type)",
-                "endReason=\(endReason)",
-                "start=\(format(basal.startTime))",
-                "end=\(format(basal.endTime))",
-                "duration=\(minutes(basal.duration))",
-                "rate=\(units(basal.rate))/h",
-                "percent=\(basal.percent)",
-                "delivered=\(units(basal.delivered))"
-            ]
-            return ("BASAL", fields.joined(separator: " "), nil, basal.startTime)
-
-        case let .tdd(tdd):
-            let fields: [String] = [
-                "timestamp=\(format(tdd.timestamp))",
-                "minutes=\(tdd.minutes)",
-                "tzOffset=\(tdd.signedTimeZoneOffset)",
-                "total=\(units(Double(tdd.total)))",
-                "basal=\(units(Double(tdd.basal)))",
-                "bolus=\(units(Double(tdd.bolus)))",
-                "glucose=\(tdd.glucose)"
-            ]
-            return ("TDD", fields.joined(separator: " "), nil, tdd.timestamp)
-
-        case let .event(.alarm(alarm)):
-            let fields: [String] = [
-                "\(alarm.name ?? "alarm bit \(alarm.bit)") (bit \(alarm.bit))",
-                "age=\(alarm.patchAge)s",
-                "time=\(format(alarm.timestamp))",
-                "unknown=\(alarm.unknown1)/\(alarm.unknown2)"
-            ]
-            return ("ALARM", fields.joined(separator: " "), label(of: alarm), alarm.timestamp)
-
-        case let .event(.resumed(resumed)):
-            return ("RESUMED", "time=\(format(resumed.timestamp))", "Delivery resumed", resumed.timestamp)
-
-        case let .event(.dailySnapshot(snapshot)):
-            let fields: [String] = [
-                "time=\(format(snapshot.timestamp))",
-                "tzOffset=\(snapshot.timeZoneOffset)",
-                String(format: "a=%.3f", snapshot.a),
-                String(format: "b=%.3f", snapshot.b)
-            ]
-            return (
-                "DAILY",
-                fields.joined(separator: " "),
-                "Daily snapshot · \(utcOffset(snapshot.timeZoneOffset))",
-                snapshot.timestamp
-            )
-
-        case let .event(.baseCounters(base)):
-            let fields: [String] = [
-                "time=\(format(base.timestamp))",
-                "lifetime=\(units(base.lifetimeInsulin))",
-                "hours=\(base.operatingHours)",
-                "patches=\(base.patchesUsed)"
-            ]
-            let lifetime = groupedFormatter.string(from: NSNumber(value: base.lifetimeWholeUnits)) ?? "-"
-            return (
-                "BASE",
-                fields.joined(separator: " "),
-                "Base: \(lifetime) U · \(base.operatingHours) h · \(base.patchesUsed) patches",
-                base.timestamp
-            )
-
-        case let .unhandled(type):
-            return ("UNHANDLED", "\(GetRecordPacket.name(forRecordType: type)) (record type \(type))", nil, nil)
-
-        case let .truncated(type, size):
-            return (
-                "TRUNCATED",
-                "\(GetRecordPacket.name(forRecordType: type)) (record type \(type)) is too short to parse (\(size) bytes)",
-                nil,
-                nil
-            )
-
-        case .invalid:
-            return ("INVALID", "invalid record header", nil, nil)
-        }
-    }
-
-    /// An alarm in words, with the patch's age: how far into its life the patch raised it
-    private static func label(of alarm: AlarmRecord) -> String {
-        let name = alarm.name.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Alarm bit \(alarm.bit)"
-        return name + String(format: " · patch age %.1f h", Double(alarm.patchAge) / 3600)
-    }
-
-    /// Minutes east of UTC as "UTC+2", "UTC-3:30"
-    static func utcOffset(_ minutes: Int) -> String {
-        let sign = minutes < 0 ? "-" : "+"
-        let hours = abs(minutes) / 60
-        let rest = abs(minutes) % 60
-        return "UTC\(sign)\(hours)" + (rest == 0 ? "" : String(format: ":%02d", rest))
-    }
-
-    /// Thousands grouped the English way, as the rest of the record screen is: "11,419"
-    private static let groupedFormatter: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US")
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 0
-        return formatter
-    }()
-
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
-        return formatter
-    }()
-
-    private static func format(_ date: Date) -> String {
-        dateFormatter.string(from: date)
-    }
-
-    private static func units(_ value: Double) -> String {
-        String(format: "%.2fU", value)
-    }
-
-    private static func minutes(_ duration: TimeInterval) -> String {
-        String(format: "%.1fmin", duration / 60)
     }
 }
