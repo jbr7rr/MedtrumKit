@@ -186,8 +186,8 @@ public extension MedtrumPumpManager {
         let previousId = state.previousPatch.flatMap { $0.patchId.isEmpty ? nil : $0.patchId.toUInt64() & 0xFFFF }
         let namedId = state.patchId.isEmpty || state.patchId.toUInt64() & 0xFFFF == previousId ? Data() : state.patchId
         // Delivering since then, as far as we know: no status resumed over the session's suspend meanwhile - only an
-        // activation does (`StateSyncer.resumeSchedule`) - so the resume is dated at the patch's start, what it delivered
-        // from there counted. Its start unknown, at the retry: the time between not counted.
+        // activation does (`StateSyncer.resumeSchedule`) - so the resume, and the replacement, are dated at the patch's
+        // start, what it delivered from there counted. Its start unknown, at the retry: the time between not counted.
         startPatchSession(
             patchId: namedId,
             at: start,
@@ -320,7 +320,8 @@ public extension MedtrumPumpManager {
     /// The new patch delivers on its schedule from `start` - unless it is not delivering: then the suspend reported stays
     /// outstanding, for the first status that shows it delivering to resume. Its expiry counts from `activatedAt`. A
     /// retried activation: the patch has delivered since `deliveringSince`, on its clock - the resume dated there, on
-    /// ours, after the suspend and no later than `start`.
+    /// ours, after the suspend and no later than `start`. The patch replaced there too: a host starts the patch's session
+    /// from it.
     private func startPatchSession(patchId: Data, at start: Date, activatedAt: Date, isDelivering: Bool, deliveringSince: Date? = nil) {
         if state.expiryMode == .default {
             // Issued now, due a set time after the activation
@@ -360,7 +361,18 @@ public extension MedtrumPumpManager {
                 state.pendingTempBasal = nil
             }
 
-            events.append(NewPumpEvent.replacedPump(date: start))
+            // Where the patch activated, its answer lost: minutes before the session starts - the operation holding the patch
+            // waited out - or hours, at a retry. Dated at `start`, a host would split the patch in two at it. On our clock,
+            // never before the previous session's end: its deactivation, nor the suspend it reported.
+            var replacedAt = start
+            if let deliveringSince {
+                let ended = max(
+                    state.previousPatch?.deactivatedAt ?? .distantPast,
+                    state.basalDose.type == .suspend ? state.basalDose.startDate : .distantPast
+                )
+                replacedAt = patchTimeOnOurClock(deliveringSince, notBefore: min(ended, start), notAfter: start)
+            }
+            events.append(NewPumpEvent.replacedPump(date: replacedAt))
             if isDelivering {
                 // A resume in a later second than the suspend - see `earliestResume`
                 var resumeStart = start

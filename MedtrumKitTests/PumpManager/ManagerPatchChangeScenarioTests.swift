@@ -355,6 +355,7 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(resumes.count, 1)
         XCTAssertEqual(resumes.first?.startDate.timeIntervalSince(activatedAt) ?? -1, 0, accuracy: 1, "the patch's start")
         XCTAssertEqual(patchReplacements.count, 1)
+        XCTAssertEqual(patchReplacements.first?.date.timeIntervalSince(activatedAt) ?? -1, 0, accuracy: 1, "not the retry's")
         XCTAssertFalse(pumpManager.state.patchSessionEnded)
         XCTAssertEqual(pumpManager.state.basalState, .active)
         XCTAssertEqual(pumpManager.state.patchActivatedAt, activatedAt, "the patch's own, not the retry's")
@@ -503,6 +504,61 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(patchReplacements.count, 1)
         XCTAssertEqual(pumpManager.state.basalState, .active)
         assertEachSuspendResumedOnItsOwn(storedBefore: try XCTUnwrap(hostSuspendedSince))
+    }
+
+    /// The session started minutes after the patch activated, its answer lost: the patch replacement is dated where the
+    /// patch says it activated, not as the session started - a host would split the patch in two there - ahead of the resume
+    func testLostActivationAnswerDatesThePatchReplacementAtTheActivation() throws {
+        makeManager(endedSessionState())
+        XCTAssertEqual(activateWithTheAnswerLost(), true)
+
+        let activatedAt = Self.patchSecond(Date.now.addingTimeInterval(-2 * Self.minute))
+        let startedAt = Date.now
+        link.notify(Self.notification(state: .active, activatedAt: activatedAt, storage: (sequence: 1, patchId: Self.newPatchId)))
+        settle()
+
+        XCTAssertFalse(pumpManager.state.patchSessionEnded)
+        XCTAssertEqual(patchReplacements.count, 1)
+        let replacedAt = try XCTUnwrap(patchReplacements.first?.date)
+        XCTAssertEqual(replacedAt.timeIntervalSince(activatedAt), 0, accuracy: 1, "the patch's start")
+        XCTAssertLessThan(replacedAt, startedAt.addingTimeInterval(-Self.minute), "not the session's")
+        XCTAssertLessThanOrEqual(replacedAt, try XCTUnwrap(reports(of: .resume).first?.startDate))
+    }
+
+    /// Its start after the deactivation on the patch clock, before it on ours - the patch clock ahead: the replacement is
+    /// dated at the previous session's end, never before it
+    func testLostActivationAnswerDatesThePatchReplacementNoEarlierThanThePreviousSessionsEnd() throws {
+        makeManager(endedSessionState())
+        let deactivatedAt = try XCTUnwrap(pumpManager.state.previousPatch?.deactivatedAt)
+        XCTAssertEqual(activateWithTheAnswerLost(), true)
+        pumpManager.state.pumpTime = pumpManager.state.pumpTimeSyncedAt.addingTimeInterval(2 * Self.minute)
+
+        let activatedAt = Self.patchSecond(Date.now.addingTimeInterval(-2 * Self.minute))
+        XCTAssertGreaterThan(activatedAt, deactivatedAt)
+        link.notify(Self.notification(state: .active, activatedAt: activatedAt, storage: (sequence: 1, patchId: Self.newPatchId)))
+        settle()
+
+        XCTAssertFalse(pumpManager.state.patchSessionEnded)
+        XCTAssertEqual(patchReplacements.count, 1)
+        let replacedAt = try XCTUnwrap(patchReplacements.first?.date)
+        XCTAssertEqual(replacedAt, deactivatedAt)
+        XCTAssertLessThanOrEqual(replacedAt, try XCTUnwrap(reports(of: .resume).first?.startDate))
+    }
+
+    /// Its answer come: the patch replacement is dated as the session started - the patch's start the same moment
+    func testAnsweredActivationDatesThePatchReplacementAtTheSessionStart() throws {
+        makeManager(activePatchState(patchId: Self.oldPatchId, scheduledRate: Self.scheduledRate, sequence: 10, reservoir: 50))
+        XCTAssertEqual(deactivate(), true)
+
+        let before = Date.now
+        XCTAssertEqual(activate(), true)
+        let after = Date.now
+
+        XCTAssertEqual(patchReplacements.count, 1)
+        let replacedAt = try XCTUnwrap(patchReplacements.first?.date)
+        XCTAssertGreaterThanOrEqual(replacedAt, before)
+        XCTAssertLessThanOrEqual(replacedAt, after)
+        XCTAssertGreaterThanOrEqual(replacedAt, try XCTUnwrap(pumpManager.state.previousPatch?.deactivatedAt))
     }
 
     /// No activation sent - none of this host's, or one an earlier build sent: a patch running under a new id starts no
