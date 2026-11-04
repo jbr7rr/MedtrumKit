@@ -96,6 +96,11 @@ enum StateSyncer {
                 state.sessionStartSequence = Int(storage.sequence)
                 pumpManager.recordStore.clear()
                 state.lastSegmentStart = nil
+            } else if state.sessionStartSequence == nil {
+                // Saved mid-patch by a build that did not keep it - the released driver: taken up here, as a new patch
+                // id is. The records up to here are that build's doses, which the host has.
+                logger.info("No session start known for patch \(patchId.hexEncodedString()), taking it up at record \(storage.sequence)")
+                state.sessionStartSequence = Int(storage.sequence)
             }
 
             state.currentSequenceNumber = max(state.currentSequenceNumber, Int(storage.sequence))
@@ -107,7 +112,9 @@ enum StateSyncer {
             }
         }
 
-        if let basal = syncResponse.basal {
+        // Not while the session start is unknown - the released driver's state, no status naming the newest record since:
+        // the records it let the sync read would never be told of (`MedtrumPumpManager.warnOfBolusNotCounted`)
+        if let basal = syncResponse.basal, state.sessionStartSequence != nil {
             state.currentSequenceNumber = max(state.currentSequenceNumber, Int(basal.sequence))
         }
 

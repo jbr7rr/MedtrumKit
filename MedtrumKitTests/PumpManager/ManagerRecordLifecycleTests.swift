@@ -450,8 +450,11 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertEqual(restored.bolusesFinalWithoutRecord.first?.taken, taken)
     }
 
-    /// The state the shipped driver saves decodes without loss, and saves again as it was
-    func testStateSavedBeforeRecordsWereMatchedDecodes() throws {
+    /// The state an early build of patch records saved - its cursors and a temp basal's patch start, a bolus without
+    /// when it was sent, no session start - decodes without loss, and saves again as it was: its bolus with when it was
+    /// sent, its start; the session start unknown until a status names the newest record. The released driver's state,
+    /// keys and all: `ManagerUpgradeScenarioTests.testReleasedStateDecodesAndSavesAgainAsItWas`.
+    func testStateSavedByAnEarlyPatchRecordsBuildDecodes() throws {
         let t0 = Date.now.addingTimeInterval(-Self.minute)
         let bolus: [String: Any] = [
             "type": DoseType.bolus.rawValue,
@@ -471,7 +474,7 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
             "automatic": true,
             "pumpStartTime": t0.addingTimeInterval(-590)
         ]
-        let shipped: [String: Any] = [
+        let early: [String: Any] = [
             "isOnboarded": true,
             "lastSync": t0,
             "pumpSN": Data([1, 2, 3, 4]),
@@ -501,14 +504,14 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
             "useSilentTones": false
         ]
 
-        let state = MedtrumPumpState(rawValue: try roundTripped(shipped))
+        let state = MedtrumPumpState(rawValue: try roundTripped(early))
 
         let running = try XCTUnwrap(state.bolusDose)
         XCTAssertEqual(running.deliveredUnits, 0.4, accuracy: 0.001)
         XCTAssertEqual(running.confirmation, .confirmed)
         XCTAssertFalse(running.isFinished)
         XCTAssertNil(running.recordSequence)
-        XCTAssertNil(running.sentAt)
+        XCTAssertEqual(running.sentAt, t0, "dated as its answer came: sent then, as far as its record is matched")
         XCTAssertNil(running.snapshot.recordsReadThrough)
         XCTAssertNil(running.snapshot.possibleRecord)
         XCTAssertEqual(state.basalDose.type, .tempBasal)
@@ -524,9 +527,11 @@ final class ManagerRecordLifecycleTests: MedtrumManagerTestCase {
         XCTAssertFalse(state.deliveryIsUncertain)
         XCTAssertEqual(state.currentSequenceNumber, 122)
         XCTAssertEqual(state.syncedSequenceNumber, 120)
+        XCTAssertNil(state.sessionStartSequence, "taken from the next status")
 
         let saved = state.rawValue
-        XCTAssertEqual(saved["bolusDose"] as? NSDictionary, bolus as NSDictionary)
+        XCTAssertNil(saved["sessionStartSequence"], "not saved until known")
+        XCTAssertEqual(saved["bolusDose"] as? NSDictionary, bolus.merging(["sentAt": t0]) { $1 } as NSDictionary)
         XCTAssertEqual(saved["basalDose"] as? NSDictionary, tempBasal as NSDictionary)
         XCTAssertEqual((saved["awaitingRecord"] as? [Any])?.count, 0)
         XCTAssertNil(saved["unconfirmedTempBasal"])

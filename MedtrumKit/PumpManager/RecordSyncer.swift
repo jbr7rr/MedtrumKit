@@ -224,7 +224,9 @@ enum RecordSyncer {
             }
         }
 
-        // Needs no link, so it runs either way
+        // Needs no link, so it runs either way - read through the newest, the last skipped: the record kept from the
+        // backlog for the bolus the released driver had in flight may be its own now
+        pumpManager.settleReleasedBolusBacklogRecord()
         let settled = pumpManager.finalizeOverdueAwaitingDoses()
 
         // Each final was handed to the host as its record was read, before the cursor moved past it
@@ -411,6 +413,9 @@ enum RecordSyncer {
         // without it - see `MedtrumPumpManager.openTempBasalEnds`
         pumpManager.settleOpenTempBasalEndsRead(through: next)
         state.syncedSequenceNumber = max(state.syncedSequenceNumber, next)
+        // Read through the newest: the record kept from the backlog for the bolus the released driver had in flight may
+        // be its own now
+        pumpManager.settleReleasedBolusBacklogRecord()
     }
 
     /// Reads the records the patch wrote for a temp basal of ours as it ended, up to the last one it named, and has it

@@ -406,7 +406,10 @@ public class UnfinalizedDose {
         state.confirmation = (rawValue["confirmation"] as? Confirmation.RawValue).flatMap(Confirmation.init(rawValue:)) ??
             .confirmed
         state.uncertaintyReported = rawValue["uncertaintyReported"] as? Bool ?? false
-        state.sentAt = rawValue["sentAt"] as? Date
+        // A bolus saved without it - by the released driver, which dated it as its SetBolus answer came, the patch already
+        // delivering: sent then, as far as its record is matched (`MedtrumPumpManager.matchReleasedBolusRecord`, no
+        // `sequenceAtSend` telling it) and kept final without one. Any bolus since is saved with it.
+        state.sentAt = rawValue["sentAt"] as? Date ?? (type == .bolus ? startDate : nil)
         state.writtenAt = rawValue["writtenAt"] as? Date
         state.sequenceAtSend = rawValue["sequenceAtSend"] as? Int
         state.recordSequence = rawValue["recordSequence"] as? Int
@@ -1030,7 +1033,12 @@ public class UnfinalizedDose {
     /// By when a running bolus should be over: its amount at `deadlineBolusUnitsPerMinute` from when its command went out
     /// (from its start, for one saved before that was kept), and `deliveryGrace`
     func deliveryDeadline(of state: State) -> Date {
-        (state.sentAt ?? startDate).addingTimeInterval(.minutes(value / Self.deadlineBolusUnitsPerMinute) + Self.deliveryGrace)
+        Self.deliveryDeadline(of: value, sentAt: state.sentAt ?? startDate)
+    }
+
+    /// By when a bolus of `units` whose command went out at `sentAt` should be over - see `deliveryDeadline(of:)`
+    static func deliveryDeadline(of units: Double, sentAt: Date) -> Date {
+        sentAt.addingTimeInterval(.minutes(units / deadlineBolusUnitsPerMinute) + deliveryGrace)
     }
 
     /// When a bolus stopped delivering, having delivered `delivered`. Seen live, when it ended; otherwise extrapolated
