@@ -58,7 +58,7 @@ public extension MedtrumPumpManager {
     /// lost. A batch going out before that carries them out with our estimate (`emitPumpEvents`). Every temp basal ended
     /// open before it (`openTempBasalEnds`) goes final with it. A temp basal a new one replaced back to back is not one of
     /// these: it ends open itself.
-    final class TempBasalEnd {
+    internal final class TempBasalEnd {
         let dose: UnfinalizedDose
         /// Where its last record ends, on the patch clock: where the segment after it started
         let patchEnd: Date?
@@ -443,7 +443,7 @@ public extension MedtrumPumpManager {
     /// Reads the records of the temp basal whose end is pending and reports it final, with what followed it - on this
     /// thread, which may block on the link: a full status's. Only if no other operation holds `commandLock`: returns
     /// false, having read nothing, if one does. See `RecordSyncer.finishTempBasalEnd`.
-    func finishPendingTempBasalEndIfFree() -> Bool {
+    internal func finishPendingTempBasalEndIfFree() -> Bool {
         withCommandLockIfFree {
             RecordSyncer.finishTempBasalEnd(pumpManager: self)
         } != nil
@@ -451,7 +451,7 @@ public extension MedtrumPumpManager {
 
     /// The same, off the queue statuses arrive on - once no command is in flight: one that changes the basal finishes it
     /// first, on its own path - and holding `commandLock`, as a command does
-    func finishPendingTempBasalEndSoon() {
+    internal func finishPendingTempBasalEndSoon() {
         tempBasalEndQueue.async { [weak self] in
             guard let self else {
                 return

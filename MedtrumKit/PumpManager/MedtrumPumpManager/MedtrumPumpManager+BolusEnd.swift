@@ -4,7 +4,7 @@ public extension MedtrumPumpManager {
     /// `completed: false` in a status received at `receivedAt`: the running bolus has delivered this much so far.
     /// Never from a status received before its command went out, nor from a full status for one whose command went
     /// unanswered - a full status never confirms that one. A notification's does: the patch is delivering it.
-    func updateBolusProgress(delivered: Double, fullSync: Bool, receivedAt: Date, receivedUptime: TimeInterval) {
+    internal func updateBolusProgress(delivered: Double, fullSync: Bool, receivedAt: Date, receivedUptime: TimeInterval) {
         let outcome = doseReportLock.withLock { () -> (dose: UnfinalizedDose, confirmed: Bool)? in
             guard let doseEntry = state.bolusDose else {
                 return nil
@@ -31,7 +31,7 @@ public extension MedtrumPumpManager {
     /// so it is the running bolus's own, with what it delivered - a tiny one included, which completes before any
     /// progress. A full status's completion is not this: it repeats the last bolus's for hours. Returns whether the
     /// running bolus took it.
-    @discardableResult func completeBolus(
+    @discardableResult internal func completeBolus(
         delivered: Double,
         receivedAt: Date,
         receivedUptime: TimeInterval,
@@ -89,7 +89,7 @@ public extension MedtrumPumpManager {
         return true
     }
 
-    struct EarlyBolusCompletion {
+    internal struct EarlyBolusCompletion {
         let delivered: Double
         /// The newest record the notification names, if it does: the bolus's own, written as it completed
         let record: Int?
@@ -102,7 +102,7 @@ public extension MedtrumPumpManager {
     /// if the record is past every one known when it went out, or no cancelled bolus is there to take it: kept for it,
     /// taken once it runs (`completeBolusEarly`). Otherwise the completion of the bolus a cancel just ended
     /// (`raiseCancelledBolus`).
-    func noteCompletionWithNoBolusRunning(delivered: Double, record: Int?, receivedAt: Date, receivedUptime: TimeInterval) {
+    internal func noteCompletionWithNoBolusRunning(delivered: Double, record: Int?, receivedAt: Date, receivedUptime: TimeInterval) {
         let registeredSince = doseReportLock.withLock { () -> Bool in
             // Registered since `completeBolus` looked: its answer, handled on this queue, woke the command meanwhile
             guard state.bolusDose == nil else {
@@ -195,7 +195,7 @@ public extension MedtrumPumpManager {
     /// only if it is provably its: it names a record past every one known or claimed when it went out, no earlier bolus's
     /// answer claimed, and no other bolus is out to be its (`isCompletion`, for one not yet answered). Its warning of
     /// uncertain delivery stands; its record settles it.
-    func raiseCancelledBolus(delivered: Double, record: Int? = nil) {
+    internal func raiseCancelledBolus(delivered: Double, record: Int? = nil) {
         doseReportLock.withLock {
             guard let cancelled = recentlyCancelledBolus() else {
                 return
@@ -234,7 +234,7 @@ public extension MedtrumPumpManager {
     /// than at its deadline, refusing commands until then. Its record, read by the sync, finalizes it. Only for a bolus
     /// with that number: the bolus field carries none of its own, and repeats the last bolus's for hours. Returns whether
     /// it ended it.
-    @discardableResult func completeBolusByItsRecord(
+    @discardableResult internal func completeBolusByItsRecord(
         delivered: Double,
         newestRecord: Int,
         receivedAt: Date,
@@ -280,7 +280,7 @@ public extension MedtrumPumpManager {
 
     /// A full status received at `receivedAt`, past the running bolus's deadline: it is over, and we never saw how it
     /// ended - the link was lost. Counted in full until its record says otherwise.
-    func checkBolusDone(receivedAt: Date, receivedUptime: TimeInterval) {
+    internal func checkBolusDone(receivedAt: Date, receivedUptime: TimeInterval) {
         let ended = doseReportLock.withLock { () -> UnfinalizedDose.State? in
             guard let doseEntry = state.bolusDose else {
                 return nil

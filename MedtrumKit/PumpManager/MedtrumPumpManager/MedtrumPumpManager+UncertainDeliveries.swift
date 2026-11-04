@@ -2,7 +2,7 @@ import Foundation
 
 public extension MedtrumPumpManager {
     /// The settings screen keeps this many of them, the oldest settled going first
-    static let uncertainDeliveriesKept = 20
+    internal static let uncertainDeliveriesKept = 20
 
     /// `dose` became uncertain, as `kind` - for the settings screen, see `UncertainDelivery`. Once per dose and kind: the
     /// first cause stays. A cancel's note noted again is for a later cancel: its `cancelDidNotStop` is cleared, that

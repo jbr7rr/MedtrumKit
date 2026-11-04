@@ -313,7 +313,7 @@ public extension MedtrumPumpManager {
 
     /// For tests: the reads queued on `tempBasalEndQueue` - after a delay, behind a command or a bolus - give up, and none
     /// starts from here on: none outlives the scenario that queued it, into the record sync's run state of the next
-    func stopBackgroundReads() {
+    internal func stopBackgroundReads() {
         backgroundReadsStopped.value = true
         tempBasalEndQueue.sync {}
     }

@@ -117,7 +117,7 @@ public extension MedtrumPumpManager {
         }
     }
 
-    enum HeartbeatSync {
+    internal enum HeartbeatSync {
         /// A full status, then the records
         case full
         /// The records doses are waiting on only

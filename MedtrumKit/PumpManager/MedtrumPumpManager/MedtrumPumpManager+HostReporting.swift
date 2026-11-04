@@ -149,7 +149,7 @@ public extension MedtrumPumpManager {
     /// pending events, carrying every final and every dose still in flight, and the temp basal final from its records
     /// rather than from our estimate. Temp basals ended open hold up nothing: a batch carries them mutable. Nor does a
     /// bolus's end go out ahead of that read - see `emitBolusEvents`.
-    func emitPumpEvents(_ events: [NewPumpEvent], replacePendingEvents: Bool = true, unlessTempBasalEndPending: Bool = false) {
+    internal func emitPumpEvents(_ events: [NewPumpEvent], replacePendingEvents: Bool = true, unlessTempBasalEndPending: Bool = false) {
         // The batch is built off `awaitingRecord` and handed to the delegate queue in one go - see `doseReportLock`
         doseReportLock.lock()
         defer { doseReportLock.unlock() }
