@@ -545,6 +545,32 @@ final class ManagerPatchChangeScenarioTests: MedtrumManagerTestCase {
         XCTAssertLessThanOrEqual(replacedAt, try XCTUnwrap(reports(of: .resume).first?.startDate))
     }
 
+    /// The previous session's suspend began before its deactivation (a base reset dates it at the delivery stop), the
+    /// patch clock ahead, so its start lands before the deactivation on our clock: the replacement, held to the
+    /// deactivation, is dated no later than the resume
+    func testLostActivationAnswerDatesThePatchReplacementNoLaterThanTheResume() throws {
+        let state = endedSessionState()
+        let suspendedAt = Date.now.addingTimeInterval(-10 * Self.minute)
+        state.basalDose = UnfinalizedDose(suspendStartTime: suspendedAt)
+        hostSuspendedSince = suspendedAt
+        makeManager(state)
+        let deactivatedAt = try XCTUnwrap(pumpManager.state.previousPatch?.deactivatedAt)
+        XCTAssertEqual(activateWithTheAnswerLost(), true)
+        pumpManager.state.pumpTime = pumpManager.state.pumpTimeSyncedAt.addingTimeInterval(2 * Self.minute)
+
+        let activatedAt = Self.patchSecond(Date.now.addingTimeInterval(-2 * Self.minute))
+        XCTAssertGreaterThan(activatedAt, deactivatedAt)
+        link.notify(Self.notification(state: .active, activatedAt: activatedAt, storage: (sequence: 1, patchId: Self.newPatchId)))
+        settle()
+
+        XCTAssertFalse(pumpManager.state.patchSessionEnded)
+        XCTAssertEqual(patchReplacements.count, 1)
+        let replacedAt = try XCTUnwrap(patchReplacements.first?.date)
+        let resumeAt = try XCTUnwrap(reports(of: .resume).first?.startDate)
+        XCTAssertLessThan(resumeAt, deactivatedAt, "the suspend began earlier, the resume lands before the deactivation")
+        XCTAssertLessThanOrEqual(replacedAt, resumeAt)
+    }
+
     /// Its answer come: the patch replacement is dated as the session started - the patch's start the same moment
     func testAnsweredActivationDatesThePatchReplacementAtTheSessionStart() throws {
         makeManager(activePatchState(patchId: Self.oldPatchId, scheduledRate: Self.scheduledRate, sequence: 10, reservoir: 50))

@@ -363,7 +363,15 @@ public extension MedtrumPumpManager {
 
             // Where the patch activated, its answer lost: minutes before the session starts - the operation holding the patch
             // waited out - or hours, at a retry. Dated at `start`, a host would split the patch in two at it. On our clock,
-            // never before the previous session's end: its deactivation, nor the suspend it reported.
+            // never before the previous session's end: its deactivation, nor the suspend it reported - and never after the
+            // resume: a suspend begun before the deactivation (a base reset dates its end at the delivery stop) can put the
+            // end past where the resume lands.
+            // A resume in a later second than the suspend - see `earliestResume`
+            var resumeStart = start
+            if isDelivering, state.basalDose.type == .suspend {
+                let floor = Self.earliestResume(after: state.basalDose.startDate)
+                resumeStart = max(deliveringSince.map { patchTimeOnOurClock($0, notBefore: floor, notAfter: start) } ?? start, floor)
+            }
             var replacedAt = start
             if let deliveringSince {
                 let ended = max(
@@ -372,14 +380,9 @@ public extension MedtrumPumpManager {
                 )
                 replacedAt = patchTimeOnOurClock(deliveringSince, notBefore: min(ended, start), notAfter: start)
             }
+            if isDelivering { replacedAt = min(replacedAt, resumeStart) }
             events.append(NewPumpEvent.replacedPump(date: replacedAt))
             if isDelivering {
-                // A resume in a later second than the suspend - see `earliestResume`
-                var resumeStart = start
-                if state.basalDose.type == .suspend {
-                    let floor = Self.earliestResume(after: state.basalDose.startDate)
-                    resumeStart = max(deliveringSince.map { patchTimeOnOurClock($0, notBefore: floor, notAfter: start) } ?? start, floor)
-                }
                 let resumeDose = UnfinalizedDose(resumeStartTime: resumeStart, insulinType: state.insulinType)
                 if state.basalDose.type == .suspend {
                     // Only a suspend that was reported gets a resume: a host can take one without it as suspended before it
