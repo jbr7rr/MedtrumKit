@@ -84,7 +84,11 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
     }
 
     func getInitialScreens() -> [MedtrumUIScreen] {
-        guard let pumpManager = self.pumpManager else {
+        Self.initialScreens(for: pumpManager)
+    }
+
+    static func initialScreens(for pumpManager: MedtrumPumpManager?) -> [MedtrumUIScreen] {
+        guard let pumpManager else {
             return [.settingsScreen]
         }
 
@@ -103,6 +107,12 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
         }
 
         if pumpState.hasCompletedPriming {
+            return [.patchActivationScreen]
+        }
+
+        // Running with no session: activated, its answer lost, the sheet dismissed - back to the activation, whose retry
+        // starts the session. Nothing else does, but a status after it (`MedtrumPumpManager.startSessionOfActivatedPatchSoon`).
+        if pumpManager.state.isActivatedWithNoSession {
             return [.patchActivationScreen]
         }
 

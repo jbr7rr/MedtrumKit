@@ -240,7 +240,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(records.map(\.id), [945, 944])
         XCTAssertNil(records.first?.outcome)
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 945)
-        XCTAssertEqual(finals(of: ended).count, 1)
+        assertOneFinal(of: ended)
         XCTAssertEqual(pumpManager.state.basalDose.type, .tempBasal, "the new one runs on")
     }
 
@@ -295,7 +295,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(final.map { $0.endDate.timeIntervalSince($0.startDate) } ?? 0, 897, accuracy: 1)
         XCTAssertEqual(final?.endDate, delegate.batches.first?.events.last?.dose?.startDate, "ends where the schedule starts")
         XCTAssertEqual(final?.deliveredUnits ?? 0, 0.1, accuracy: 0.001)
-        XCTAssertEqual(finals(of: final).count, 1)
+        assertOneFinal(of: final)
     }
 
     /// `aug12.txt:8755-8784`: records 946 (0.6 U/h up to midnight), 947 (type 10), 948 (TDD), 949 (0.6 U/h from midnight)
@@ -675,7 +675,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         confirmRecordSequence()
         syncRecords()
-        XCTAssertEqual(finals(of: reported).count, 1)
+        assertOneFinal(of: reported)
     }
 
     /// A set of zero that went out unanswered 5 min ago, pending, and the next loop asks for zero again: the cancel is
@@ -2780,12 +2780,12 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         settle()
 
         XCTAssertNotEqual(pumpManager.recordStore.records.first { $0.id == 121 }?.outcome?.hasPrefix("finalized"), true)
-        XCTAssertEqual(finals(of: reported).count, 1)
+        assertOneFinal(of: reported)
 
         advanceClock(by: 15 * Self.minute)
         confirmRecordSequence()
         syncRecords()
-        XCTAssertEqual(finals(of: reported).count, 1)
+        assertOneFinal(of: reported)
     }
 
     // MARK: - Final as it ends
@@ -2948,7 +2948,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         // Ending where the new one starts: the time the bolus took here, on our clock, with it
         XCTAssertEqual(ended.first.map { $0.endDate.timeIntervalSince($0.startDate) } ?? 0, 20 * Self.minute, accuracy: 5)
 
-        XCTAssertEqual(finals(of: bolus).count, 1)
+        assertOneFinal(of: bolus)
         XCTAssertEqual(finals(of: bolus).first?.deliveredUnits ?? 0, 2, accuracy: 0.001)
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 124)
         XCTAssertEqual(pumpManager.state.awaitingRecord.count, 0)
@@ -2994,7 +2994,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
 
         let old = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.startDate == tempBasal.startDate }).first)
         XCTAssertEqual(old.deliveredUnits ?? 0, 0.4, accuracy: 0.001, "by our estimate: the batch went out first")
-        XCTAssertEqual(finals(of: old).count, 1)
+        assertOneFinal(of: old)
         assertScheduledBasalNeverBeforeTheFinal(of: old)
         XCTAssertNotEqual(pumpManager.recordStore.records.first?.outcome?.hasPrefix("finalized"), true)
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 131)
@@ -3029,7 +3029,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(delegate.batches.first?.events.map(\.dose?.unitsPerHour), [1.2, 0.7])
         let old = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.startDate == tempBasal.startDate }).first)
         XCTAssertEqual(old.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
-        XCTAssertEqual(finals(of: old).count, 1)
+        assertOneFinal(of: old)
         assertScheduledBasalNeverBeforeTheFinal(of: old)
         XCTAssertEqual(delegate.batches.first?.events.last?.dose?.type, .basal)
         XCTAssertNil(pumpManager.pendingTempBasalEnd)
@@ -3058,7 +3058,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(delegate.batches.first?.events.map(\.dose?.unitsPerHour), [1.2, 0.7])
         let old = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.startDate == tempBasal.startDate }).first)
         XCTAssertEqual(old.deliveredUnits ?? 0, 0.4, accuracy: 0.001, "by our estimate")
-        XCTAssertEqual(finals(of: old).count, 1)
+        assertOneFinal(of: old)
         assertScheduledBasalNeverBeforeTheFinal(of: old)
         XCTAssertNil(pumpManager.pendingTempBasalEnd)
     }
@@ -3083,7 +3083,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(delegate.batches.first?.events.contains { $0.raw == own.raw }, true)
         let old = try XCTUnwrap(finals(of: reports(of: .tempBasal).first { $0.startDate == tempBasal.startDate }).first)
         XCTAssertEqual(old.deliveredUnits ?? 0, 0.4, accuracy: 0.001, "by our estimate: the batch went out first")
-        XCTAssertEqual(finals(of: old).count, 1)
+        assertOneFinal(of: old)
         assertScheduledBasalNeverBeforeTheFinal(of: old)
     }
 
@@ -3547,7 +3547,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 132)
-        XCTAssertEqual(finals(of: old).count, 1)
+        assertOneFinal(of: old)
         XCTAssertEqual(delegate.batches.count, batches)
         XCTAssertNotEqual(pumpManager.recordStore.records.first { $0.id == 131 }?.outcome?.hasPrefix("finalized"), true)
     }
@@ -4260,7 +4260,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(final?.startDate, tempBasal.startDate)
         XCTAssertEqual(final.map { $0.endDate.timeIntervalSince($0.startDate) } ?? 0, 897, accuracy: 1)
         XCTAssertEqual(final?.deliveredUnits ?? 0, 0.1, accuracy: 0.001)
-        XCTAssertEqual(finals(of: final).count, 1)
+        assertOneFinal(of: final)
     }
 
     /// The same, the second half not starting where the first one kept ended: the parts do not add up - our estimate
@@ -4803,7 +4803,7 @@ final class ManagerTempBasalScenarioTests: MedtrumManagerTestCase {
         link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 133, patchId: 251))
         syncRecords()
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 133)
-        XCTAssertEqual(finals(of: final.first).count, 1)
+        assertOneFinal(of: final.first)
     }
 
     /// The patch split 1.2 U/h at patch-local midnight, 10 min in: the cancel names 132, its second half, and each record
@@ -6181,7 +6181,7 @@ extension ManagerTempBasalScenarioTests {
         XCTAssertEqual(doses.first?.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record, not 0.4 U by our estimate")
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 131)
         XCTAssertTrue(pumpManager.state.heldBasalDoses.isEmpty, "stored")
-        XCTAssertEqual(finals(of: doses.first).count, 1)
+        assertOneFinal(of: doses.first)
 
         link.script(CommandType.RESUME_PUMP, PatchBytes.segmentAnswer(
             command: CommandType.RESUME_PUMP, type: .STANDARD, rate: 0.7, sequence: 131, patchId: 251, start: Self.ourEnd.addingTimeInterval(60)
@@ -6236,7 +6236,7 @@ extension ManagerTempBasalScenarioTests {
         link.notify(haltNotification(.suspended, at: Self.ourEnd, newestRecord: 131))
         settle()
         XCTAssertEqual(link.writtenCommands.count, written, "nothing read")
-        XCTAssertEqual(finals(of: doses.first).count, 1)
+        assertOneFinal(of: doses.first)
     }
 
     /// A state saved by the build before - the temp basal waiting on its record with no last record kept - decodes, and

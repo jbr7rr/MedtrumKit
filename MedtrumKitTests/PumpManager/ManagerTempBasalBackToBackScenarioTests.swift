@@ -44,7 +44,7 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(final.startDate, first.startDate)
         XCTAssertEqual(final.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
         XCTAssertEqual(final.endDate, open.last?.startDate, "still ends where the new one starts")
-        XCTAssertEqual(finals(of: final).count, 1)
+        assertOneFinal(of: final)
         XCTAssertFalse(pumpManager.hasOpenTempBasalEnds)
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 131)
     }
@@ -471,7 +471,7 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
 
         let old = try XCTUnwrap(reports(of: .tempBasal).first { $0.unitsPerHour == 1.2 && !$0.isMutable })
         XCTAssertEqual(old.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record, read before the stop")
-        XCTAssertEqual(finals(of: reports(of: .tempBasal).first { $0.unitsPerHour == 0.5 }).count, 1)
+        assertOneFinal(of: reports(of: .tempBasal).first { $0.unitsPerHour == 0.5 })
         XCTAssertFalse(pumpManager.hasOpenTempBasalEnds)
     }
 
@@ -1033,7 +1033,7 @@ final class ManagerTempBasalBackToBackScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(firstFinal.deliveredUnits ?? 0, 0.35, accuracy: 0.001, "from its record")
         let secondFinal = try XCTUnwrap(finals(of: second).first)
         XCTAssertEqual(secondFinal.deliveredUnits ?? 0, 0.05, accuracy: 0.001, "from its record")
-        XCTAssertEqual(finals(of: second).count, 1)
+        assertOneFinal(of: second)
 
         // One batch: the finals, then the suspend, then the bolus waiting on its record
         let index = try XCTUnwrap(batchIndex(ofFinal: firstFinal))

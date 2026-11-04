@@ -11,6 +11,9 @@ enum MedtrumAlert {
     case baseResetNotification
     /// A bolus whose command went unanswered, finalized in full without its record
     case bolusCountedAsDelivered(units: Double)
+    /// A bolus of ours running, or its command out, as the patch session was forced to end - or out as it ended, the app
+    /// killed meanwhile: finalized in full, nothing of that patch heard from after - its command sent at `sentAt`
+    case bolusCountedAsDeliveredAtSessionEnd(units: Double, sentAt: Date)
     /// A bolus the patch's records show delivered that matches no dose of ours, not counted - started at `at`
     case bolusNotCounted(units: Double, at: Date)
     /// A bolus of ours final from our estimate, `counted`, whose record came after all, `delivered` - started at `at`
@@ -108,6 +111,12 @@ enum MedtrumAlert {
             return Alert.Identifier(
                 managerIdentifier: MedtrumAlert.managerIdentifier,
                 alertIdentifier: "com.nightscout.medtrumkit.bolus-counted-as-delivered"
+            )
+        case let .bolusCountedAsDeliveredAtSessionEnd(_, sentAt):
+            // One for each: several - one running, one out - are not one notification
+            return Alert.Identifier(
+                managerIdentifier: MedtrumAlert.managerIdentifier,
+                alertIdentifier: "com.nightscout.medtrumkit.bolus-counted-at-session-end.\(Int(sentAt.timeIntervalSince1970))"
             )
         case let .bolusNotCounted(_, at):
             // One for each: they are told of once
@@ -211,6 +220,21 @@ enum MedtrumAlert {
                     format: String(
                         localized: "The patch did not answer the command for a bolus of %@ U, and its records do not show it. The full amount was counted as delivered.",
                         comment: "Body bolus counted as delivered notification"
+                    ),
+                    units.formatted()
+                ),
+                acknowledgeActionButtonLabel: String(
+                    localized: "OK",
+                    comment: "Acknoledge alert"
+                )
+            )
+        case let .bolusCountedAsDeliveredAtSessionEnd(units, _):
+            return Alert.Content(
+                title: String(localized: "Bolus counted as delivered", comment: "Title bolus counted as delivered notification"),
+                body: String(
+                    format: String(
+                        localized: "The patch session ended before the patch told how much of the bolus of %@ U it delivered. The full amount was counted as delivered.",
+                        comment: "Body bolus counted as delivered at the patch session end notification"
                     ),
                     units.formatted()
                 ),

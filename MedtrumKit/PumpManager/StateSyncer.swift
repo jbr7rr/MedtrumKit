@@ -12,35 +12,73 @@ enum StateSyncer {
     ) {
         let syncDate = Date.now
 
-        // Checked on the payload as received: a rebooted base reports a new patch id, and validation
-        // would strip exactly the fields that tell a reset apart - and when it happened
-        switch baseResetCheck(syncResponse: syncResponse, state: state) {
-        case .reset:
-            guard !pumpManager.isDeactivatingPatch else {
+        // In one step with a session's end - a forced deactivation, on the main queue - which sets the state these go by
+        // (`endPatchSession`): a status that passed them just before it would write a running state over its `.none`.
+        // No test drives a status into this block as a forced end runs: the lock leaves no seam to pause one between
+        // the checks and the state written.
+        let taken = pumpManager.withDoseReportLock { () -> (response: SynchronizePacketResponse, startsSession: Bool)? in
+            // Checked on the payload as received: a rebooted base reports a new patch id, and validation
+            // would strip exactly the fields that tell a reset apart - and when it happened
+            switch baseResetCheck(syncResponse: syncResponse, state: state) {
+            case .reset:
+                guard !pumpManager.isDeactivatingPatch else {
+                    break
+                }
+
+                // Nothing else in this payload describes the patch we knew
+                pumpManager.handleBaseReset(
+                    deliveryStoppedAt: deliveryStoppedAt(syncResponse: syncResponse, state: state, receivedAt: syncDate)
+                )
+                return nil
+
+            case .unconfirmed:
+                // `.none` is also what an unknown state byte parses to, don't drop an activated patch over it
+                logger.warning("Activated patch reported state none without a new patch id, ignoring")
+                return nil
+
+            case .noReset:
                 break
             }
 
-            // Nothing else in this payload describes the patch we knew
-            pumpManager.handleBaseReset(
-                deliveryStoppedAt: deliveryStoppedAt(syncResponse: syncResponse, state: state, receivedAt: syncDate)
-            )
-            return
+            // No session, the old patch heard from running - forced out, its StopPatch lost, still on the base: nothing of
+            // it is ours. Not its state - a running one would have the new patch's setup taken for a base reset, the loop
+            // sync with it, commands go to it, an activation take it for the new patch - nor its basal: its schedule would
+            // resume over the session's suspend. One that stopped is taken as before: what the setup screens and the loop
+            // go by. Nor its battery and reservoir: not the next patch's, a low reservoir alert of the old one's.
+            if isEndedSessionsPatchRunning(syncResponse: syncResponse, state: state) {
+                logger.info("Status of the previous patch, running, its session ended: not taken - \(syncResponse.state.description)")
+                if fullSync {
+                    pumpManager.noteStatusOfThePreviousPatch(at: syncDate)
+                }
+                return nil
+            }
 
-        case .unconfirmed:
-            // `.none` is also what an unknown state byte parses to, don't drop an activated patch over it
-            logger.warning("Activated patch reported state none without a new patch id, ignoring")
-            return
+            // No session: the id kept can be stale - the previous patch's, or one never started - and would reject the
+            // new patch's payloads. The storage gate below decides which id to keep then.
+            let expectedPatchId = state.patchSessionEnded ? 0 : state.patchId.toUInt64()
+            let syncResponse = syncResponse.validated(expectedPatchId: expectedPatchId)
 
-        case .noReset:
-            break
+            StateSyncer.updatePumpState(syncResponse: syncResponse, pumpManager: pumpManager, receivedAt: syncDate)
+            // A patch being set up, not primed yet, since an activation went out: a next patch, the one it went to not
+            // activated - nothing of a status is to start a session for it. Not primed: a status as the activation is
+            // written may show it still. Not `.none`: an unknown state byte reads as that too. Priming a next patch
+            // clears it as well (`MedtrumPumpManager.primePatch`).
+            if state.activationSentAt != nil, [PatchState.idle, .filled, .priming].contains(syncResponse.state) {
+                logger.info("A patch is being set up, \(syncResponse.state.description): the activation sent before is done with")
+                state.activationSentAt = nil
+            }
+            return (syncResponse, showsActivatedPatch(syncResponse: syncResponse, state: state))
         }
-
-        // No session: the id kept can be stale - the previous patch's, or one never started - and would reject the new
-        // patch's payloads. The storage gate below decides which id to keep then.
-        let expectedPatchId = state.patchSessionEnded ? 0 : state.patchId.toUInt64()
-        let syncResponse = syncResponse.validated(expectedPatchId: expectedPatchId)
-
-        StateSyncer.updatePumpState(syncResponse: syncResponse, pumpManager: pumpManager, receivedAt: syncDate)
+        guard let taken else {
+            return
+        }
+        let syncResponse = taken.response
+        // After what this status tells is in - the patch's start, its id - as a retried activation goes by
+        defer {
+            if taken.startsSession {
+                pumpManager.startSessionOfActivatedPatchSoon()
+            }
+        }
 
         let hasActivatedPatch = syncResponse.state.rawValue >= PatchState.active.rawValue
 
@@ -454,6 +492,14 @@ enum StateSyncer {
             let state = pumpManager.state
             let dose = state.basalDose
 
+            // No session: whichever patch this is, nothing of ours runs on it. Only the activation resumes delivery
+            // (`MedtrumPumpManager.startPatchSession`) - a resume here would stand over the session's suspend, the old
+            // patch's schedule counted as delivered, or the new patch's ahead of its session. Whatever let it through.
+            guard !state.patchSessionEnded else {
+                logger.info("Status shows the scheduled basal since \(basal.startTime), no session runs: nothing resumed")
+                return nil
+            }
+
             switch dose.type {
             case .tempBasal:
                 let running = dose.snapshot
@@ -538,6 +584,52 @@ enum StateSyncer {
         }
     }
 
+    /// No session runs, and the status, in a running state, is the previous patch's: its id, as storage and basal carry it,
+    /// the low two bytes. Or it can't be told from the next one's - it names no id, or the previous patch's id is not
+    /// known (a session started by a retried activation, ended before a status named it) - and since the session's
+    /// suspend nothing of a next patch was heard: no setup state of it, no running state taken as its. The next patch is
+    /// set up on this host - primed before its activation, from a state the connect syncs - so a patch running with none
+    /// of that seen is the old one, forced out and still on the base. A status naming another id than a known previous
+    /// one is the new patch's, its activation's answer lost: taken as before.
+    static func isEndedSessionsPatchRunning(syncResponse: SynchronizePacketResponse, state: MedtrumPumpState) -> Bool {
+        guard state.patchSessionEnded, syncResponse.state.isRunning else {
+            return false
+        }
+        let ids = [syncResponse.storage?.patchId, syncResponse.basal?.patchId].compactMap { $0 }.map { UInt64($0) & 0xFFFF }
+        let previous = state.previousPatch.flatMap { $0.patchId.isEmpty ? nil : $0.patchId.toUInt64() & 0xFFFF }
+        if let previous, ids.contains(previous) {
+            return true
+        }
+
+        // A first patch has no suspend of a session before it
+        guard state.basalDose.type == .suspend, ids.isEmpty || previous == nil else {
+            return false
+        }
+        return !isNextPatchSeen(state.pumpState)
+    }
+
+    /// No session runs, an activation went out since it ended (`MedtrumPumpState.activationSentAt`), and the status - taken,
+    /// not the previous patch's (`isEndedSessionsPatchRunning`) - shows a patch running under an id, storage's or basal's,
+    /// other than the previous patch's: the new one, activated, its answer lost. Its session starts on its own. Naming no
+    /// id, it can't be told from the old one's: the next status naming one, or a retried activation, tells. With no
+    /// activation sent, a running patch never starts a session.
+    static func showsActivatedPatch(syncResponse: SynchronizePacketResponse, state: MedtrumPumpState) -> Bool {
+        guard state.patchSessionEnded, state.activationSentAt != nil, syncResponse.state.isRunning,
+              !syncResponse.invalidPayload, !syncResponse.truncated
+        else {
+            return false
+        }
+        let ids = [syncResponse.storage?.patchId, syncResponse.basal?.patchId].compactMap { $0 }.map { UInt64($0) & 0xFFFF }
+        let previous = state.previousPatch.flatMap { $0.patchId.isEmpty ? nil : $0.patchId.toUInt64() & 0xFFFF }
+        return !ids.isEmpty && (previous.map { !ids.contains($0) } ?? true)
+    }
+
+    /// What a patch since the session's end - whose state replaced the `.none` the end left - showed of a next patch: a
+    /// setup state past the base's own, or a running state already taken as its
+    private static func isNextPatchSeen(_ pumpState: PatchState) -> Bool {
+        pumpState.isRunning || (pumpState.isSetup && pumpState != .none && pumpState != .idle)
+    }
+
     enum BaseResetCheck {
         case noReset
         case reset
@@ -549,8 +641,12 @@ enum StateSyncer {
     /// and no delivery. Not a patch whose session ended: the state the old one reported after it, as it
     /// stopped, is followed by the new one's setup.
     static func baseResetCheck(syncResponse: SynchronizePacketResponse, state: MedtrumPumpState) -> BaseResetCheck {
+        // No session, its suspend standing: nothing delivering for us to end - whatever the patch last heard from showed.
+        // So a real reset of the base in the window after a lost activation answer - the new patch running, its session
+        // not started - goes unalerted: harmless to the doses, the suspend standing and nothing resumed over it until an
+        // activation starts a session.
         guard !state.pumpState.isSetup, syncResponse.state.isSetup,
-              !state.stoppedWithNoSession
+              !state.stoppedWithNoSession, !(state.patchSessionEnded && state.basalDose.type == .suspend)
         else {
             return .noReset
         }

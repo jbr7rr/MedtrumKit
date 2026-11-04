@@ -329,6 +329,26 @@ class MedtrumManagerTestCase: XCTestCase {
             .filter { $0.syncIdentifier == identity && !$0.isMutable }
     }
 
+    /// The one final report of `dose` the host was handed: batches carry every final the host has yet to confirm, so it
+    /// may have been handed more than once - hosts take it once by its identity - but every copy is the same, as it is
+    /// fixed once. Fails unless there is one, and every copy equals it; returns it, nil if there is none.
+    @discardableResult func assertOneFinal(
+        of dose: DoseEntry?,
+        _ message: @autoclosure () -> String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> DoseEntry? {
+        let all = finals(of: dose)
+        guard let first = all.first else {
+            XCTFail("No final of \(dose.map { "\($0.type) \($0.startDate)" } ?? "-") \(message())", file: file, line: line)
+            return nil
+        }
+        for other in all.dropFirst() where other != first {
+            XCTFail("Two finals of \(first.type) \(first.startDate) differ: \(first) - \(other) \(message())", file: file, line: line)
+        }
+        return first
+    }
+
     /// Every report of a dose of `type` the host was handed
     func reports(of type: DoseType) -> [DoseEntry] {
         delegate.batches.flatMap(\.events).compactMap(\.dose).filter { $0.type == type }

@@ -83,7 +83,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 937)
 
         let final = finals(of: started).last
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(final?.programmedUnits ?? 0, 0.05, accuracy: 0.001)
         XCTAssertEqual(final?.deliveredUnits ?? 0, 0.05, accuracy: 0.001)
         XCTAssertEqual(final?.endDate, completedAt, "ends when its completion came")
@@ -135,7 +135,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords(.awaitingDoses)
 
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 937)
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).first?.deliveredUnits ?? 0, 0.05, accuracy: 0.001, "from its record")
     }
 
@@ -216,7 +216,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords(.awaitingDoses)
 
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 937, "not held up for the cooldown")
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).first?.deliveredUnits ?? 0, 0.05, accuracy: 0.001, "from its record")
     }
 
@@ -610,7 +610,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
             "33634c040a3e52"
         )
         syncRecords()
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.05, accuracy: 0.001)
     }
 
@@ -628,17 +628,22 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(pumpManager.state.bolusState, .inProgress)
     }
 
-    /// The patch deactivated while a bolus runs: final at once from its last amount, shown so
-    func testBolusRunningAsThePatchIsDeactivatedIsShownSettledFromOurEstimate() {
+    /// The deactivation forced while a bolus runs, none of it reported delivered yet: final at once, in full - the old
+    /// patch may deliver it still - shown so
+    func testBolusRunningAsTheDeactivationIsForcedIsShownSettledInFull() {
         runTinyBolusSetup()
         link.script(CommandType.SET_BOLUS, fragments: "0f1343000000a903ec00f907ab17b300")
         XCTAssertNil(commandBolus(0.05, activationType: .automatic))
+        let started = reports(of: .bolus).first
+        XCTAssertEqual(pumpManager.state.bolusDose?.deliveredUnits ?? -1, 0, accuracy: 0.001)
 
         pumpManager.forceDeactivatePatch()
         settle()
 
+        XCTAssertEqual(assertOneFinal(of: started)?.deliveredUnits ?? 0, 0.05, accuracy: 0.001, "in full")
         XCTAssertEqual(uncertain.map(\.cause), [.patchDeactivated])
         XCTAssertEqual(uncertain.first?.phase, .settled(.byEstimate))
+        XCTAssertEqual(uncertain.first?.delivered ?? 0, 0.05, accuracy: 0.001)
     }
 
     /// State saved as a dose was finalized, before its uncertain delivery was settled, and one whose dose is gone: both
@@ -889,7 +894,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         )
         syncRecords()
 
-        XCTAssertEqual(finals(of: running).count, 1)
+        assertOneFinal(of: running)
         let final = finals(of: running).last
         XCTAssertEqual(final?.startDate, running?.startDate)
         XCTAssertEqual(final?.programmedUnits ?? 0, 2.0, accuracy: 0.001)
@@ -971,7 +976,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: running).count, 1)
+        assertOneFinal(of: running)
         let final = finals(of: running).last
         XCTAssertEqual(final?.programmedUnits ?? 0, 1.0, accuracy: 0.001)
         XCTAssertEqual(final?.deliveredUnits ?? 0, 0.2, accuracy: 0.001)
@@ -1065,7 +1070,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         let started = delegate.batches.first?.events.first?.dose
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
         XCTAssertEqual(delegate.errors.count, 1)
@@ -1102,7 +1107,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         let started = delegate.batches.first?.events.first?.dose
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(pumpManager.recordStore.records.first?.outcome?.hasPrefix("finalized bolus"), true)
         XCTAssertEqual(delegate.alerts.count, 0)
@@ -1172,7 +1177,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         XCTAssertEqual(pumpManager.recordStore.records.first?.outcome?.hasPrefix("finalized bolus"), true)
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 1.0, accuracy: 0.001, "what its record said")
         XCTAssertTrue(delegate.logEntries.contains { $0.message.contains("finalizing it with it, by its number") })
     }
@@ -1190,7 +1195,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         XCTAssertEqual(pumpManager.recordStore.records.first?.outcome?.hasPrefix("finalized bolus"), true)
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 1.5, accuracy: 0.001, "what its record said")
         XCTAssertTrue(delegate.logEntries.contains { $0.message.contains("finalizing it with it, by its number") })
     }
@@ -1211,7 +1216,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 124)
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 124 }?.outcome?.hasPrefix("finalized bolus"), true)
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 1.95, accuracy: 0.001, "what its record said")
         XCTAssertTrue(pumpManager.state.answeredBolusRecords.contains(124))
         XCTAssertTrue(uncertain.isEmpty)
@@ -1287,7 +1292,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         link.script(CommandType.GET_RECORD, .timeout)
         syncRecords()
 
-        XCTAssertEqual(finals(of: cancelled).count, 1)
+        assertOneFinal(of: cancelled)
         XCTAssertEqual(finals(of: cancelled).last?.deliveredUnits ?? 0, 0.4, accuracy: 0.001)
 
         // Saved as the final went out, before the cursor moved past 123
@@ -1309,7 +1314,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 123 }?.outcome, "answered bolus finalized already")
-        XCTAssertEqual(finals(of: unanswered).count, 1)
+        assertOneFinal(of: unanswered)
         XCTAssertEqual(finals(of: unanswered).last?.deliveredUnits ?? 0, 2.0, accuracy: 0.001)
         // Sent again until the host stores it, the same final
         XCTAssertEqual(Set(finals(of: cancelled).map(\.deliveredUnits)), [0.4])
@@ -1328,7 +1333,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
             RecordSyncer.finalizeOverdueDosesUnread(pumpManager: self.pumpManager)
         }
         settle()
-        XCTAssertEqual(finals(of: cancelled).count, 1)
+        assertOneFinal(of: cancelled)
         XCTAssertEqual(finals(of: unanswered).count, 0)
         XCTAssertEqual(pumpManager.state.awaitingRecord.filter { !$0.isFinalized }.count, 1)
 
@@ -1343,7 +1348,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 123 }?.outcome, "answered bolus finalized already")
-        XCTAssertEqual(finals(of: unanswered).count, 1)
+        assertOneFinal(of: unanswered)
         XCTAssertEqual(finals(of: unanswered).last?.deliveredUnits ?? 0, 2.0, accuracy: 0.001)
     }
 
@@ -1380,7 +1385,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         advanceClock(by: 44 * Self.minute)
         settleUnread()
-        XCTAssertEqual(finals(of: cancelled).count, 1)
+        assertOneFinal(of: cancelled)
         XCTAssertEqual(finals(of: cancelled).last?.deliveredUnits ?? 0, 0.4, accuracy: 0.001)
     }
 
@@ -1591,7 +1596,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         )
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(pumpManager.recordStore.records.first?.outcome?.hasPrefix("finalized bolus"), true)
         XCTAssertEqual(delegate.alerts.count, 0)
@@ -1614,11 +1619,47 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
         XCTAssertEqual(delegate.errors.count, 1)
         XCTAssertFalse(pumpManager.status.deliveryIsUncertain)
+    }
+
+    /// The same, the bolus noted with another patch's record number - one of a patch since replaced: every record past
+    /// 823 read, none its, says nothing of it - record numbers restart with every patch. It may have run: counted in
+    /// full, and the host told so
+    func testBolusAwaitingItsAnswerWhenTheAppWasKilledNumberedOnAnotherPatchIsCountedInFull() throws {
+        makeManager(unansweredBolusState())
+        var saved = try sendBolus(0.3, .timeout).atWrite
+        var pending = try XCTUnwrap(saved["pendingBolus"] as? [String: Any])
+        XCTAssertEqual(pending["sequencePatchId"] as? Int, 247, "noted with this patch's")
+        pending["sequencePatchId"] = 246
+        saved["pendingBolus"] = pending
+        try restart(from: saved)
+        pumpManager.ensureCurrentPumpData(completion: nil)
+        settle()
+        let started = delegate.batches.first?.events.first?.dose
+        XCTAssertNil(started?.deliveredUnits, "counted in full")
+        advanceClock(by: 173)
+        link.deliverFullStatus([
+            "2f030301000020ee0d800200800000063703f7ab",
+            "2f03030200ca31cc172f20009d092493c917d076",
+            "2f030303ab563703f7005ea202009a0827bb"
+        ])
+        settle()
+        XCTAssertNil(pumpManager.state.bolusDose)
+
+        link.notify("20000138" + "03f700")
+        settle()
+        link.script(CommandType.GET_RECORD, PatchBytes.otherRecord(type: 3, sequence: 824, patchId: 247))
+        syncRecords()
+        XCTAssertEqual(pumpManager.state.syncedSequenceNumber, 824)
+        advanceClock(by: 15 * Self.minute)
+        syncRecords()
+
+        XCTAssertEqual(assertOneFinal(of: started)?.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "in full")
+        XCTAssertEqual(delegate.alerts.map(\.identifier.alertIdentifier), ["com.nightscout.medtrumkit.bolus-counted-as-delivered"])
     }
 
     /// The same, with record 824 skipped, unreadable: it could have been its - counted in full, and the host told so
@@ -1636,7 +1677,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
         XCTAssertEqual(delegate.alerts.first?.identifier.alertIdentifier, "com.nightscout.medtrumkit.bolus-counted-as-delivered")
@@ -1655,7 +1696,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 45 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
         XCTAssertEqual(delegate.alerts.first?.identifier.alertIdentifier, "com.nightscout.medtrumkit.bolus-counted-as-delivered")
@@ -1684,7 +1725,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
         XCTAssertEqual(delegate.alerts.first?.identifier.alertIdentifier, "com.nightscout.medtrumkit.bolus-counted-as-delivered")
@@ -1717,7 +1758,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
     }
@@ -1767,7 +1808,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: second).count, 1)
+        assertOneFinal(of: second)
         XCTAssertEqual(finals(of: second).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
     }
@@ -1806,7 +1847,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         )
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 2.0, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
         XCTAssertEqual(delegate.errors.count, 1)
@@ -1964,7 +2005,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         XCTAssertEqual(pumpManager.recordStore.records.first?.outcome?.hasPrefix("finalized bolus"), true)
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 1.2, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
     }
@@ -2021,7 +2062,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         XCTAssertEqual(finals(of: cancelled).last?.deliveredUnits ?? 0, 0.4, accuracy: 0.001)
-        XCTAssertEqual(finals(of: takenOver).count, 1)
+        assertOneFinal(of: takenOver)
         XCTAssertEqual(finals(of: takenOver).last?.deliveredUnits ?? 0, 2.0, accuracy: 0.001)
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 124 }?.outcome?.hasPrefix("finalized bolus"), true)
     }
@@ -2050,7 +2091,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         advanceClock(by: 61 * Self.minute)
         syncRecords()
-        XCTAssertEqual(finals(of: cancelled).count, 1)
+        assertOneFinal(of: cancelled)
         XCTAssertEqual(finals(of: cancelled).last?.deliveredUnits ?? -1, 0.4, accuracy: 0.001)
         XCTAssertTrue(pumpManager.state.awaitingRecord.isEmpty, "stored by the host, gone")
         XCTAssertEqual(pumpManager.state.answeredBolusRecords, [123])
@@ -2085,7 +2126,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 123 }?.outcome, "answered bolus finalized already")
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 124 }?.outcome?.hasPrefix("finalized bolus"), true)
-        XCTAssertEqual(finals(of: takenOver).count, 1)
+        assertOneFinal(of: takenOver)
         XCTAssertEqual(finals(of: takenOver).last?.deliveredUnits ?? -1, 2.0, accuracy: 0.001)
     }
 
@@ -2131,7 +2172,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 123 }?.outcome, "answered bolus finalized already")
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 124 }?.outcome?.hasPrefix("finalized bolus"), true)
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? -1, 2.0, accuracy: 0.001)
     }
 
@@ -2392,7 +2433,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
         XCTAssertFalse(pumpManager.status.deliveryIsUncertain)
@@ -2482,7 +2523,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         )
         link.script(CommandType.GET_RECORD, record)
         syncRecords()
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertTrue(pumpManager.state.awaitingRecord.isEmpty, "the host stored the final")
 
         pumpManager.state.syncedSequenceNumber = 823
@@ -2490,7 +2531,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         syncRecords()
 
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 824 }?.outcome, "answered bolus finalized already")
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(delegate.alerts.count, 0)
     }
 
@@ -2501,7 +2542,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         let started = try takeOverUnansweredBolusAndEndItAtItsDeadline(confirmingRecords: false)
         advanceClock(by: 60 * Self.minute)
         syncRecords()
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.map(\.identifier.alertIdentifier), ["com.nightscout.medtrumkit.bolus-counted-as-delivered"])
         XCTAssertEqual(pumpManager.state.bolusesFinalWithoutRecord.count, 1)
@@ -2547,7 +2588,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         readRecordOfTheCancelledBolusAgain(delivered: 0.5)
         XCTAssertEqual(delegate.alerts.count, 1, "told of once")
-        XCTAssertEqual(finals(of: cancelled).count, 1)
+        assertOneFinal(of: cancelled)
     }
 
     /// The same, its record at the amount it went final at: nothing to tell
@@ -2556,7 +2597,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         readRecordOfTheCancelledBolusAgain(delivered: 0.1)
         XCTAssertEqual(delegate.alerts.count, 0)
         XCTAssertTrue(pumpManager.state.bolusesFinalWithoutRecord.isEmpty, "it explained its record")
-        XCTAssertEqual(finals(of: cancelled).count, 1)
+        assertOneFinal(of: cancelled)
     }
 
     /// Cancelled before any progress, final at 0 U from our estimate, its record 0 U delivered: it explains the record -
@@ -2661,7 +2702,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         advanceClock(by: 15 * Self.minute)
         syncRecords()
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "counted in full")
         XCTAssertEqual(delegate.alerts.map(\.identifier.alertIdentifier), ["com.nightscout.medtrumkit.bolus-counted-as-delivered"])
         XCTAssertTrue(pumpManager.state.possibleBolusRecords.isEmpty)
@@ -2702,7 +2743,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
             PatchBytes.bolusRecord(sequence: 825, patchId: 247, start: patchSentAt.addingTimeInterval(1), amount: 0.3, delivered: 0.3)
         )
         syncRecords()
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(pumpManager.recordStore.records.first { $0.id == 825 }?.outcome?.hasPrefix("finalized bolus"), true)
 
         XCTAssertEqual(delegate.alerts.count, 1)
@@ -2742,7 +2783,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         )
         syncRecords()
         XCTAssertEqual(delegate.alerts.count, 2, "told of once")
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
     }
 
     /// The same, 824 delivering 0.1 U of its 0.3 U: as it was taken, the user was told the bolus was counted too high -
@@ -2758,7 +2799,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         }
         XCTAssertEqual(delegate.alerts.count, 3)
         try assertToldOfNotCounted(delegate.alerts.last, 0.1)
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
     }
 
     /// The same, 825 delivering 0.1 U too: the user was told of the bolus counted too high as 824 was taken - nothing
@@ -2770,7 +2811,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(delegate.alerts.count, 3, "no second miscount")
         XCTAssertEqual(delegate.alerts.filter { $0.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-miscounted") }.count, 1)
         try assertToldOfNotCounted(delegate.alerts.last, 0.1)
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
     }
 
     /// The bolus of 0.3 U whose answer was lost; record 824, of 0.3 U, `possibleDelivered`, 5 min off, kept; the bolus
@@ -2796,7 +2837,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         XCTAssertEqual(delegate.alerts.count, 0, "it could be ours")
         advanceClock(by: 15 * Self.minute)
         syncRecords()
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001, "counted in full")
         XCTAssertTrue(delegate.alerts.contains { $0.identifier.alertIdentifier == "com.nightscout.medtrumkit.bolus-counted-as-delivered" })
         XCTAssertEqual(pumpManager.state.bolusesFinalWithoutRecord.first?.taken?.sequence, 824)
@@ -2854,7 +2895,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         link.script(CommandType.GET_RECORD, record)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
         XCTAssertTrue(pumpManager.state.possibleBolusRecords.isEmpty)
@@ -2887,7 +2928,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         advanceClock(by: 60 * Self.minute)
         syncRecords()
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertFalse(delegate.alerts.contains { $0.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-not-counted") })
         XCTAssertTrue(pumpManager.state.possibleBolusRecords.isEmpty)
     }
@@ -2923,7 +2964,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
 
         advanceClock(by: 60 * Self.minute)
         syncRecords()
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.1, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
         XCTAssertTrue(pumpManager.state.possibleBolusRecords.isEmpty)
@@ -2963,7 +3004,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(delegate.alerts.count, 0)
         return started
     }
@@ -3047,7 +3088,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: unanswered).count, 1)
+        assertOneFinal(of: unanswered)
         XCTAssertEqual(finals(of: unanswered).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
     }
@@ -3095,7 +3136,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: unanswered).count, 1)
+        assertOneFinal(of: unanswered)
         XCTAssertEqual(finals(of: unanswered).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
     }
@@ -3122,7 +3163,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
     }
@@ -3142,7 +3183,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
     }
@@ -3158,7 +3199,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         pumpManager.forceDeactivatePatch()
         settle()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
     }
@@ -3174,7 +3215,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         pumpManager.forceDeactivatePatch()
         settle()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
     }
@@ -3204,7 +3245,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 61 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
     }
@@ -3231,7 +3272,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
     }
@@ -3253,7 +3294,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 61 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
     }
@@ -3282,7 +3323,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         uptimeOffset.mutate { $0 += 10 }
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 1)
     }
@@ -3311,7 +3352,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 1 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
     }
@@ -3331,7 +3372,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? -1, 0, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
     }
@@ -3354,7 +3395,7 @@ final class ManagerBolusScenarioTests: MedtrumManagerTestCase {
         advanceClock(by: 15 * Self.minute)
         syncRecords()
 
-        XCTAssertEqual(finals(of: started).count, 1)
+        assertOneFinal(of: started)
         XCTAssertEqual(finals(of: started).last?.deliveredUnits ?? 0, 0.3, accuracy: 0.001)
         XCTAssertEqual(delegate.alerts.count, 0)
     }

@@ -150,6 +150,10 @@ public class UnfinalizedDose {
         public fileprivate(set) var confirmation: Confirmation = .confirmed
         /// The host was warned that this bolus may or may not have been delivered - once per bolus
         public fileprivate(set) var uncertaintyReported = false
+        /// Final in full as its patch session ended - nothing heard of what it delivered - and the user not told yet that
+        /// it was counted so (`MedtrumPumpManager.warnOfBolusCountedAtSessionEnd`): saved, so that a run killed before
+        /// telling has the next one tell (`reportBolusFromLastRun`). False in a state saved before this was kept.
+        public fileprivate(set) var sessionEndAlertPending = false
 
         /// When the command that started this dose went out: a status received before then says nothing of it
         /// (`MedtrumPumpManager.statusPredatesCommand`), and a bolus's deadline and the window its record is looked
@@ -168,6 +172,11 @@ public class UnfinalizedDose {
         /// The newest record number known when the command went out - for a bolus, or claimed by an earlier bolus's
         /// answer (`MedtrumPumpState.answeredBolusRecords`): the record of a bolus whose answer was lost is numbered past it
         public fileprivate(set) var sequenceAtSend: Int?
+        /// The patch `sequenceAtSend` - and so any record number of this dose - is of: its id's low 16 bits, as the
+        /// patch's payloads name it. Record numbers restart with every patch, so one of another patch says nothing of the
+        /// records read now (`MedtrumPumpManager.isNumberedOnThisPatch`). Nil, no id was known when it went out - and for
+        /// one saved before this was kept.
+        public fileprivate(set) var sequencePatchId: Int?
         /// The record the patch allocated for this bolus, from the answer to its command: matched by number
         public fileprivate(set) var recordSequence: Int?
         /// That number came back as a record of another kind - one the patch wrote as the bolus ran, an alarm, say
@@ -406,12 +415,14 @@ public class UnfinalizedDose {
         state.confirmation = (rawValue["confirmation"] as? Confirmation.RawValue).flatMap(Confirmation.init(rawValue:)) ??
             .confirmed
         state.uncertaintyReported = rawValue["uncertaintyReported"] as? Bool ?? false
+        state.sessionEndAlertPending = rawValue["sessionEndAlertPending"] as? Bool ?? false
         // A bolus saved without it - by the released driver, which dated it as its SetBolus answer came, the patch already
         // delivering: sent then, as far as its record is matched (`MedtrumPumpManager.matchReleasedBolusRecord`, no
         // `sequenceAtSend` telling it) and kept final without one. Any bolus since is saved with it.
         state.sentAt = rawValue["sentAt"] as? Date ?? (type == .bolus ? startDate : nil)
         state.writtenAt = rawValue["writtenAt"] as? Date
         state.sequenceAtSend = rawValue["sequenceAtSend"] as? Int
+        state.sequencePatchId = rawValue["sequencePatchId"] as? Int
         state.recordSequence = rawValue["recordSequence"] as? Int
         state.answeredRecordTaken = rawValue["answeredRecordTaken"] as? Bool ?? false
         state.recordsReadThrough = rawValue["recordsReadThrough"] as? Int
@@ -473,9 +484,13 @@ public class UnfinalizedDose {
         if state.uncertaintyReported {
             raw["uncertaintyReported"] = true
         }
+        if state.sessionEndAlertPending {
+            raw["sessionEndAlertPending"] = true
+        }
         raw["sentAt"] = state.sentAt
         raw["writtenAt"] = state.writtenAt
         raw["sequenceAtSend"] = state.sequenceAtSend
+        raw["sequencePatchId"] = state.sequencePatchId
         raw["recordSequence"] = state.recordSequence
         if state.answeredRecordTaken {
             raw["answeredRecordTaken"] = true
@@ -512,11 +527,13 @@ public class UnfinalizedDose {
     }
 
     /// The command that started this dose went out at `sentAt` (`uptime` on the monotonic clock), the patch having
-    /// written up to record `sequence`. For a dose not shared yet.
+    /// written up to record `sequence` - a record number of the patch `patchId` (low 16 bits), nil if none was known
+    /// (`State.sequencePatchId`). For a dose not shared yet.
     func noteCommand(
         sentAt: Date,
         uptime: TimeInterval?,
         sequence: Int,
+        patchId: Int? = nil,
         priorSegmentStart: Date? = nil,
         basalBefore: Date? = nil,
         basalBeforeOnPatch: Date? = nil
@@ -526,6 +543,7 @@ public class UnfinalizedDose {
             state.sentAt = sentAt
             state.sentUptime = uptime
             state.sequenceAtSend = sequence
+            state.sequencePatchId = patchId
             state.priorSegmentStart = priorSegmentStart
             state.basalBefore = basalBefore
         }
@@ -674,6 +692,25 @@ public class UnfinalizedDose {
                 return false
             }
             state.recordedParts.append(part)
+            return true
+        }
+    }
+
+    /// This bolus, final in full as its session ended, is one the user is to be told of - see
+    /// `State.sessionEndAlertPending`
+    func noteSessionEndAlertPending() {
+        transition { state in
+            state.sessionEndAlertPending = true
+        }
+    }
+
+    /// Whether the user is to be told of this bolus counted in full at its session's end now, being told so: once
+    func takeSessionEndAlert() -> Bool {
+        transition { state -> Bool in
+            guard state.sessionEndAlertPending else {
+                return false
+            }
+            state.sessionEndAlertPending = false
             return true
         }
     }

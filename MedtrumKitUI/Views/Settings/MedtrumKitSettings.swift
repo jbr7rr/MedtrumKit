@@ -293,7 +293,7 @@ struct MedtrumKitSettings: View {
                         }
                     }
 
-                    if viewModel.patchState.isAwaitingActivation {
+                    if viewModel.showsActivatePatch {
                         Button(action: { viewModel.toPumpActivation() }) {
                             HStack {
                                 Text("Activate Patch", comment: "label for activate patch")
@@ -363,7 +363,7 @@ struct MedtrumKitSettings: View {
                         }
                     }
                 } else {
-                    Button(action: { viewModel.activatePatchAction() }) {
+                    Button(action: { viewModel.activatePatchPressed() }) {
                         HStack {
                             Text("Activate Patch", comment: "activate patch")
                             Spacer()

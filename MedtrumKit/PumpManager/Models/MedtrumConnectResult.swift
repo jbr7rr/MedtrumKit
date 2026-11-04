@@ -1,4 +1,5 @@
 import CoreBluetooth
+import LoopKit
 
 public enum MedtrumConnectError: LocalizedError {
     case failedToDiscoverServices(localizedError: String)
@@ -14,6 +15,9 @@ public enum MedtrumConnectError: LocalizedError {
     /// `MedtrumPumpManager.handOverPendingDose`. `tempBasalCancelled`: the temp basal running was cancelled before;
     /// else nothing was sent.
     case stateNotSaved(tempBasalCancelled: Bool)
+    /// A command refused: no patch session runs - none activated, or the last one ended - see
+    /// `MedtrumPumpManager.ensureConnectedAndActive`
+    case noActivePatch
 
     public var errorDescription: String? {
         switch self {
@@ -52,6 +56,17 @@ public enum MedtrumConnectError: LocalizedError {
                 localized: "The app did not save the pump state in time: the running temp basal was cancelled, the new one was not sent",
                 comment: "MedtrumError state not saved after the temp basal was cancelled"
             )
+        case .noActivePatch:
+            return String(localized: "No patch is active. Activate a patch first.", comment: "MedtrumError no patch session runs")
         }
+    }
+
+    /// As a dosing command fails with it: no patch session is the patch's state - refused, as a suspended patch is -
+    /// anything else the link's
+    var pumpManagerError: PumpManagerError {
+        if case .noActivePatch = self {
+            return .deviceState(self)
+        }
+        return .communication(self)
     }
 }

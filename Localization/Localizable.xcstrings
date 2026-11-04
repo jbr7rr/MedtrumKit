@@ -21315,6 +21315,9 @@
         }
       }
     },
+    "No patch is active. Activate a patch first." : {
+      "comment" : "MedtrumError no patch session runs"
+    },
     "No records read yet" : {
 
     },
@@ -34509,6 +34512,9 @@
           }
         }
       }
+    },
+    "The patch session ended before the patch told how much of the bolus of %@ U it delivered. The full amount was counted as delivered." : {
+      "comment" : "Body bolus counted as delivered at the patch session end notification"
     },
     "The patch will go back to your scheduled basal rate." : {
 

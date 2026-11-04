@@ -56,12 +56,16 @@ public struct PendingBolus: RawRepresentable, Equatable {
     /// The newest record number known or claimed when it went out (`UnfinalizedDose.State.sequenceAtSend`): its record,
     /// if the patch ran it, is numbered past it
     public let sequenceAtSend: Int
+    /// The patch that number is of - see `UnfinalizedDose.State.sequencePatchId`. Nil, none was known - and for one
+    /// saved before this was kept.
+    public let sequencePatchId: Int?
     public let automatic: Bool
 
-    public init(units: Double, sentAt: Date, sequenceAtSend: Int, automatic: Bool) {
+    public init(units: Double, sentAt: Date, sequenceAtSend: Int, sequencePatchId: Int? = nil, automatic: Bool) {
         self.units = units
         self.sentAt = sentAt
         self.sequenceAtSend = sequenceAtSend
+        self.sequencePatchId = sequencePatchId
         self.automatic = automatic
     }
 
@@ -71,11 +75,19 @@ public struct PendingBolus: RawRepresentable, Equatable {
         else {
             return nil
         }
-        self.init(units: units, sentAt: sentAt, sequenceAtSend: sequenceAtSend, automatic: automatic)
+        self.init(
+            units: units,
+            sentAt: sentAt,
+            sequenceAtSend: sequenceAtSend,
+            sequencePatchId: rawValue["sequencePatchId"] as? Int,
+            automatic: automatic
+        )
     }
 
     public var rawValue: RawValue {
-        ["units": units, "sentAt": sentAt, "sequenceAtSend": sequenceAtSend, "automatic": automatic]
+        var raw: RawValue = ["units": units, "sentAt": sentAt, "sequenceAtSend": sequenceAtSend, "automatic": automatic]
+        raw["sequencePatchId"] = sequencePatchId
+        return raw
     }
 }
 
@@ -534,6 +546,8 @@ public class MedtrumPumpState: RawRepresentable {
 
         // Not kept by earlier versions: then only a patch being set up has no session
         patchSessionEnded = rawValue["patchSessionEnded"] as? Bool ?? pumpState.isSetup
+        // Not kept by earlier versions: then none sent
+        activationSentAt = rawValue["activationSentAt"] as? Date
 
         if let rawBasalSchedule = rawValue["basalSchedule"] as? BasalSchedule.RawValue {
             basalSchedule = BasalSchedule(rawValue: rawBasalSchedule) ??
@@ -669,6 +683,7 @@ public class MedtrumPumpState: RawRepresentable {
         pumpState = .none
         lastShownNotDeliveringAt = nil
         patchSessionEnded = true
+        activationSentAt = nil
 
         maxHourlyInsulin = 20
         maxDailyInsulin = 100
@@ -733,6 +748,7 @@ public class MedtrumPumpState: RawRepresentable {
         value["pumpState"] = pumpState.rawValue
         value["lastShownNotDeliveringAt"] = lastShownNotDeliveringAt
         value["patchSessionEnded"] = patchSessionEnded
+        value["activationSentAt"] = activationSentAt
         value["maxHourlyInsulin"] = maxHourlyInsulin
         value["maxDailyInsulin"] = maxDailyInsulin
         value["basalSchedule"] = basalSchedule.rawValue
@@ -847,6 +863,12 @@ public class MedtrumPumpState: RawRepresentable {
     /// one maybe still to come (`MedtrumPumpManager.matchReleasedBolusRecord`). Per patch.
     public var releasedBolusBacklogRecord: PossibleBolusRecord?
 
+    /// The patch the record numbers known now are of - `patchId`'s low 16 bits, as payloads name it - nil with none
+    /// known: what a dose's record numbers are noted with (`UnfinalizedDose.State.sequencePatchId`)
+    var recordNumbersPatchId: Int? {
+        patchId.isEmpty ? nil : Int(patchId.toUInt64() & 0xFFFF)
+    }
+
     /// Forgets what belonged to the records of the patch before
     func resetRecordSequence() {
         currentSequenceNumber = 0
@@ -902,6 +924,11 @@ public class MedtrumPumpState: RawRepresentable {
     public var lastShownNotDeliveringAt: Date?
     /// No patch session is running: the last one ended, or none started yet
     public var patchSessionEnded: Bool
+    /// When an activation went out to the patch being set up, no session started since - set as its ActivatePacket is
+    /// written, cleared as a session starts or ends. Its answer lost, the patch may have activated all the same: the first
+    /// status that shows a patch running under another id than the previous one's starts its session - see
+    /// `MedtrumPumpManager.startSessionOfActivatedPatchSoon`. A running patch seen without it is not taken as activated.
+    public var activationSentAt: Date?
     public var initialReservoir: Double?
     public var reservoir: Double
     public var battery: Double
@@ -1082,6 +1109,13 @@ public class MedtrumPumpState: RawRepresentable {
         patchSessionEnded && pumpState.isTerminated
     }
 
+    /// No session runs, and the patch last reported a running state - taken as the new patch's, not the old one's
+    /// (`StateSyncer.isEndedSessionsPatchRunning`): its activation's answer was lost, its session not started yet. The
+    /// activation's retry starts it (`MedtrumPumpManager.activatePatch`) - the settings screen offers it.
+    public var isActivatedWithNoSession: Bool {
+        patchSessionEnded && pumpState.isRunning
+    }
+
     /// A bolus whose command went unanswered, still running as far as we know, or a temp basal whose command went
     /// unanswered and is not settled - or a cancel of the running one. For the host's `deliveryIsUncertain`. One that
     /// ended has its count settled by its record or the fallback, counting the more insulin meanwhile.
@@ -1259,6 +1293,7 @@ public class MedtrumPumpState: RawRepresentable {
             "* lastSync: \(lastSync)",
             "* pumpState: \(pumpState.rawValue)",
             "* patchSessionEnded: \(patchSessionEnded)",
+            "* activationSentAt: \(activationSentAt.map { "\($0)" } ?? "-")",
             "* pumpSN: \(pumpSN.hexEncodedString())",
             "* pumpName: \(pumpName)",
             "* model: \(model)",

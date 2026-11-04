@@ -97,6 +97,11 @@ public class MedtrumPumpManager: DeviceManager {
     /// `holdForUnconfirmedRead`. Only under `doseReportLock`.
     private var heldForUnconfirmedRead: [UnfinalizedDose] = []
 
+    /// When the last full status of the previous patch came in, not taken - no session runs, the old patch still on the
+    /// base (`StateSyncer.isEndedSessionsPatchRunning`): it moves no `lastSync`, and a heartbeat would ask for another
+    /// on every tick - see `heartbeatSync`
+    private let previousPatchsFullStatusAt = Locked(Date.distantPast)
+
     /// Statuses handled, and how many showed the patch halted - see `requestStatusAfterHalt`
     private let statusesHandled = Locked(0)
     private let haltsSeen = Locked(0)
@@ -616,7 +621,7 @@ public extension MedtrumPumpManager {
         ensureConnectedAndActive { error in
             if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
-                completion(.communication(error))
+                completion(error.pumpManagerError)
                 return
             }
 
@@ -653,6 +658,8 @@ public extension MedtrumPumpManager {
             // The newest record known, or claimed: every number an answer gave is an earlier bolus's, below this one's
             // own - see `MedtrumPumpState.answeredBolusRecords`. The known one lags a claimed one whose completion was lost.
             let sequenceAtSend = max(self.state.currentSequenceNumber, self.state.answeredBolusRecords.max() ?? 0)
+            // The patch those numbers are of: a number of another patch says nothing of this one's records
+            let sequencePatchId = self.state.recordNumbersPatchId
 
             // On disk before it goes out: killed before its answer, the app comes back with it - see `pendingBolus`
             self.doseReportLock.withLock {
@@ -661,6 +668,7 @@ public extension MedtrumPumpManager {
                     units: units,
                     sentAt: sentAt,
                     sequenceAtSend: sequenceAtSend,
+                    sequencePatchId: sequencePatchId,
                     automatic: activationType.isAutomatic
                 )
                 self.pendingDoseHandedOut = false
@@ -708,7 +716,9 @@ public extension MedtrumPumpManager {
                     )
                 }
                 self.handOverState(before: "failing the bolus")
-                completion(.deviceState(MedtrumConnectError.isSuspended))
+                // Or the session ended meanwhile - a forced deactivation - which leaves it suspended
+                let sessionEnded = self.doseReportLock.withLock { self.state.patchSessionEnded }
+                completion(.deviceState(sessionEnded ? MedtrumConnectError.noActivePatch : MedtrumConnectError.isSuspended))
                 return
             }
 
@@ -755,23 +765,39 @@ public extension MedtrumPumpManager {
                 confirmation: outcome == .unknown ? .uncertain : .confirmed,
                 startDate: sentAt
             )
-            doseEntry.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend)
+            doseEntry.noteCommand(sentAt: sentAt, uptime: sentUptime, sequence: sequenceAtSend, patchId: sequencePatchId)
             doseEntry.noteWritten(at: writtenAt, uptime: writtenUptime)
-
-            if case let .success(data) = writeResult, let response = data as? SetBolusResponse {
-                self.noteBolusAnswer(response, of: doseEntry)
-            }
 
             // Running and reported in one step - see `doseReportLock` - and no longer pending: the state the host saves
             // as it takes the report has the one, not the other. A completion that came before the answer is taken now.
-            let early = self.doseReportLock.withLock { () -> EarlyBolusCompletion? in
+            // Unless the session ended while it was out - checked in the same step, a forced deactivation's end under it.
+            let registered = self.doseReportLock.withLock { () -> (registered: Bool, early: EarlyBolusCompletion?) in
+                guard !self.state.patchSessionEnded else {
+                    if let final = self.finalizeBolusOfEndedSession(doseEntry, unanswered: outcome != .accepted) {
+                        self.emitPumpEvents([final])
+                    }
+                    return (false, nil)
+                }
+                // The record named is the patch's whose session runs
+                if case let .success(data) = writeResult, let response = data as? SetBolusResponse {
+                    self.noteBolusAnswer(response, of: doseEntry)
+                }
                 self.state.bolusDose = doseEntry
                 self.state.pendingBolus = nil
                 self.emitPumpEvents([NewPumpEvent.bolus(unfinalizedDose: doseEntry)], replacePendingEvents: false)
                 defer { self.earlyBolusCompletion = nil }
-                return self.earlyBolusCompletion
+                return (true, self.earlyBolusCompletion)
             }
             self.notifyStateDidChange()
+
+            guard registered.registered else {
+                // Delivered by the old patch, answered - or, unanswered, it may be: counted in full either way, nothing of
+                // it heard from after, as one running as the session ended is - warned of, the user told so
+                self.warnOfBolusCountedAtSessionEnd(doseEntry)
+                completion(outcome == .accepted ? nil : .uncertainDelivery)
+                return
+            }
+            let early = registered.early
 
             // Over before its answer came. Unanswered, it stays uncertain - counted in full, and warned of - whatever
             // came meanwhile: its record settles it.
@@ -826,6 +852,75 @@ public extension MedtrumPumpManager {
         log.info("Bolus is record #\(recordSequence), patch start \(startTime)")
     }
 
+    /// `dose`, its SetBolus out as the session ended under it - a deactivation forced meanwhile, from the main queue -
+    /// the answer in now, or the command gone unanswered (`unanswered`). It went to the old patch, still on the body:
+    /// answered, the patch delivers it. Nothing of that patch is taken from here on (`StateSyncer.isEndedSessionsPatchRunning`)
+    /// - no progress, no completion, no record - so it is final at once, at the amount programmed: never less than it
+    /// delivered - noted as uncertain, as one running as the session ended is: what it delivered is never heard. Never
+    /// running: the next patch takes boluses from its activation on. Unanswered, it may not have run: counted in full
+    /// all the same. The caller warns of it (`warnOfBolusCountedAtSessionEnd`). Returns its final, for the caller to
+    /// hand over - nil if it had one. Only under `doseReportLock`.
+    private func finalizeBolusOfEndedSession(_ dose: UnfinalizedDose, unanswered: Bool) -> NewPumpEvent? {
+        state.pendingBolus = nil
+        if let early = earlyBolusCompletion {
+            log.info(
+                "A completion of \(early.delivered) U, record \(early.record.map { "#\($0)" } ?? "-"), came before the " +
+                    "answer: the bolus is final at its full amount all the same"
+            )
+        }
+        earlyBolusCompletion = nil
+
+        log.warning(
+            "The patch session ended while the bolus of \(dose.value) U was out\(unanswered ? ", unanswered" : ""): sent to " +
+                "the old patch, it is final at once at the full amount - nothing of that patch is heard from here on"
+        )
+        return finalizeInFullAtSessionEnd(dose)
+    }
+
+    /// `dose`, a bolus of the session that ended - or ends now - final at once at the amount programmed, never less than
+    /// it delivered: its patch may deliver it still, and nothing of that patch is taken from here on
+    /// (`StateSyncer.isEndedSessionsPatchRunning`) - no progress, no completion, no record. Noted as uncertain, and as
+    /// one the user is to be told of, saved with it: the caller tells (`warnOfBolusCountedAtSessionEnd`) - or, with no
+    /// host yet, `reportBolusFromLastRun` does. Returns its final, nil if it had one. Only under `doseReportLock`.
+    private func finalizeInFullAtSessionEnd(_ dose: UnfinalizedDose) -> NewPumpEvent? {
+        dose.finish(.interrupted, deliveredUnits: dose.value, endedAt: nil, at: now())
+        noteUncertainDelivery(.bolus, .patchDeactivated, of: dose)
+        guard let event = finalize(dose, deliveredUnits: dose.value, .byEstimate, atSessionEnd: true) else {
+            return nil
+        }
+        dose.noteSessionEndAlertPending()
+        // Told of here, not once more as one from the last run
+        if bolusFromLastRun === dose {
+            bolusFromLastRun = nil
+        }
+        return event
+    }
+
+    /// Tells the host of `dose`, a bolus final in full as its session ended, nothing heard of what it delivered
+    /// (`finalizeInFullAtSessionEnd`): warned of as uncertain - one whose command went unanswered once, as ever - and
+    /// the user told it was counted in full. Once: with no host to tell, it waits for `reportBolusFromLastRun` - or the
+    /// first batch to carry its final out (`emitPumpEvents`) - the note saved with the dose - killed before the host saved
+    /// the state with it gone, the next run tells again. Holding
+    /// `doseReportLock` or not: it only posts.
+    private func warnOfBolusCountedAtSessionEnd(_ dose: UnfinalizedDose) {
+        guard pumpDelegate.delegate != nil else {
+            log.warning("No pump delegate: the bolus of \(dose.value) U counted in full at the session end is told of later")
+            return
+        }
+        guard dose.takeSessionEndAlert() else {
+            return
+        }
+        if dose.confirmation == .uncertain {
+            warnOfUncertainBolus(dose)
+        } else {
+            pumpDelegate.notify { delegate in
+                delegate?.pumpManager(self, didError: .uncertainDelivery)
+            }
+        }
+        emitAlert(alertType: .bolusCountedAsDeliveredAtSessionEnd(units: dose.value, sentAt: dose.sentAt ?? dose.startDate))
+        notifyStateDidChange()
+    }
+
     /// See `MedtrumPumpState.answeredBolusRecords`. Kept while its record may still be read: past the cursor, or within
     /// a run behind it - a restart reads again from the cursor as saved.
     private func noteAnsweredBolusRecord(_ sequence: Int) {
@@ -862,7 +957,7 @@ public extension MedtrumPumpManager {
         ensureConnectedAndActive { error in
             if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
-                finish(.failure(.communication(error)))
+                finish(.failure(error.pumpManagerError))
                 return
             }
 
@@ -938,7 +1033,7 @@ public extension MedtrumPumpManager {
         ensureConnectedAndActive { error in
             if let error = error {
                 self.log.error("Failed to connect: \(error.localizedDescription)")
-                completion(.communication(error))
+                completion(error.pumpManagerError)
                 return
             }
 
@@ -1055,14 +1150,20 @@ public extension MedtrumPumpManager {
             if duration < .ulpOfOne {
                 // Need to cancel temp basal, but is already cancelled
                 // Only need to report back to algorithm - unless a status showed the patch halted meanwhile: it tells
-                guard self.reportScheduleUnlessHalted(
+                let reported = self.reportScheduleUnlessHalted(
                     endedAt: nil,
                     endedBy: cancelAnswer,
                     sentAt: cancelSentAt,
                     cancelled: cancelling,
                     haltsBefore: haltsBefore,
                     before: "completing the cancel"
-                ) || cancelledAt != nil else {
+                )
+                // The session ended while it was out - forced: the old patch's, nothing of it is reported
+                if !reported, self.doseReportLock.withLock({ self.state.patchSessionEnded }) {
+                    completion(.deviceState(MedtrumConnectError.noActivePatch))
+                    return
+                }
+                guard reported || cancelledAt != nil else {
                     completion(.deviceState(MedtrumConnectError.isSuspended))
                     return
                 }
@@ -1159,7 +1260,9 @@ public extension MedtrumPumpManager {
                 } else {
                     self.handOverState(before: "failing the temp basal")
                 }
-                completion(.deviceState(MedtrumConnectError.isSuspended))
+                // Or the session ended meanwhile - a forced deactivation - which leaves it suspended
+                let sessionEnded = self.doseReportLock.withLock { self.state.patchSessionEnded }
+                completion(.deviceState(sessionEnded ? MedtrumConnectError.noActivePatch : MedtrumConnectError.isSuspended))
                 return
             }
 
@@ -1227,7 +1330,7 @@ public extension MedtrumPumpManager {
                     startDate: sentAt
                 )
                 unconfirmed.noteWritten(at: writtenAt, uptime: writtenUptime)
-                self.keepUnconfirmedTempBasal(
+                let kept = self.keepUnconfirmedTempBasal(
                     unconfirmed,
                     sentAt: sentAt,
                     sentUptime: sentUptime,
@@ -1243,6 +1346,11 @@ public extension MedtrumPumpManager {
                     } ?? self.reportedBasalPatchStart
                 )
 
+                // The session ended while it was out - forced: what it went to is the old patch, nothing of it ours
+                guard kept else {
+                    completion(.deviceState(MedtrumConnectError.noActivePatch))
+                    return
+                }
                 // What the host was told stands: the temp basal before ended at the cancel, then the schedule. With
                 // the set unanswered the link may be gone: its record is not read now - our estimate stands in, and a
                 // sync reads the record later, changing nothing.
@@ -1279,12 +1387,17 @@ public extension MedtrumPumpManager {
 
             // The old one ends where the new one starts, and both go out in one batch: the old one mutable until its
             // records - the one the cancel named - are read, after this command
-            self.replaceRunningBasal(endedBy: cancelAnswer, sentAt: cancelSentAt) {
+            let replaced = self.replaceRunningBasal(endedBy: cancelAnswer, sentAt: cancelSentAt) {
                 self.state.basalState = .tempBasal
                 self.state.lastSync = Date.now
                 return (tempBasalDose, NewPumpEvent.tempBasal(dose: tempBasalDose.toDoseEntry(isMutable: true)))
             }
             self.notifyStateDidChange()
+            // The session ended while it was out - forced: the old patch runs it, not ours to count
+            guard replaced else {
+                completion(.deviceState(MedtrumConnectError.noActivePatch))
+                return
+            }
             self.requestStatusAfterHalt(seenSince: haltsBefore)
 
             completion(nil)
@@ -1470,14 +1583,26 @@ public extension MedtrumPumpManager {
     /// whose status may have its records read right away: the app comes back waiting on it, the new basal running.
     /// With no cancel, `lastRecord` is the record the patch wrote as the command ended it, where known: a suspend's, a
     /// resume's - read in the same way.
-    private func replaceRunningBasal(
+    /// Returns false, changing nothing, if the session ended while the command was out: the command fails then.
+    @discardableResult private func replaceRunningBasal(
         endedBy cancel: CancelTempBasalPacketResponse? = nil,
         sentAt cancelSentAt: Date? = nil,
         lastRecord: Int? = nil,
         readsRecords: Bool = true,
         _ change: () -> (dose: UnfinalizedDose, event: NewPumpEvent)?
-    ) {
+    ) -> Bool {
+        var sessionEnded = false
         let endedOpen = doseReportLock.withLock { () -> Bool in
+            // The session ended while the command was out - forced from the main queue: what it ended was finalized with
+            // it, and nothing goes out over its suspend, a resume least of all. Only the activation resumes delivery. Nor
+            // is a temp basal it set pending any more: it went to the old patch - after a restart it would be taken for
+            // one the patch may run, unconfirmed, carried into the next session.
+            guard !state.patchSessionEnded else {
+                log.warning("The patch session ended while the command was out: its change of the basal is not reported")
+                state.pendingTempBasal = nil
+                sessionEnded = true
+                return false
+            }
             guard let next = change() else {
                 return false
             }
@@ -1537,9 +1662,15 @@ public extension MedtrumPumpManager {
             return false
         }
 
+        if sessionEnded {
+            // Off the saved state before the command fails: killed after it, the app must not come back with it pending
+            handOverState(before: "failing the command")
+            return false
+        }
+
         if endedOpen {
             readOpenTempBasalEndsSoon()
-            return
+            return true
         }
 
         guard let ending = pendingTempBasalEnd else {
@@ -1547,7 +1678,7 @@ public extension MedtrumPumpManager {
             if let record = lastRecordOfOpenTempBasalEnds, record > state.syncedSequenceNumber {
                 readOpenTempBasalEndsSoon()
             }
-            return
+            return true
         }
 
         // Ended by a halt whose status named no record: named here, not with what this command did held behind it - the
@@ -1568,6 +1699,7 @@ public extension MedtrumPumpManager {
             pumpManager: self,
             inCommandUntil: now().addingTimeInterval(Self.tempBasalEndReadBudget)
         )
+        return true
     }
 
     /// Hands the state to the host, and waits until it has it - `stateHandOverTimeout` at most: a command is about to
@@ -1752,7 +1884,7 @@ public extension MedtrumPumpManager {
             // reported is held back meanwhile (`holdForUnconfirmedRead`).
             self.readUnconfirmedTempBasalsRecords(through: self.state.currentSequenceNumber)
             self.releaseHeldForUnconfirmedRead()
-            self.replaceRunningBasal(lastRecord: endRecord) {
+            let replaced = self.replaceRunningBasal(lastRecord: endRecord) {
                 // Before the batch: the state saved with it is suspended
                 self.state.basalState = .suspended
                 self.state.lastSync = Date.now
@@ -1766,6 +1898,11 @@ public extension MedtrumPumpManager {
                 return (basalDose, NewPumpEvent.suspend(dose: basalDose.toDoseEntry()))
             }
             self.notifyStateDidChange()
+            // The session ended while it was out - forced: its own suspend stands
+            guard replaced else {
+                completion(MedtrumConnectError.noActivePatch)
+                return
+            }
 
             self.log.info("Delivery suspended for \(duration.minutes) min!")
             completion(nil)
@@ -1863,7 +2000,7 @@ public extension MedtrumPumpManager {
 
             // Read and replaced in one step - see `doseReportLock`. A status showing the scheduled basal may have
             // reported the resume already - or held it back, behind a suspend held since.
-            self.replaceRunningBasal(lastRecord: newestRecord) {
+            let replaced = self.replaceRunningBasal(lastRecord: newestRecord) {
                 // Before the batch: the state saved with it is resumed
                 self.state.basalState = .active
                 self.state.lastSync = Date.now
@@ -1899,6 +2036,11 @@ public extension MedtrumPumpManager {
                 )
             }
             self.notifyStateDidChange()
+            // The session ended while it was out - forced: no resume over its suspend
+            guard replaced else {
+                completion(MedtrumConnectError.noActivePatch)
+                return
+            }
 
             completion(nil)
         }
@@ -1911,6 +2053,55 @@ public extension MedtrumPumpManager {
         log.info("Sync-ing basal schedule...")
         guard let basalSchedule = DailyValueSchedule<Double>(dailyItems: items) else {
             completion(.failure(NSError(domain: "Basal schedule is empty...", code: -1)))
+            return
+        }
+
+        // No session runs: kept for the next patch, which its activation writes it to (`activatePatch`) - as the patch
+        // settings screen keeps its settings with no patch active. Refused, the host would keep the profile it had: none
+        // could be changed between patches. Holding the command lock - an activation reads it under it, its session
+        // started before it lets go - off the caller's queue, which it may hold up as long as a command.
+        // Not with a patch shown running, nor with an activation sent - before any status shows it running, the patch
+        // still shown primed: activated, its answer lost, its session starting on the next status - or by the retry -
+        // with the profile it was activated with, which this would never be written to. Refused: the host keeps the
+        // profile it had, the user tries again once the session runs.
+        if state.patchSessionEnded {
+            guard !mayRunWithNoSession else {
+                log.warning("No patch session runs, but a patch is running or was activated: the basal schedule is not kept")
+                completion(.failure(MedtrumConnectError.noActivePatch))
+                return
+            }
+            DispatchQueue.global(qos: .userInitiated).async {
+                var stored = false
+                var running = false
+                let locked = self.withCommandLock(waits: false) {
+                    guard self.state.patchSessionEnded else {
+                        return
+                    }
+                    guard !self.mayRunWithNoSession else {
+                        running = true
+                        return
+                    }
+                    self.state.basalSchedule = BasalSchedule(entries: items)
+                    stored = true
+                }
+                guard locked else {
+                    completion(.failure(MedtrumConnectError.failedToConnectToDevice))
+                    return
+                }
+                guard !running else {
+                    self.log.warning("No patch session runs, but a patch is running or was activated: the basal schedule is not kept")
+                    completion(.failure(MedtrumConnectError.noActivePatch))
+                    return
+                }
+                guard stored else {
+                    // A session started meanwhile: written to its patch
+                    self.syncBasalRateSchedule(items: items, completion: completion)
+                    return
+                }
+                self.log.info("No patch session runs: the basal schedule is kept for the next patch's activation")
+                self.notifyStateDidChange()
+                completion(.success(basalSchedule))
+            }
             return
         }
 
@@ -1945,6 +2136,12 @@ public extension MedtrumPumpManager {
 
             completion(.success(basalSchedule))
         }
+    }
+
+    /// With no session, a patch may deliver on the profile it was activated with: shown running, or an activation sent
+    /// whose answer was lost (`MedtrumPumpState.activationSentAt`) - the patch still shown primed, no status since
+    private var mayRunWithNoSession: Bool {
+        state.pumpState.isRunning || doseReportLock.withLock { state.activationSentAt != nil }
     }
 
     /// The patch restarts a running temp basal in a new segment on a profile change, so it ends up with a record per
@@ -2028,6 +2225,20 @@ public extension MedtrumPumpManager {
                 return
             }
 
+            // A next patch set up: an activation sent before, its answer lost, went to another one - or never activated
+            // this one, filled since. Nothing of a status is to start a session for it (`startSessionOfActivatedPatchSoon`).
+            let markerCleared = self.doseReportLock.withLock { () -> Bool in
+                guard self.state.activationSentAt != nil else {
+                    return false
+                }
+                self.state.activationSentAt = nil
+                return true
+            }
+            if markerCleared {
+                self.log.info("Priming a patch: the activation sent before is done with")
+                self.notifyStateDidChange()
+            }
+
             let primeResult = self.link.write(PrimePacket())
             if case let .failure(error) = primeResult {
                 self.log.error("Failed to start priming pump: \(error)")
@@ -2066,28 +2277,8 @@ public extension MedtrumPumpManager {
             guard !self.state.pumpState.isRunning else {
                 // The patch activated, but its answer was lost: the session it starts is not started yet
                 if self.state.patchSessionEnded {
-                    // Its id is not taken from what the connect synced, which can be stale with no session: the first
-                    // status after this sets it, and payloads are not checked against an id until then. It may have
-                    // suspended since - the connect synced its status, and notifications keep it current while connected.
                     self.log.warning("Patch already activated, but its session was not started - starting it")
-                    let start = Date.now
-                    // It activated before now: at the start time the connect synced, if that is the new patch's. The
-                    // previous patch's - kept since, or synced before it disconnected - is from before its deactivation.
-                    let activatedAt: Date
-                    if let syncedActivation = self.state.patchActivatedAt,
-                       let deactivatedAt = self.state.previousPatch?.deactivatedAt,
-                       syncedActivation > deactivatedAt, syncedActivation <= start
-                    {
-                        activatedAt = syncedActivation
-                    } else {
-                        activatedAt = start
-                    }
-                    self.startPatchSession(
-                        patchId: Data(),
-                        at: start,
-                        activatedAt: activatedAt,
-                        isDelivering: self.state.pumpState.isDelivering
-                    )
+                    self.startSessionOfActivatedPatch()
                 }
 
                 self.log.info("Patch already activated!")
@@ -2105,10 +2296,25 @@ public extension MedtrumPumpManager {
                 currentTDD: 0,
                 basalProfile: self.state.basalSchedule.toData()
             )
+            // On disk before it goes out: its answer lost - the sheet dismissed after, or the app killed - the patch may
+            // have activated, and the first status showing it running starts its session (`startSessionOfActivatedPatchSoon`).
+            // Handed to the host and waited for, as a dose's write-ahead is - best effort, a stalled host not waited out.
+            self.doseReportLock.withLock {
+                self.state.activationSentAt = Date.now
+            }
+            self.handOverState(before: "activating the patch")
             let result = self.link.write(packet)
             switch result {
             case let .failure(error):
                 self.log.error("Failed to activate pump: \(error)")
+                // Turned down, or never sent: the patch did not activate on it - no status is to start a session for it.
+                // Unanswered, it may have: kept.
+                if MedtrumCommandOutcome(error) != .unknown {
+                    self.doseReportLock.withLock {
+                        self.state.activationSentAt = nil
+                    }
+                    self.notifyStateDidChange()
+                }
                 completion(.failure(error: .unknownError(reason: error.localizedDescription)))
                 return
 
@@ -2125,6 +2331,72 @@ public extension MedtrumPumpManager {
                 self.log.info("Patch activated!")
                 completion(.success)
                 return
+            }
+        }
+    }
+
+    /// The patch activated, its activation's answer lost: the session it starts starts now - for a retried activation,
+    /// or the first status that shows it running after the activation went out (`startSessionOfActivatedPatchSoon`).
+    /// Holding `commandLock`.
+    private func startSessionOfActivatedPatch() {
+        // Its id is not taken from what the connect synced, which can be stale with no session - only from a status that
+        // named it (below); otherwise the first status after this sets it, and payloads are not checked against an id
+        // until then. It may have suspended since - the connect synced its status, and notifications keep it current
+        // while connected.
+        let start = Date.now
+        // It activated before now: at the start time the connect synced, if that is the new patch's. The previous
+        // patch's - kept since, or synced before it disconnected - is from before its deactivation.
+        var syncedStart: Date?
+        if let syncedActivation = state.patchActivatedAt,
+           let deactivatedAt = state.previousPatch?.deactivatedAt,
+           syncedActivation > deactivatedAt, syncedActivation <= start
+        {
+            syncedStart = syncedActivation
+        }
+        let activatedAt = syncedStart ?? start
+        // The id a status of it named, not the previous patch's: kept, with its records as that status took them up -
+        // started with none, the next status naming it would take them up again, past the record of a dose sent before
+        // it, and the dose's answer, naming that id, would be another patch's (`noteBolusAnswer`)
+        let previousId = state.previousPatch.flatMap { $0.patchId.isEmpty ? nil : $0.patchId.toUInt64() & 0xFFFF }
+        let namedId = state.patchId.isEmpty || state.patchId.toUInt64() & 0xFFFF == previousId ? Data() : state.patchId
+        // Delivering since then, as far as we know: no status resumed over the session's suspend meanwhile - only an
+        // activation does (`StateSyncer.resumeSchedule`) - so the resume is dated at the patch's start, what it delivered
+        // from there counted. Its start unknown, at the retry: the time between not counted.
+        startPatchSession(
+            patchId: namedId,
+            at: start,
+            activatedAt: activatedAt,
+            isDelivering: state.pumpState.isDelivering,
+            deliveringSince: syncedStart
+        )
+    }
+
+    /// A status, taken, showed a patch running under an id other than the previous patch's, with an activation sent
+    /// and no session started since (`MedtrumPumpState.activationSentAt`): the new patch activated, its answer lost - the
+    /// sheet dismissed since, say, or the app killed. Its session starts as a retried activation would start it, with no
+    /// retry: nothing else would reach the activation - the settings screen shows a running patch - and until it starts
+    /// every command is refused, the session's suspend standing over what the patch delivers. Off the queue statuses
+    /// arrive on, once the operation holding the patch is over: the activation itself, whose answer starts the session
+    /// if it comes - and with it the marker gone, nothing to start here.
+    internal func startSessionOfActivatedPatchSoon() {
+        tempBasalEndQueue.async { [weak self] in
+            guard let self, !self.backgroundReadsStopped.value else {
+                return
+            }
+            // Not counted as waiting: nothing of the loop waits on it. It holds up this queue all the same - the reads of
+            // temp basal ends queued behind it - until the operation holding the patch is over, `commandActivityTimeout`
+            // at most: then it gives up, and the session is not started here. The next running status naming an id
+            // other than the previous patch's queues it again; one naming none does not - the manual retry stays.
+            self.withCommandLock(waits: false) {
+                self.doseReportLock.withLock {
+                    guard self.state.activationSentAt != nil, self.state.isActivatedWithNoSession else {
+                        return
+                    }
+                    self.log.warning(
+                        "The patch shows itself running since the activation went out, its answer lost: starting its session"
+                    )
+                    self.startSessionOfActivatedPatch()
+                }
             }
         }
     }
@@ -2200,7 +2472,7 @@ public extension MedtrumPumpManager {
 
     func forceDeactivatePatch() {
         log.info("Force deactivating patch...")
-        endPatchSession(deliveryStoppedAt: Date.now, statusIsCurrent: false)
+        endPatchSession(deliveryStoppedAt: Date.now, statusIsCurrent: false, forced: true)
     }
 
     /// The base rebooted underneath an activated patch: it came back as a blank, never activated
@@ -2220,8 +2492,10 @@ public extension MedtrumPumpManager {
     }
 
     /// The new patch delivers on its schedule from `start` - unless it is not delivering: then the suspend reported stays
-    /// outstanding, for the first status that shows it delivering to resume. Its expiry counts from `activatedAt`.
-    private func startPatchSession(patchId: Data, at start: Date, activatedAt: Date, isDelivering: Bool) {
+    /// outstanding, for the first status that shows it delivering to resume. Its expiry counts from `activatedAt`. A
+    /// retried activation: the patch has delivered since `deliveringSince`, on its clock - the resume dated there, on
+    /// ours, after the suspend and no later than `start`.
+    private func startPatchSession(patchId: Data, at start: Date, activatedAt: Date, isDelivering: Bool, deliveringSince: Date? = nil) {
         if state.expiryMode == .default {
             // Issued now, due a set time after the activation
             let delay = max(0, state.notificationAfterActivation - start.timeIntervalSince(activatedAt))
@@ -2237,19 +2511,37 @@ public extension MedtrumPumpManager {
                 // When it stopped is unknown, so it is taken to have delivered until `start`: a temp basal or a bolus in
                 // flight ends there - the bolus warned of as uncertain - and the schedule runs from there. No suspend: a
                 // host can take one with a resume at the same time as never ending. Ended, the session finalized all of
-                // this then: what is here since is the new patch's - sent after an activation whose answer was lost.
+                // this then.
                 log.warning("Previous patch session was not ended, ending its delivery at activation")
                 releaseHeldForTheSessionEnd()
                 events.append(contentsOf: finalizedTempBasal(endedAt: start))
                 events.append(contentsOf: finalizeInterruptedBolus())
                 events.append(contentsOf: finalizeAllAwaitingDoses(because: "a new patch was activated"))
-                dropUnconfirmedTempBasal(because: "a new patch was activated")
+            } else {
+                // Ended, the session finalized every dose of it then, and the state taken up with none any left: a
+                // backstop. Its record number would be the old patch's, nothing to tell from the new one's
+                // (`isNumberedOnThisPatch`), and kept, it would refuse the new patch's boluses until it ends: final in
+                // full, as one out at the end is.
+                events.append(contentsOf: finalizeBolusesLeftByTheEndedSession())
+            }
+            // A temp basal whose command went unanswered, or is pending, is the previous patch's either way: no command
+            // goes out while no session runs (`ensureConnectedAndActive`), so one kept since the session ended went out
+            // as it ended - a forced deactivation - to the old patch (`keepUnconfirmedTempBasal`, `takeOverPendingTempBasal`
+            // drop those too). The new patch runs none of it: kept, it would cancel first, and be warned of as uncertain.
+            dropUnconfirmedTempBasal(because: "a new patch was activated")
+            if let pending = state.pendingTempBasal {
+                log.warning("The temp basal of \(pending.unitsPerHour) U/h sent at \(pending.sentAt) was pending: the previous patch's, dropped")
+                state.pendingTempBasal = nil
             }
 
             events.append(NewPumpEvent.replacedPump(date: start))
             if isDelivering {
                 // A resume in a later second than the suspend - see `earliestResume`
-                let resumeStart = state.basalDose.type == .suspend ? max(start, Self.earliestResume(after: state.basalDose.startDate)) : start
+                var resumeStart = start
+                if state.basalDose.type == .suspend {
+                    let floor = Self.earliestResume(after: state.basalDose.startDate)
+                    resumeStart = max(deliveringSince.map { patchTimeOnOurClock($0, notBefore: floor, notAfter: start) } ?? start, floor)
+                }
                 let resumeDose = UnfinalizedDose(resumeStartTime: resumeStart, insulinType: state.insulinType)
                 if state.basalDose.type == .suspend {
                     // Only a suspend that was reported gets a resume: a host can take one without it as suspended before it
@@ -2282,12 +2574,20 @@ public extension MedtrumPumpManager {
             }
 
             state.patchSessionEnded = false
+            state.activationSentAt = nil
             state.initialReservoir = nil
-            state.patchId = patchId
-            // Record numbers restart with the patch
-            state.resetRecordSequence()
-            state.lastSegmentStart = nil
-            recordStore.clear()
+            // A status of this patch named its id since the session ended, its records taken up there (`StateSyncer.sync`):
+            // not again - the cursor and the session's start as it set them, the numbers answers claimed since kept. Its
+            // id as the status had it: the next status naming it is no new patch's, its records not taken up again.
+            let recordsTakenUp = sessionWasEnded && !patchId.isEmpty && !state.patchId.isEmpty &&
+                patchId.toUInt64() & 0xFFFF == state.patchId.toUInt64() & 0xFFFF
+            if !recordsTakenUp {
+                state.patchId = patchId
+                // Record numbers restart with the patch
+                state.resetRecordSequence()
+                state.lastSegmentStart = nil
+                recordStore.clear()
+            }
             state.patchActivatedAt = activatedAt
             state.lastSync = Date.now
             if !sessionWasEnded {
@@ -2297,14 +2597,45 @@ public extension MedtrumPumpManager {
             notifyStateDidChange()
 
             emitPumpEvents(events)
+            // Final in full as the state was taken up, no status since to tell of them on (`reportBolusFromLastRun`):
+            // their finals in this batch, told of now
+            for dose in bolusesCountedAtSessionEndUntold {
+                warnOfBolusCountedAtSessionEnd(dose)
+            }
         }
+    }
+
+    /// Every bolus not final with no session running - running, or waiting on its record: one an earlier build left so,
+    /// taken over after a kill as its session ended, or kept running. As the state is taken up with none (`init`), and as
+    /// the next session starts (`startPatchSession`), a backstop. Its record numbers are the old patch's, nothing to tell
+    /// from the next one's (`isNumberedOnThisPatch`), and kept, it would refuse the next patch's boluses until it ends:
+    /// final in full, as one out as the session ended is, noted as uncertain - the host warned and the user told, or, with
+    /// no host yet, as soon as there is one (`reportBolusFromLastRun`). Only under `doseReportLock`; the caller emits
+    /// them - or, as the state is taken up, they go out with the first batch.
+    private func finalizeBolusesLeftByTheEndedSession() -> [NewPumpEvent] {
+        let left = ([state.bolusDose].compactMap { $0 } + state.awaitingRecord).filter { $0.type == .bolus && !$0.isFinalized }
+        state.bolusDose = nil
+        var events: [NewPumpEvent] = []
+        for dose in left {
+            log.warning(
+                "The bolus of \(dose.value) U sent at \(dose.sentAt.map { "\($0)" } ?? "-") is not final, its session ended: " +
+                    "the old patch's - final in full"
+            )
+            guard let event = finalizeInFullAtSessionEnd(dose) else {
+                continue
+            }
+            warnOfBolusCountedAtSessionEnd(dose)
+            events.append(event)
+        }
+        return events
     }
 
     /// The one place a patch session ends: deactivation, a forced deactivation, and a base reset. Its records are out
     /// of reach from here on, so everything still running or waiting on a record is finalized now, from our estimate.
     /// Delivery stopped at `deliveryStoppedAt`, unless it is known to have stopped already - `statusIsCurrent`: the
-    /// patch's state as last reported is its state now.
-    private func endPatchSession(deliveryStoppedAt: Date, statusIsCurrent: Bool, disconnect: Bool = true) {
+    /// patch's state as last reported is its state now. `forced`: nothing tells delivery stopped - a forced deactivation,
+    /// the old patch maybe on the body still - so a bolus running counts in full (`finalizeInterruptedBolus`).
+    private func endPatchSession(deliveryStoppedAt: Date, statusIsCurrent: Bool, forced: Bool = false, disconnect: Bool = true) {
         // From the finals until they are handed over - see `doseReportLock`
         doseReportLock.lock()
         defer { doseReportLock.unlock() }
@@ -2316,15 +2647,18 @@ public extension MedtrumPumpManager {
         // patch can't have resumed: in a state it never leaves, one it never delivered in or no longer does, or a current
         // one that shows it not delivering. Nothing more is reported then. Otherwise it may have resumed unseen - a
         // suspend ends on its own, out of range too - and the suspend is reported now.
-        let hasStopped = state.basalDose.type == .suspend &&
-            (state.pumpState.isTerminated || state.pumpState.isSetup || (statusIsCurrent && !state.pumpState.isDelivering))
+        // Or no session runs: the suspend is the one it ended with, nothing resumed since - only an activation does - so
+        // nothing of ours can have resumed. A force after a deactivation, the patch shown running: the old one, or the
+        // new one whose activation's answer was lost - neither delivering for us.
+        let hasStopped = state.basalDose.type == .suspend && (state.patchSessionEnded ||
+            state.pumpState.isTerminated || state.pumpState.isSetup || (statusIsCurrent && !state.pumpState.isDelivering))
 
         // A suspend held back for the records of the temp basal whose command went unanswered - out of reach now - goes
         // out with this batch, ahead of what it reports: never behind a suspend or a resume after it
         releaseHeldForTheSessionEnd()
 
         var events = finalizedTempBasal(endedAt: stoppedAt)
-        events.append(contentsOf: finalizeInterruptedBolus())
+        events.append(contentsOf: finalizeInterruptedBolus(countsInFull: forced))
         events.append(contentsOf: finalizeAllAwaitingDoses(because: "the patch session ended"))
         if !hasStopped {
             var suspendStart = stoppedAt
@@ -2355,8 +2689,10 @@ public extension MedtrumPumpManager {
         }
         dropUnconfirmedTempBasal(because: "the patch session ended")
 
-        // Ended already - a force after a deactivation, or no session started since: the previous patch is recorded
-        if !state.patchSessionEnded {
+        // Ended already - a force after a deactivation, or no session started since: the previous patch is recorded - unless
+        // a patch's statuses named another id since, a new patch's whose activation's answer was lost, now forced out
+        // itself: that one is the previous patch, whose statuses are not taken from here on (`isEndedSessionsPatchRunning`)
+        if !state.patchSessionEnded || (!state.patchId.isEmpty && state.patchId != state.previousPatch?.patchId) {
             state.previousPatch = PreviousPatch(
                 patchId: state.patchId,
                 lastStateRaw: state.pumpState.rawValue,
@@ -2378,6 +2714,8 @@ public extension MedtrumPumpManager {
         state.sessionToken = Data()
         state.initialReservoir = nil
         state.patchSessionEnded = true
+        // An activation sent to the patch that ends here - its session not started, its answer lost - is done with
+        state.activationSentAt = nil
         state.lastSync = Date.now
         // What commands check, until the next patch's session starts
         state.basalState = .suspended
@@ -2710,9 +3048,10 @@ public extension MedtrumPumpManager {
             // Logged whatever it says, 0 U included: what the patch itself says the cancelled bolus delivered
             let ended = cancelled.snapshot
             let kept = ended.deliveredUnits
-            let isItsOwn = ended.confirmation == .uncertain && state.pendingBolus == nil && record.map { record in
-                record > ended.sequenceAtSend ?? .max && !state.answeredBolusRecords.contains(record)
-            } == true
+            let isItsOwn = ended.confirmation == .uncertain && state.pendingBolus == nil && isNumberedOnThisPatch(ended) &&
+                record.map { record in
+                    record > ended.sequenceAtSend ?? .max && !state.answeredBolusRecords.contains(record)
+                } == true
             let changed = isItsOwn ? cancelled.confirmAfterEnd(delivered: delivered) : cancelled.raiseAfterEnd(to: delivered)
             log.info(
                 "Completion of \(delivered) U after the cancel of the bolus of \(cancelled.startDate), record " +
@@ -2873,7 +3212,8 @@ public extension MedtrumPumpManager {
             return .full
         }
 
-        let age = Date.now.timeIntervalSince(state.lastSync)
+        // A full status of the previous patch, not taken, is as fresh a sync as any: the next one would be ignored too
+        let age = Date.now.timeIntervalSince(max(state.lastSync, previousPatchsFullStatusAt.value))
         let isBolusOverdue = isRunningBolusOverdue
         let isFullSyncDue = age > Self.heartbeatSyncFreshnessInterval ||
             (isBolusOverdue && age > Self.overdueBolusSyncInterval)
@@ -2888,6 +3228,11 @@ public extension MedtrumPumpManager {
         }
 
         return isFullSyncDue ? .full : .records
+    }
+
+    /// A full status of the previous patch came in at `receivedAt`, not taken - see `previousPatchsFullStatusAt`
+    internal func noteStatusOfThePreviousPatch(at receivedAt: Date) {
+        previousPatchsFullStatusAt.value = receivedAt
     }
 
     /// A running bolus past its deadline - a full status settles it
@@ -2925,6 +3270,13 @@ public extension MedtrumPumpManager {
     /// registered: the state was saved as it was, read in part before. The host is told of it, and warned, as soon as it
     /// can be - and so of one whose command went unanswered in the last run that it was never warned of
     /// (`reportBolusFromLastRun`).
+    /// With no session running it went out as the session ended under it - a forced deactivation, from the main queue -
+    /// to the old patch, still on the body: no command goes out with none (`ensureConnectedAndActive`). Nothing of that
+    /// patch is taken from here on, and its record numbers are not the next patch's (`isNumberedOnThisPatch`): final at
+    /// once in full, as one whose answer came after the end is (`finalizeBolusOfEndedSession`) - never running, holding
+    /// up the next patch's boluses, or carried into its session. So is any bolus not final an earlier build left with no
+    /// session (`finalizeBolusesLeftByTheEndedSession`). The host is warned, and the user told, as soon as there is a host
+    /// (`reportBolusFromLastRun`).
     private func takeOverPendingBolus() {
         doseReportLock.withLock {
             if let pending = state.pendingBolus {
@@ -2949,24 +3301,43 @@ public extension MedtrumPumpManager {
                         confirmation: .uncertain,
                         startDate: pending.sentAt
                     )
-                    dose.noteCommand(sentAt: pending.sentAt, uptime: nil, sequence: pending.sequenceAtSend)
-
-                    // Answered, the state saved before its dose was registered: its answer, kept for its record, is
-                    // the one past `sequenceAtSend` - every number claimed before it went out is at or below that, and
-                    // commands go one at a time. The latest, should there be more.
-                    if let answered = state.answeredBolusRecords.last(where: { $0 > pending.sequenceAtSend }) {
-                        dose.noteAnswer(recordSequence: answered)
-                        log.info("The bolus of \(pending.units) U sent at \(pending.sentAt) was answered as record #\(answered)")
-                    }
-
-                    state.bolusDose = dose
-                    noteUncertainDelivery(.bolus, .appRestarted, of: dose)
-                    log.error(
-                        "The app stopped while the bolus of \(pending.units) U sent at \(pending.sentAt) awaited its " +
-                            "answer, or before the host took the state for it to be written: it may be delivering. Counted " +
-                            "in full until the patch shows it, or its record says otherwise - not sent again"
+                    dose.noteCommand(
+                        sentAt: pending.sentAt,
+                        uptime: nil,
+                        sequence: pending.sequenceAtSend,
+                        patchId: pending.sequencePatchId
                     )
+
+                    if state.patchSessionEnded {
+                        log.error(
+                            "The app stopped while the bolus of \(pending.units) U sent at \(pending.sentAt) awaited its " +
+                                "answer, as the patch session ended: sent to the old patch, it is final in full"
+                        )
+                        // Its final goes out with every batch until the host has it; told and warned once there is a host
+                        _ = finalizeBolusOfEndedSession(dose, unanswered: true)
+                    } else {
+                        // Answered, the state saved before its dose was registered: its answer, kept for its record, is
+                        // the one past `sequenceAtSend` - every number claimed before it went out is at or below that,
+                        // and commands go one at a time. The latest, should there be more.
+                        if let answered = state.answeredBolusRecords.last(where: { $0 > pending.sequenceAtSend }) {
+                            dose.noteAnswer(recordSequence: answered)
+                            log.info("The bolus of \(pending.units) U sent at \(pending.sentAt) was answered as record #\(answered)")
+                        }
+
+                        state.bolusDose = dose
+                        noteUncertainDelivery(.bolus, .appRestarted, of: dose)
+                        log.error(
+                            "The app stopped while the bolus of \(pending.units) U sent at \(pending.sentAt) awaited its " +
+                                "answer, or before the host took the state for it to be written: it may be delivering. " +
+                                "Counted in full until the patch shows it, or its record says otherwise - not sent again"
+                        )
+                    }
                 }
+            }
+
+            // With no session, one an earlier build left: nothing of its patch is taken any more
+            if state.patchSessionEnded {
+                _ = finalizeBolusesLeftByTheEndedSession()
             }
 
             if let bolus = state.bolusDose {
@@ -2984,6 +3355,20 @@ public extension MedtrumPumpManager {
     internal func reportBolusFromLastRun() {
         guard pumpDelegate.delegate != nil else {
             return
+        }
+
+        // Final in full as its session ended, the user not told yet - taken over as this run started, or a run killed
+        // before it told: its final out now - with no session no batch may come for long - the host warned, the user
+        // told. Saved with each (`UnfinalizedDose.State.sessionEndAlertPending`), it is here until the host has the final.
+        doseReportLock.withLock {
+            let counted = bolusesCountedAtSessionEndUntold
+            guard !counted.isEmpty else {
+                return
+            }
+            emitPumpEvents([], replacePendingEvents: false, unlessTempBasalEndPending: true)
+            for dose in counted {
+                warnOfBolusCountedAtSessionEnd(dose)
+            }
         }
 
         let dose = doseReportLock.withLock { () -> UnfinalizedDose? in
@@ -3010,6 +3395,12 @@ public extension MedtrumPumpManager {
 
         notifyStateDidChange()
         warnOfUncertainBolus(dose)
+    }
+
+    /// The boluses final in full as their session ended that the user is yet to be told of - see
+    /// `UnfinalizedDose.State.sessionEndAlertPending`. Only under `doseReportLock`.
+    private var bolusesCountedAtSessionEndUntold: [UnfinalizedDose] {
+        state.awaitingRecord.filter { $0.type == .bolus && $0.isFinalized && $0.snapshot.sessionEndAlertPending }
     }
 
     /// Takes the record number out of a command response.
@@ -3051,16 +3442,30 @@ public extension MedtrumPumpManager {
         state.sequenceConfirmedInThisRun = (at: confirmedAt, uptime: confirmedUptime)
     }
 
-    private func finalizeInterruptedBolus() -> [NewPumpEvent] {
+    /// The running bolus, as its session ends: final at once, its record out of reach from here on. `countsInFull`: the
+    /// patch may deliver it still - a forced end, the old patch on the body, nothing of it taken from here on - so at the
+    /// amount programmed, never less than it delivered: uncertain, the host warned and the user told
+    /// (`finalizeInFullAtSessionEnd`). Otherwise delivery stopped with the session - the StopPatch answered, or the base
+    /// reset under it - at the last amount reported. Only under `doseReportLock`.
+    private func finalizeInterruptedBolus(countsInFull: Bool = false) -> [NewPumpEvent] {
         guard let doseEntry = state.bolusDose else {
             return []
         }
 
         log.warning(
-            "Patch session ended during a bolus... \(doseEntry.deliveredUnits) U of the \(doseEntry.value) U"
+            "Patch session ended during a bolus... \(doseEntry.deliveredUnits) U of the \(doseEntry.value) U" +
+                (countsInFull ? " - forced: its patch may deliver it still, it is final in full" : "")
         )
 
         state.bolusDose = nil
+
+        if countsInFull {
+            guard let event = finalizeInFullAtSessionEnd(doseEntry) else {
+                return []
+            }
+            warnOfBolusCountedAtSessionEnd(doseEntry)
+            return [event]
+        }
 
         // Final at once: its record can no longer be read. At the last amount reported - one the patch never
         // confirmed counts in full.
@@ -3090,10 +3495,20 @@ public extension MedtrumPumpManager {
     /// `isCommand`: counted as a command from here until `completion` returns, so a record sync neither starts nor
     /// carries on while it runs - see `isCommandActive` - and run holding `commandLock`, once connected. A failed connect
     /// is reported without it.
+    /// A command is refused while no session runs, as in a setup state: the patch heard from running then is either the
+    /// old one - forced out, its StopPatch lost, still on the base - or the new one, its activation's answer lost, until
+    /// the retried activation starts its session. Neither takes a dose or a resume of ours. Priming, activating and
+    /// stopping a patch don't come through here.
     private func ensureConnectedAndActive(isCommand: Bool = true, _ completion: @escaping (MedtrumConnectError?) -> Void) {
         guard !state.pumpState.isSetup else {
             log.warning("No active patch, failing immediately")
-            completion(.failedToFindDevice)
+            completion(.noActivePatch)
+            return
+        }
+
+        guard !isCommand || !state.patchSessionEnded else {
+            log.warning("No patch session runs, failing immediately: \(state.pumpState.description)")
+            completion(.noActivePatch)
             return
         }
 
@@ -3123,7 +3538,15 @@ public extension MedtrumPumpManager {
                     return
                 }
 
-                guard self.withCommandLock({ completion(error) }) else {
+                guard self.withCommandLock({
+                    // Ended while it connected, or waited for the operation ahead of it - a deactivation, say
+                    guard !self.state.patchSessionEnded else {
+                        self.log.warning("The patch session ended before the command went out, failing it")
+                        completion(.noActivePatch)
+                        return
+                    }
+                    completion(error)
+                }) else {
                     completion(.failedToConnectToDevice)
                     return
                 }
@@ -3447,6 +3870,12 @@ public extension MedtrumPumpManager {
 
             delegate.pumpManagerDidUpdateState(self)
 
+            // A final in full as its session ended, the user yet to be told of it - with no host as it was fixed - is told
+            // of as it goes out: once the host stores it, the dose is gone, and the note with it
+            for dose in finals {
+                self.warnOfBolusCountedAtSessionEnd(dose)
+            }
+
             delegate.pumpManager(
                 self,
                 hasNewPumpEvents: events,
@@ -3722,12 +4151,16 @@ public extension MedtrumPumpManager {
     /// Fixes the final report of `dose` - once: nil if it has one already - and keeps it in `awaitingRecord`, to go out
     /// with every batch until the host confirms storing it. Only under `doseReportLock`; the caller hands the final
     /// over before letting go of it. `deliveredUnits`: the record's amount, or nil for our own estimate. `outcome`: how,
-    /// for the uncertain deliveries of it.
+    /// for the uncertain deliveries of it. `atSessionEnd`: a bolus final in full as its patch session ended
+    /// (`finalizeInFullAtSessionEnd`) - not one of this patch's finals without their record: its record is never read,
+    /// and the numbers it was noted with are the old patch's, whatever the next one's records are numbered. No record is
+    /// looked at for it, now or later.
     private func finalize(
         _ dose: UnfinalizedDose,
         deliveredUnits: Double?,
         endDate: Date? = nil,
-        _ outcome: UncertainDelivery.Outcome
+        _ outcome: UncertainDelivery.Outcome,
+        atSessionEnd: Bool = false
     ) -> NewPumpEvent? {
         // Basal doses go final in order: a temp basal ended open before this one goes final first, from our estimate if
         // nothing settled it yet - its final goes out with this one's, as every final the host has yet to confirm
@@ -3750,24 +4183,28 @@ public extension MedtrumPumpManager {
             if Self.isReleasedDriversBolus(dose, final) {
                 state.releasedBolusBacklogRecord = nil
             }
-            let taken = settlePossibleBolusRecords(after: dose, outcome)
-            // Its record may come after all, matching no dose then: it is this one's. Kept with a possible record taken
-            // for its own all the same, with it: that one may have been another bolus's, at its amount - its own still to
-            // come, telling of it (`explain`).
-            if outcome == .byEstimate, let sentAt = final.sentAt {
-                state.bolusesFinalWithoutRecord = Array(
-                    (state.bolusesFinalWithoutRecord + [
-                        BolusFinalWithoutRecord(
-                            units: dose.value,
-                            delivered: final.finalDeliveredUnits ?? dose.value,
-                            sentAt: sentAt,
-                            pumpStartTime: final.pumpStartTime,
-                            recordSequence: final.recordSequence,
-                            taken: taken,
-                            datedByItsAnswer: Self.isReleasedDriversBolus(dose, final)
-                        )
-                    ]).suffix(Self.bolusesFinalWithoutRecordKept)
-                )
+            // Final in full as its session ended: no record of its patch is read from here on, and the next patch's -
+            // numbered afresh - are none of its, kept or to come
+            if !atSessionEnd {
+                let taken = settlePossibleBolusRecords(after: dose, outcome)
+                // Its record may come after all, matching no dose then: it is this one's. Kept with a possible record
+                // taken for its own all the same, with it: that one may have been another bolus's, at its amount - its
+                // own still to come, telling of it (`explain`).
+                if outcome == .byEstimate, let sentAt = final.sentAt {
+                    state.bolusesFinalWithoutRecord = Array(
+                        (state.bolusesFinalWithoutRecord + [
+                            BolusFinalWithoutRecord(
+                                units: dose.value,
+                                delivered: final.finalDeliveredUnits ?? dose.value,
+                                sentAt: sentAt,
+                                pumpStartTime: final.pumpStartTime,
+                                recordSequence: final.recordSequence,
+                                taken: taken,
+                                datedByItsAnswer: Self.isReleasedDriversBolus(dose, final)
+                            )
+                        ]).suffix(Self.bolusesFinalWithoutRecordKept)
+                    )
+                }
             }
         }
 
@@ -3820,7 +4257,8 @@ public extension MedtrumPumpManager {
                 // near its command, matched on its own (`matchReleasedBolusRecord`)
                 let couldBeOf = { (dose: UnfinalizedDose, nearItsCommand: Bool) -> Bool in
                     let snapshot = dose.snapshot
-                    guard !claimed, snapshot.recordSequence == nil, snapshot.sentAt != nil else {
+                    guard !claimed, snapshot.recordSequence == nil, snapshot.sentAt != nil, self.isNumberedOnThisPatch(snapshot)
+                    else {
                         return false
                     }
                     return response.sequence > snapshot.sequenceAtSend ?? 0 &&
@@ -3834,7 +4272,10 @@ public extension MedtrumPumpManager {
                 }
 
                 let dose: UnfinalizedDose
-                if let numbered = waiting.first(where: { $0.recordSequence == response.sequence }) {
+                // The number another patch's answer gave is not this one's record
+                if let numbered = waiting.first(where: {
+                    $0.recordSequence == response.sequence && isNumberedOnThisPatch($0.snapshot)
+                }) {
                     // Its record by the number alone: a start or amount other than ours is only worth a look
                     let answeredStart = numbered.snapshot.pumpStartTime
                     let startDiffers = answeredStart.map {
@@ -3861,7 +4302,9 @@ public extension MedtrumPumpManager {
                         log.info("Record \(response.sequence) is that of a bolus of ours finalized already, matching nothing")
                     }
                     return "answered bolus finalized already"
-                } else if let shifted = waiting.first(where: { isRecordPastItsTakenNumber(record, response.sequence, of: $0) }) {
+                } else if let shifted = waiting.first(where: {
+                    isNumberedOnThisPatch($0.snapshot) && isRecordPastItsTakenNumber(record, response.sequence, of: $0)
+                }) {
                     // Its answered start to the second: no other bolus starts there. One whose answer was lost that it
                     // could be the record of has it noted as a possible one (above) - counted in full until its own.
                     if let other = waiting.first(where: { $0 !== shifted && couldBeOf($0, true) }) {
@@ -4301,7 +4744,7 @@ public extension MedtrumPumpManager {
         // Its answer lost - unanswered, or confirmed since by its progress or completion: no record named
         let couldBe = { (possible: PossibleBolusRecord, dose: UnfinalizedDose) -> Bool in
             let snapshot = dose.snapshot
-            return dose.type == .bolus && snapshot.recordSequence == nil &&
+            return dose.type == .bolus && snapshot.recordSequence == nil && self.isNumberedOnThisPatch(snapshot) &&
                 possible.sequence > snapshot.sequenceAtSend ?? 0 &&
                 RecordSyncer.steps(possible.amount) == RecordSyncer.steps(dose.value) &&
                 self.recordStart(possible.startTime, mayBeOf: dose, nearItsCommand: false)
@@ -4724,7 +5167,7 @@ public extension MedtrumPumpManager {
             return
         }
         doseReportLock.withLock {
-            for dose in unansweredBoluses {
+            for dose in unansweredBoluses where isNumberedOnThisPatch(dose.snapshot) {
                 dose.noteRecordRead(sequence)
             }
         }
@@ -4735,6 +5178,8 @@ public extension MedtrumPumpManager {
     /// known when the command went out was read up to there, and none could be its. A bolus is left without a record
     /// only if cancelled before it was written: one cancelled, or cut off, may have run. Why it may have is logged. Only
     /// under `doseReportLock`. A number an answer gave is never this one's - see `MedtrumPumpState.answeredBolusRecords`.
+    /// Never against another patch's counter (`isNumberedOnThisPatch`): one sent to it is final as its session ends, as
+    /// the app comes back with no session, or as the next one starts - and if one were left, it may have run.
     private func unansweredBolusNeverRan(_ dose: UnfinalizedDose) -> Bool {
         let snapshot = dose.snapshot
         guard dose.type == .bolus, snapshot.confirmation == .uncertain, snapshot.recordSequence == nil else {
@@ -4747,10 +5192,17 @@ public extension MedtrumPumpManager {
             mayHaveRun = "it was \(snapshot.finishReason?.rawValue ?? "not ended")"
         } else if snapshot.sequenceAtSend == nil {
             mayHaveRun = "the record known when it went out was not kept"
+        } else if !isNumberedOnThisPatch(snapshot) {
+            mayHaveRun = "the record known when it went out, #\(snapshot.sequenceAtSend ?? 0), is " +
+                (snapshot.sequencePatchId.map { "patch \($0)'s, not this one's" } ?? "of no patch known, and no session runs")
         } else if now() < deadline {
             mayHaveRun = "it is not past its deadline"
         } else if !sequenceConfirmed(after: deadline, of: snapshot) {
             mayHaveRun = "the patch has not told its newest record since its deadline"
+        } else if let sequenceAtSend = snapshot.sequenceAtSend, sequenceAtSend > state.currentSequenceNumber {
+            // Past the newest the patch told since its deadline: another patch's number all the same - one saved with no
+            // patch noted (`isNumberedOnThisPatch`). Nothing to tell from this patch's records.
+            mayHaveRun = "the record known when it went out, #\(sequenceAtSend), is past the patch's newest - another patch's"
         } else if let through = snapshot.recordsReadThrough ?? snapshot.sequenceAtSend, through < state.currentSequenceNumber {
             mayHaveRun = "records \(through + 1)...\(state.currentSequenceNumber) were not all read in order, it may be one of them"
         } else if let possible = snapshot.possibleRecord {
@@ -4779,6 +5231,21 @@ public extension MedtrumPumpManager {
             return confirmed.uptime > sentUptime + deadline.timeIntervalSince(sentAt)
         }
         return confirmed.at > deadline
+    }
+
+    /// Whether the record numbers of the bolus `snapshot` is of - the newest known when its command went out, and any
+    /// told of it since - are those of the patch whose records are read now. Record numbers restart with every patch:
+    /// one of another is neither past nor before any of this one's, and says nothing of its records - the bolus may have
+    /// run, and none of them is its own. Noted with no patch known - by a build before it was kept, or sent before a status
+    /// named the id: this patch's while a session runs, as before; not while none does. Only under `doseReportLock`.
+    private func isNumberedOnThisPatch(_ snapshot: UnfinalizedDose.State) -> Bool {
+        guard !state.patchSessionEnded else {
+            return false
+        }
+        guard let patchId = snapshot.sequencePatchId else {
+            return true
+        }
+        return state.recordNumbersPatchId == patchId
     }
 
     /// The record sync gave up on record `sequence`, unreadable: kept if it could be the unconfirmed temp basal's
@@ -6226,6 +6693,8 @@ public extension MedtrumPumpManager {
     /// (`unconfirmedTempBasalEnd`, `isCaughtUp`, `finalizeOverdueAwaitingDoses`), none that could be its skipped - and
     /// with the patch session. There is no time limit beyond that: while the records cannot be read, or one that could
     /// be its was skipped, it stays and delivery stays uncertain.
+    /// Returns false, keeping nothing, if the session ended while the command was out - forced: it went to the old patch,
+    /// whatever that runs is not ours to count, and the next patch's session starts clear of it.
     private func keepUnconfirmedTempBasal(
         _ dose: UnfinalizedDose,
         sentAt: Date,
@@ -6234,7 +6703,7 @@ public extension MedtrumPumpManager {
         priorSegmentStart: Date?,
         basalBefore: Date?,
         basalBeforeOnPatch: Date?
-    ) {
+    ) -> Bool {
         dose.noteCommand(
             sentAt: sentAt,
             uptime: sentUptime,
@@ -6244,8 +6713,21 @@ public extension MedtrumPumpManager {
             basalBeforeOnPatch: basalBeforeOnPatch
         )
 
-        doseReportLock.withLock {
+        let kept = doseReportLock.withLock { () -> Bool in
+            guard !state.patchSessionEnded else {
+                state.pendingTempBasal = nil
+                return false
+            }
             keepUnconfirmed(dose, .unanswered)
+            return true
+        }
+
+        guard kept else {
+            log.warning(
+                "Temp basal of \(dose.value) U/h went out unanswered as the patch session ended: sent to the old patch, not kept"
+            )
+            handOverState(before: "failing the temp basal")
+            return false
         }
 
         log.error(
@@ -6253,6 +6735,7 @@ public extension MedtrumPumpManager {
                 "record turns up"
         )
         notifyStateDidChange()
+        return true
     }
 
     /// `dose`, its command noted, is the unconfirmed temp basal from now on - uncertain for `cause` - and no longer
@@ -6276,10 +6759,21 @@ public extension MedtrumPumpManager {
     /// until a status or its record shows it ran, dropped if every record shows it never did - dated from when it went
     /// out. The temp basal the cancel before it ended, still running in the state, ends at that cancel, final from our
     /// estimate as with any set gone unanswered - the scheduled basal after it held back for the first batch
-    /// (`heldBasalDoses`). Not if its dose was registered: the state was saved as it was, read in part before.
+    /// (`heldBasalDoses`). Not if its dose was registered: the state was saved as it was, read in part before. Nor with no
+    /// session running: no command goes out then, so it went out as the session ended under it - a forced deactivation -
+    /// to the old patch, whose runs are not ours to count. Dropped: kept, it would be carried into the next session.
     private func takeOverPendingTempBasal() {
         doseReportLock.withLock {
             guard let pending = state.pendingTempBasal else {
+                return
+            }
+
+            guard !state.patchSessionEnded else {
+                log.warning(
+                    "The temp basal of \(pending.unitsPerHour) U/h sent at \(pending.sentAt) was pending as the patch session " +
+                        "ended: sent to the old patch, not ours - dropped"
+                )
+                state.pendingTempBasal = nil
                 return
             }
 
@@ -6476,6 +6970,12 @@ public extension MedtrumPumpManager {
     /// from its start on. Any other temp segment is not ours: it changes nothing, but may end the unconfirmed one.
     internal func followTempBasalSegment(_ basal: BasalData, fullSync: Bool, receivedAt: Date, receivedUptime: TimeInterval) {
         doseReportLock.withLock {
+            // No session: no temp basal of ours runs - the session's end finalized it, and no command goes out until the
+            // next starts - and nothing of either patch is ours to count or start from
+            guard !state.patchSessionEnded else {
+                log.info("Status shows a \(basal.type) segment at \(basal.rate) U/h from \(basal.startTime), no session runs: not followed")
+                return
+            }
             let dose = state.basalDose
             let running = dose.snapshot
 

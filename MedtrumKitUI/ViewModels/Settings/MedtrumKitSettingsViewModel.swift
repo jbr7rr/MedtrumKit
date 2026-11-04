@@ -36,6 +36,9 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
     @Published var pumpTime = Date.distantPast
     @Published var pumpTimeSyncedAt = Date.distantPast
     @Published var patchState: PatchState = .none
+    /// The "Activate Patch" row with a patch shown: one being set up, or one running whose session never started - its
+    /// activation's answer lost, the sheet dismissed since - for the activation's retry, which starts it
+    @Published var showsActivatePatch = false
     @Published var patchStateString: String = PatchState.none.description
     @Published var basalType: DoseType = .basal
     @Published var basalRate: String = ""
@@ -177,7 +180,8 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
             return
         }
 
-        isConnected = pumpManager.bluetooth.isConnected
+        // Not the BLE link in the tests
+        isConnected = pumpManager.bluetooth?.isConnected ?? false
         updateState(pumpManager.state)
         pumpManager.addStatusObserver(self, queue: processQueue)
     }
@@ -305,7 +309,19 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
             return
         }
 
-        pumpActivationAction(pumpManager.state.pumpState.hasCompletedPriming)
+        // Activated with no session: the activation's retry, not priming
+        let state = pumpManager.state
+        pumpActivationAction(state.pumpState.hasCompletedPriming || state.isActivatedWithNoSession)
+    }
+
+    /// The "Activate Patch" row with no patch shown - none activated, or its id not named yet: a patch running whose
+    /// session never started goes to the activation's retry, not to setting up a new one from the base
+    func activatePatchPressed() {
+        guard pumpManager?.state.isActivatedWithNoSession == true else {
+            activatePatchAction()
+            return
+        }
+        toPumpActivation()
     }
 
     func suspendDelivery(duration: TimeInterval) {
@@ -421,7 +437,7 @@ extension MedtrumKitSettingsViewModel {
         }
 
         DispatchQueue.main.async {
-            self.isConnected = pumpManager.bluetooth.isConnected
+            self.isConnected = pumpManager.bluetooth?.isConnected ?? false
             self.updateState(pumpManager.state)
         }
     }
@@ -439,6 +455,7 @@ extension MedtrumKitSettingsViewModel {
 
         showPumpTimeSyncWarning = state.shouldShowTimeWarning()
         patchState = state.pumpState
+        showsActivatePatch = state.pumpState.isAwaitingActivation || state.isActivatedWithNoSession
         useSilentTones = state.useSilentTones
         patchStateString = state.pumpState.description
         pumpTime = state.pumpTime
