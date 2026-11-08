@@ -294,14 +294,19 @@ public class MedtrumPumpManager: DeviceManager {
         }
     }
 
+    /// Floored onto the patch's steps - a value between two is sent as the lower one - and capped at the highest. We do
+    /// support rounding down to 0.00u. A value a hair below a step - floating point noise, `0.7 - 0.05` - keeps it.
     public func roundToSupportedBolusVolume(units: Double) -> Double {
-        // We do support rounding down to 0.00u
-        supportedBolusVolumes.last(where: { $0 <= units }) ?? 0
+        supportedBolusVolumes.last(where: { $0 <= units + Self.stepNoise }) ?? 0
     }
 
+    /// Floored onto the patch's steps, as `roundToSupportedBolusVolume`
     public func roundToSupportedBasalRate(unitsPerHour: Double) -> Double {
-        supportedBasalRates.last(where: { $0 <= unitsPerHour }) ?? 0
+        supportedBasalRates.last(where: { $0 <= unitsPerHour + Self.stepNoise }) ?? 0
     }
+
+    /// How far below a step a value may be and still be on it: floating point noise, far less than a step
+    internal static let stepNoise = 1e-9
 
     public var supportedBasalRates: [Double] {
         guard !state.pumpSN.isEmpty else {

@@ -1140,9 +1140,10 @@ public class UnfinalizedDose {
     }
 
     /// Snaps a value onto the increments the pump can actually meter. Note this *floors* rather than
-    /// rounds to nearest, so a value between two increments is always reported low.
+    /// rounds to nearest, so a value between two increments is always reported low - one a hair below an increment,
+    /// floating point noise, keeps it (`MedtrumPumpManager.stepNoise`).
     static func roundBasalRate(_ rate: Double) -> Double {
-        MedtrumPumpManager.onboardingSupportedBasalRates.last(where: { $0 <= rate }) ?? 0
+        MedtrumPumpManager.onboardingSupportedBasalRates.last(where: { $0 <= rate + MedtrumPumpManager.stepNoise }) ?? 0
     }
 
     public static func defaultBasalDose(basalSchedule: BasalSchedule, insulineType: InsulinType?) -> UnfinalizedDose {

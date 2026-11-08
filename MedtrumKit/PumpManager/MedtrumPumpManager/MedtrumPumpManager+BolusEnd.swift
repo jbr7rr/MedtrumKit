@@ -155,7 +155,7 @@ public extension MedtrumPumpManager {
         var notIts: String?
         if let record = early.record, let answered = dose.snapshot.recordSequence, record != answered {
             notIts = "it names record #\(record), the bolus is #\(answered)"
-        } else if early.delivered > dose.value + Self.bolusCompletionTolerance {
+        } else if RecordSyncer.steps(early.delivered) > RecordSyncer.steps(dose.value) {
             notIts = "the bolus was for \(dose.value) U"
         } else if !completeBolus(
             delivered: early.delivered,
@@ -175,9 +175,6 @@ public extension MedtrumPumpManager {
         raiseCancelledBolus(delivered: early.delivered, record: early.record)
         return false
     }
-
-    /// Half a 0.05 U step
-    private static let bolusCompletionTolerance = 0.025
 
     /// The bolus a cancel ended moments ago, still waiting on its record - its completion is yet to come
     private func recentlyCancelledBolus() -> UnfinalizedDose? {
@@ -252,7 +249,7 @@ public extension MedtrumPumpManager {
                 return false
             }
 
-            guard delivered <= doseEntry.value + Self.bolusCompletionTolerance else {
+            guard RecordSyncer.steps(delivered) <= RecordSyncer.steps(doseEntry.value) else {
                 log.warning(
                     "A full status names record #\(newestRecord), past the bolus of \(doseEntry.startDate)'s #\(recordSequence), " +
                         "and a bolus of \(delivered) U completed - more than it was for: left to its deadline"

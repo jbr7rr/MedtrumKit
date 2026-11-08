@@ -15,6 +15,15 @@ public extension MedtrumPumpManager {
         automatic: Bool,
         completion: @escaping (LoopKit.PumpManagerError?) -> Void
     ) {
+        // Floored onto the patch's steps, once - see `enactBolus`: this one rate is the temp basal from here on - the
+        // packet, the write-ahead, the check of the answer, the dose and its identity
+        let requested = unitsPerHour
+        let unitsPerHour = roundToSupportedBasalRate(unitsPerHour: requested)
+        if requested > (supportedBasalRates.last ?? 0) + Self.stepNoise {
+            log.warning("Temp basal \(requested) U/h is above the patch's maximum: sending \(unitsPerHour) U/h")
+        } else if unitsPerHour != requested {
+            log.info("Temp basal \(requested) U/h is not on the patch's steps: sending \(unitsPerHour) U/h")
+        }
         log.info("Setting temp basal at \(unitsPerHour)U/hr for \(duration)s")
 
         guard state.bolusState == .noBolus else {

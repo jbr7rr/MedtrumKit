@@ -11,6 +11,8 @@ public enum MedtrumConnectError: LocalizedError {
     case failedToConnectToDevice
     case isBolussing
     case isSuspended
+    /// A bolus refused: on the patch's 0.05 U steps - floored, as it is sent - it is none. Nothing was sent.
+    case isBelowMinimumBolus
     /// A bolus or a temp basal not written: the host did not take the state with it pending in time - see
     /// `MedtrumPumpManager.handOverPendingDose`. `tempBasalCancelled`: the temp basal running was cancelled before;
     /// else nothing was sent.
@@ -45,6 +47,8 @@ public enum MedtrumConnectError: LocalizedError {
             return String(localized: "Bolus issue. Patch is already bolussing", comment: "MedtrumError patch bolussing")
         case .isSuspended:
             return String(localized: "Bolus issue. Patch is suspended. Resume delivery", comment: "MedtrumError patch suspended")
+        case .isBelowMinimumBolus:
+            return String(localized: "Bolus issue. Bolus is below the minimum of 0.05U", comment: "MedtrumError bolus below minimum")
         case let .stateNotSaved(tempBasalCancelled):
             guard tempBasalCancelled else {
                 return String(

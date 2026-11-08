@@ -450,7 +450,7 @@ public extension MedtrumPumpManager {
             if dose.type != .suspend {
                 state.basalState = .tempBasal
             }
-            let isOurRate = basal.type == .ABSOLUTE_TEMP && abs(basal.rate - dose.value) <= 0.01
+            let isOurRate = basal.type == .ABSOLUTE_TEMP && RecordSyncer.steps(basal.rate) == RecordSyncer.steps(dose.value)
 
             if dose.type == .tempBasal, !running.isFinished {
                 if let pumpStartTime = running.pumpStartTime {
@@ -594,7 +594,7 @@ public extension MedtrumPumpManager {
         // A segment known to have begun since it - a later command's - and this status says nothing of what runs now: it
         // is late, a notification of before, and running from here the temp basal would end the one running now
         let isStale = state.lastSegmentStart.map { basal.startTime < $0 } == true
-        guard basal.type == .ABSOLUTE_TEMP, abs(basal.rate - pending.value) <= 0.01,
+        guard basal.type == .ABSOLUTE_TEMP, RecordSyncer.steps(basal.rate) == RecordSyncer.steps(pending.value),
               let prior = unconfirmed.priorSegmentStart, basal.startTime >= prior,
               unconfirmed.laterSegmentStart.map({ basal.startTime < $0 }) ?? true
         else {

@@ -269,6 +269,14 @@ class MedtrumManagerTestCase: XCTestCase {
         return outcome ?? nil
     }
 
+    /// The 0.05 U steps a SetTempBasal or a SetBolus carries
+    func steps(of packet: (any MedtrumBasePacketProtocol)?) -> Int? {
+        guard let bytes = (packet as? SetTempBasalPacket)?.getRequestBytes() ?? (packet as? SetBolusPacket)?.getRequestBytes() else {
+            return nil
+        }
+        return Int(bytes[1]) | Int(bytes[2]) << 8
+    }
+
     /// The command failed, not sent: the host did not take the state in time - see `MedtrumPumpManager.handOverPendingDose`.
     /// `tempBasalCancelled`: after the temp basal running was cancelled.
     func isStateNotSaved(_ error: PumpManagerError?, tempBasalCancelled: Bool = false) -> Bool {

@@ -7969,6 +7969,9 @@
         }
       }
     },
+    "Bolus issue. Bolus is below the minimum of 0.05U" : {
+      "comment" : "MedtrumError bolus below minimum"
+    },
     "Bolus issue. Patch is already bolussing" : {
       "comment" : "MedtrumError patch bolussing",
       "extractionState" : "manual",

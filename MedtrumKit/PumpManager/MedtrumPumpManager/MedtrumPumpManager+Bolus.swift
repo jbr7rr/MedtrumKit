@@ -27,6 +27,22 @@ public extension MedtrumPumpManager {
         activationType: LoopKit.BolusActivationType,
         completion: @escaping (LoopKit.PumpManagerError?) -> Void
     ) {
+        // Floored onto the patch's steps, once: sent as it is, an amount between two steps would go out as the nearest -
+        // more than asked for, maybe. This one amount is the bolus from here on - the packet, the write-ahead, the dose
+        // and its identity, every match against what the patch shows.
+        let requested = units
+        let units = roundToSupportedBolusVolume(units: requested)
+        guard units > 0 else {
+            log.error("Bolus of \(requested) U is below the patch's minimum of 0.05 U: refused, nothing sent")
+            completion(.deviceState(MedtrumConnectError.isBelowMinimumBolus))
+            return
+        }
+        if requested > (supportedBolusVolumes.last ?? 0) + Self.stepNoise {
+            log.warning("Bolus of \(requested) U is above the patch's maximum: sending \(units) U")
+        } else if units != requested {
+            log.info("Bolus of \(requested) U is not on the patch's steps: sending \(units) U")
+        }
+
         guard state.bolusState == .noBolus else {
             log.error("Pump is in bolus state...")
             completion(.deviceState(MedtrumConnectError.isBolussing))
