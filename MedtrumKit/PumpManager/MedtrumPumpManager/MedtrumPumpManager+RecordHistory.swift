@@ -207,8 +207,8 @@ extension MedtrumPumpManager {
         isLoopWaiting || RecordSyncer.isRunning
     }
 
-    /// The patch whose session runs, nil if none - or if no history is kept
-    private var currentHistoryPatch: UInt64? {
+    /// The patch whose session runs, nil if none - or if no history is kept. Reads no file: for the records screen too.
+    var currentHistoryPatch: UInt64? {
         guard recordHistory != nil, !state.patchId.isEmpty, !state.patchSessionEnded else {
             return nil
         }
@@ -216,8 +216,9 @@ extension MedtrumPumpManager {
     }
 }
 
-/// The manager, handed to the queue the fill reads on: it is used across queues by design, under its own locks
-private struct UncheckedSendable<Value>: @unchecked Sendable {
+/// The manager, handed to the queue the fill reads on: it is used across queues by design, under its own locks. Also the
+/// history screen's hop off the main queue (`PatchHistoryViewModel.prepareShare`).
+struct UncheckedSendable<Value>: @unchecked Sendable {
     let value: Value
 
     init(_ value: Value) {

@@ -4,7 +4,7 @@ import LoopKitUI
 import SwiftUI
 import UIKit
 
-enum MedtrumUIScreen {
+enum MedtrumUIScreen: Equatable {
     case welcomeScreen
     case insulinTypeScreen
     case patchSettingsScreen
@@ -17,6 +17,8 @@ enum MedtrumUIScreen {
     case patchDetailsScreen
     case patchPreviousDetailsScreen
     case pumpRecordsScreen
+    /// The records kept of one patch - the current one, or the one before
+    case patchHistoryScreen(patchId: UInt64, isCurrentPatch: Bool)
 }
 
 class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, CompletionNotifying,
@@ -303,14 +305,24 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                 title: String(localized: "Patch Details", comment: "header patch details")
             )
         case .patchPreviousDetailsScreen:
-            let viewModel = PreviousPatchDetailsViewModel(pumpManager: pumpManager)
+            let viewModel = PreviousPatchDetailsViewModel(
+                pumpManager: pumpManager,
+                showHistory: { [weak self] patchId in
+                    self?.navigateTo(.patchHistoryScreen(patchId: patchId, isCurrentPatch: false))
+                }
+            )
             return hostingController(
                 rootView: PreviousPatchDetailsView(viewModel: viewModel),
                 title: String(localized: "Previous Patch Details", comment: "header patch details")
             )
 
         case .pumpRecordsScreen:
-            let viewModel = PumpRecordsViewModel(pumpManager: pumpManager)
+            let viewModel = PumpRecordsViewModel(
+                pumpManager: pumpManager,
+                showHistory: { [weak self] patchId in
+                    self?.navigateTo(.patchHistoryScreen(patchId: patchId, isCurrentPatch: true))
+                }
+            )
             return hostingController(
                 rootView: PumpRecordsView(
                     viewModel: viewModel,
@@ -318,6 +330,13 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                     store: pumpManager?.recordStore ?? PumpRecordStore()
                 ),
                 title: "Patch Records"
+            )
+
+        case let .patchHistoryScreen(patchId, isCurrentPatch):
+            let viewModel = PatchHistoryViewModel(patchId: patchId, isCurrentPatch: isCurrentPatch, source: pumpManager)
+            return hostingController(
+                rootView: PatchHistoryView(viewModel: viewModel),
+                title: String(localized: "Patch History", comment: "header patch history")
             )
         }
     }

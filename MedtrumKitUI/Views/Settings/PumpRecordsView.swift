@@ -11,6 +11,28 @@ struct PumpRecordsView: View {
 
     var body: some View {
         List {
+            if viewModel.historyPatch != nil {
+                Section {
+                    HStack {
+                        Text("Full history", comment: "patch records: the row opening the current patch's full record history")
+                            .foregroundColor(Color.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: UIFont.systemFontSize, weight: .medium))
+                            .opacity(0.3)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        viewModel.toFullHistory()
+                    }
+                } footer: {
+                    Text(
+                        "Every record of this patch kept on the phone, not only the newest 200.",
+                        comment: "patch records: footer of the full history row"
+                    )
+                }
+            }
+
             Section {
                 row("Status", statusText)
                 row("Records", "\(viewModel.syncedSequence) / \(viewModel.currentSequence) synced")
@@ -141,29 +163,7 @@ struct PumpRecordsView: View {
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(store.records) { record in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                // An event record by what it is - "Reservoir empty", "Base: ..." - the rest by kind
-                                Text("#\(record.id)  \(record.label ?? record.kind)")
-                                    .font(.caption.bold())
-                                Spacer()
-                                if let eventDate = record.eventDate {
-                                    Text(viewModel.dateFormatter.string(from: eventDate))
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            Text(record.summary)
-                                .font(.caption2.monospaced())
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if let outcome = record.outcome {
-                                Text(outcome)
-                                    .font(.caption2.monospaced())
-                                    .foregroundColor(outcome == "unmatched" ? Color.orange : Color.green)
-                            }
-                        }
-                        .padding(.vertical, 2)
+                        PatchRecordRow(record, dateFormatter: viewModel.dateFormatter)
                     }
                 }
             } header: {

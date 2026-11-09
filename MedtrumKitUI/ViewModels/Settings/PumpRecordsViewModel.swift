@@ -31,6 +31,8 @@ class PumpRecordsViewModel: ObservableObject, PumpManagerStatusObserver {
     @Published var doses: [TrackedDose] = []
     @Published var syncedSequence: Int = 0
     @Published var currentSequence: Int = 0
+    /// The current patch, if its records are kept in a file - the full history the screen offers. Nil, none.
+    @Published var historyPatch: UInt64?
 
     let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -39,9 +41,11 @@ class PumpRecordsViewModel: ObservableObject, PumpManagerStatusObserver {
     }()
 
     private let pumpManager: MedtrumPumpManager?
+    private let showHistory: (UInt64) -> Void
 
-    init(pumpManager: MedtrumPumpManager?) {
+    init(pumpManager: MedtrumPumpManager?, showHistory: @escaping (UInt64) -> Void = { _ in }) {
         self.pumpManager = pumpManager
+        self.showHistory = showHistory
 
         guard let pumpManager else {
             return
@@ -49,6 +53,14 @@ class PumpRecordsViewModel: ObservableObject, PumpManagerStatusObserver {
 
         updateState(pumpManager.state)
         pumpManager.addStatusObserver(self, queue: processQueue)
+    }
+
+    /// Opens the full history of the current patch
+    func toFullHistory() {
+        guard let historyPatch else {
+            return
+        }
+        showHistory(historyPatch)
     }
 
     deinit {
@@ -78,6 +90,7 @@ class PumpRecordsViewModel: ObservableObject, PumpManagerStatusObserver {
     private func updateState(_ state: MedtrumPumpState) {
         syncedSequence = state.syncedSequenceNumber
         currentSequence = state.currentSequenceNumber
+        historyPatch = pumpManager?.currentHistoryPatch
 
         var doses: [TrackedDose] = []
 
