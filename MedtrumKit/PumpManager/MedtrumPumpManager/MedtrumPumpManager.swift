@@ -159,6 +159,9 @@ public class MedtrumPumpManager: DeviceManager {
 
     /// Records read off the patch, for the debug screen. Not part of `state` - see `PumpRecordStore`.
     public let recordStore = PumpRecordStore()
+    /// The records of the current patch and the one before, in a file each - see `PatchRecordHistory`. Nil for a test
+    /// that keeps none.
+    let recordHistory: PatchRecordHistory?
     /// Saved in one step with what changes the doses together: a dose that took over from another, and what is held
     /// back with the one it ended (`MedtrumPumpState.heldBasalDoses`), are never saved half-way. Nothing holds
     /// `doseReportLock` across a write on the link, or waits under it for the delegate queue or the main queue.
@@ -203,6 +206,7 @@ public class MedtrumPumpManager: DeviceManager {
         self.state = state
         state.doseLock = doseReportLock
         oldState = MedtrumPumpState(rawValue: state.rawValue)
+        recordHistory = PatchRecordHistory()
         link = BluetoothManager(knownPeripheralIdentifier: state.peripheralIdentifier)
         refreshLogDeviceIdentifier()
 
@@ -229,11 +233,13 @@ public class MedtrumPumpManager: DeviceManager {
     }
 
     /// Drives the manager over `link` instead of CoreBluetooth - for tests. Creates no central manager
-    /// and registers nothing global: no app lifecycle observers, and `MedtrumLogger` keeps no reference.
-    init(state: MedtrumPumpState, link: MedtrumLink) {
+    /// and registers nothing global: no app lifecycle observers, and `MedtrumLogger` keeps no reference. Keeps no record
+    /// history unless given one - never in the app's documents.
+    init(state: MedtrumPumpState, link: MedtrumLink, recordHistory: PatchRecordHistory? = nil) {
         self.state = state
         state.doseLock = doseReportLock
         oldState = MedtrumPumpState(rawValue: state.rawValue)
+        self.recordHistory = recordHistory
         self.link = link
         refreshLogDeviceIdentifier()
 
@@ -429,6 +435,8 @@ public class MedtrumPumpManager: DeviceManager {
 
     private let backgroundTask = BackgroundTask()
     @objc func appMovedToBackground() {
+        // On disk before the app may be suspended
+        recordHistory?.commit()
         if state.useSilentTones {
             log.info("Starting silent tones")
             backgroundTask.startBackgroundTask()

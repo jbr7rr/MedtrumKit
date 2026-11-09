@@ -147,6 +147,9 @@ struct GetRecordResponse {
     let patchId: UInt64
     let serial: UInt64
     let record: PumpRecord
+    /// The answer as it came in, its fragments put together - what `GetRecordPacket.decode(raw:)` reads again: the
+    /// record history keeps it (`PatchRecordHistory`), so a decoder fixed later reads the records kept before
+    let raw: Data
 }
 
 class GetRecordPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
@@ -233,8 +236,20 @@ class GetRecordPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
             sequence: Int(field(Self.sequenceOffset, 2)),
             patchId: field(Self.patchIdOffset, 2),
             serial: field(Self.serialOffset, 4),
-            record: parseRecord()
+            record: parseRecord(),
+            raw: totalData
         )
+    }
+
+    /// A record answer kept as it came in (`GetRecordResponse.raw`), decoded again - nil if it is too short to be one
+    static func decode(raw: Data) -> GetRecordResponse? {
+        guard raw.count >= dataOffset else {
+            return nil
+        }
+        let packet = GetRecordPacket(recordIndex: 0, patchId: 0)
+        // Indexed from 0, as an answer put together is
+        packet.totalData = Data(raw)
+        return packet.parseResponse()
     }
 
     private func parseRecord() -> PumpRecord {

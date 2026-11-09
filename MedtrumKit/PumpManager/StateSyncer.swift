@@ -128,11 +128,13 @@ enum StateSyncer {
             if state.patchId != patchId {
                 // Record numbers are per patch, so anything we synced from the old one is meaningless
                 logger.info("New patch id \(patchId.hexEncodedString()), resetting the record sequence")
+                let replaced = state.patchId
                 state.patchId = patchId
                 state.resetRecordSequence()
                 // Taken up with what it has written: another app's doses, or an earlier state's
                 state.sessionStartSequence = Int(storage.sequence)
                 pumpManager.recordStore.clear()
+                pumpManager.pruneRecordHistory(replacing: replaced)
                 state.lastSegmentStart = nil
             } else if state.sessionStartSequence == nil {
                 // Saved mid-patch by a build that did not keep it - the released driver: taken up here, as a new patch

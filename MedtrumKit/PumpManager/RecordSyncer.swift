@@ -140,6 +140,12 @@ enum RecordSyncer {
         runState.mutate { $0.isRunning = false }
     }
 
+    /// A run holds the single flight: a sync, a temp basal's end being read - the history's fill gives way to it
+    /// (`MedtrumPumpManager.readMissingRecords`)
+    static var isRunning: Bool {
+        runState.value.isRunning
+    }
+
     /// Reads the records the patch has written since the last call - up to `through` at most - and finalizes the doses
     /// they match - then, whether it could read or not, the doses that have waited for theirs long enough.
     static func syncRecords(pumpManager: MedtrumPumpManager, trigger: Trigger = .fullSync, through: Int? = nil) {
@@ -223,6 +229,9 @@ enum RecordSyncer {
                 runState.mutate { $0.lastAwaitingDosesRun = .distantPast }
             }
         }
+
+        // What this run read, in its patch's history file: one write a run
+        pumpManager.recordHistory?.commit()
 
         // Needs no link, so it runs either way - read through the newest, the last skipped: the record kept from the
         // backlog for the bolus the released driver had in flight may be its own now
@@ -324,6 +333,10 @@ enum RecordSyncer {
             }
             guard let result = result ?? nil else {
                 logger.info("Stopping at record \(sequence), a command holds the link")
+                // Turned away, it read nothing more: no run of the cooldown's, as for a command in flight
+                if trigger == .awaitingDoses {
+                    runState.mutate { $0.lastAwaitingDosesRun = .distantPast }
+                }
                 return false
             }
 
@@ -397,6 +410,10 @@ enum RecordSyncer {
             patchUTCOffset: pumpManager.state.patchUTCOffset,
             to: pumpManager.recordStore
         )
+        // Kept in the patch's history file - another patch's record is not of this one's history
+        if isOurs {
+            pumpManager.recordHistory?.append(response, patchId: patchId.toUInt64(), outcome: outcome)
+        }
         // A bolus whose command went unanswered keeps track of the records read in order since it went out
         pumpManager.noteRecordRead(response.sequence, requested: requested, isOurs: isOurs)
 

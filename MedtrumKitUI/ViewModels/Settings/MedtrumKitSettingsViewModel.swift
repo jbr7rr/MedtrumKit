@@ -300,7 +300,8 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
         if let pumpManager = self.pumpManager {
             log.info(pumpManager.state.debugDescription)
         }
-        return log.getDebugLogs()
+        // After the log files: the record history of the current patch and the previous one, written out first
+        return log.getDebugLogs() + (pumpManager?.recordHistoryFilesForSharing() ?? [])
     }
 
     func toPumpActivation() {

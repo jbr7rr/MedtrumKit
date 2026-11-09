@@ -424,11 +424,13 @@ public extension MedtrumPumpManager {
             let recordsTakenUp = sessionWasEnded && !patchId.isEmpty && !state.patchId.isEmpty &&
                 patchId.toUInt64() & 0xFFFF == state.patchId.toUInt64() & 0xFFFF
             if !recordsTakenUp {
+                let replaced = state.patchId
                 state.patchId = patchId
                 // Record numbers restart with the patch
                 state.resetRecordSequence()
                 state.lastSegmentStart = nil
                 recordStore.clear()
+                pruneRecordHistory(replacing: replaced)
             }
             state.patchActivatedAt = activatedAt
             state.lastSync = Date.now
@@ -563,6 +565,8 @@ public extension MedtrumPumpManager {
         state.resetRecordSequence()
         state.lastSegmentStart = nil
         recordStore.clear()
+        // Its file stays, the previous patch's: the one before goes
+        pruneRecordHistory(replacing: Data())
         state.pumpState = .none
         state.backupSessionToken = state.sessionToken
         state.sessionToken = Data()

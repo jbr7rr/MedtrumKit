@@ -84,11 +84,29 @@ class MedtrumManagerTestCase: XCTestCase {
         pumpManager = nil
         delegate = nil
         link = nil
+        recordHistory = nil
 
         super.tearDown()
     }
 
     // MARK: Setup
+
+    /// The record history the next `makeManager` keeps its records in - none unless a scenario asks for one
+    /// (`keepRecordHistory`), so that no scenario writes to the app's documents
+    private(set) var recordHistory: PatchRecordHistory?
+
+    /// The managers made from here on keep their records' history in a directory of their own, removed as the test
+    /// ends - one history across a `restart`, as on a device. Written at once, `coalesceDelay` 0, unless asked otherwise.
+    @discardableResult func keepRecordHistory(coalesceDelay: TimeInterval = 0) -> PatchRecordHistory {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MedtrumKitTests-records-\(UUID().uuidString)")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let history = PatchRecordHistory(directory: directory, coalesceDelay: coalesceDelay)
+        recordHistory = history
+        return history
+    }
 
     /// The managers of the runs before a `restart`, still alive if something holds them - see `tearDown`
     private var earlierManagers: [Weak] = []
@@ -102,7 +120,7 @@ class MedtrumManagerTestCase: XCTestCase {
         if let pumpManager = self.pumpManager {
             earlierManagers.append(Weak(pumpManager))
         }
-        let pumpManager = MedtrumPumpManager(state: state, link: link)
+        let pumpManager = MedtrumPumpManager(state: state, link: link, recordHistory: recordHistory)
         // Read as soon as the command is over: `settle` waits for it
         pumpManager.openTempBasalEndReadDelay = 0
         let clockOffset = clockOffset

@@ -167,6 +167,8 @@ extension RecordSyncer {
         }
 
         let outcomes = pumpManager.settleTempBasalEnd(ending, records: records, unread: unread)
+        // What they were read as, in the patch's history file now - not with the next sync's
+        defer { pumpManager.recordHistory?.commit() }
 
         // As a sync would: stored, and the cursor past them - after the final went out
         for response in records {
@@ -220,6 +222,8 @@ extension RecordSyncer {
         logger.info("Reading records \(first)...\(last) in the command, of \(what)")
         let store = pumpManager.recordStore
         var unread: String?
+        // What they were read as, in the patch's history file now - not with the next sync's
+        defer { pumpManager.recordHistory?.commit() }
 
         reading: for sequence in first ... last {
             // The cursor can run ahead, following a record that came back with a later number
