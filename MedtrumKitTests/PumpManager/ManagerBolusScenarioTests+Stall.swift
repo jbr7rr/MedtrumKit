@@ -339,6 +339,37 @@ extension ManagerBolusScenarioTests {
         XCTAssertNil(stallNote, "not noted either")
     }
 
+    /// The patch's own occlusion alarm the first status after a restart - no watch yet when it is handled, the watch
+    /// built on that status - then the state back to delivering, the bolus standing still for 40 s: not warned of. The
+    /// alarm silences the bolus, not the watch there was.
+    func testNoStallWarningAfterThePatchsOwnAlarmSeenBeforeAnyWatch() throws {
+        makeBolusManager()
+        startBolus(3.0)
+        steps(from: 0, to: 0.5, every: 4)
+
+        try restart(from: delegate.savedState)
+        pumpManager.state.isConnected = true
+        XCTAssertNil(pumpManager.bolusStallWatch)
+        advanceClock(by: 4)
+        link.notify("600000")
+        settle()
+        XCTAssertNotNil(pumpManager.bolusStallWatch, "built on the alarm's status")
+
+        advanceClock(by: 4)
+        notifyProgress(0.6)
+        for _ in 1 ... 5 {
+            advanceClock(by: 8)
+            notifyNoProgress()
+        }
+
+        XCTAssertEqual(
+            delegate.alerts.map(\.identifier.alertIdentifier),
+            [MedtrumAlert.occlusionNotification.alert.identifier.alertIdentifier]
+        )
+        XCTAssertNotNil(pumpManager.state.bolusDose, "still running as far as is known")
+        XCTAssertNil(stallNote)
+    }
+
     /// Stalled, then past its deadline with no end seen: how it ended is not known - the warning stands, the note tells of
     /// the end not seen, the stall kept with it
     func testAStalledBolusWhoseEndIsNotSeenStaysWarnedOf() throws {

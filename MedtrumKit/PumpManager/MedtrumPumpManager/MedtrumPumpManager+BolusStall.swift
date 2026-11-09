@@ -61,7 +61,17 @@ extension MedtrumPumpManager {
     /// `dose`, just registered, its command answered at `answeredUptime` on the monotonic clock: judged from there. Only
     /// under `doseReportLock`.
     internal func startBolusStallWatch(_ dose: UnfinalizedDose, answeredUptime: TimeInterval) {
-        bolusStallWatch = BolusStallWatch(dose: dose, judgedFrom: answeredUptime, lastHeardAt: answeredUptime, stalled: false)
+        bolusStallWatch = BolusStallWatch(
+            dose: dose,
+            judgedFrom: answeredUptime,
+            lastHeardAt: answeredUptime,
+            stalled: false,
+            silenced: isBolusStallSilenced(dose)
+        )
+        if !isBolusStallSilenced(dose) {
+            // A new bolus: an alarm before it was not for it
+            bolusStallSilencedSentAt = nil
+        }
     }
 
     /// A status of the patch, `usable` - not cut short, valid - handled now, before what it says of the bolus is taken:
@@ -87,12 +97,14 @@ extension MedtrumPumpManager {
             }
 
             guard var watch = bolusStallWatch, watch.dose === dose else {
-                // A restart, or confirmed by a step just now: from here on. Warned of in a run before, it is not again.
+                // A restart, or confirmed by a step just now: from here on. Warned of in a run before, it is not again;
+                // the patch's alarm seen for it before this watch, it is not judged.
                 bolusStallWatch = BolusStallWatch(
                     dose: dose,
                     judgedFrom: receivedUptime,
                     lastHeardAt: receivedUptime,
-                    stalled: isNotedStalled(dose)
+                    stalled: isNotedStalled(dose),
+                    silenced: isBolusStallSilenced(dose)
                 )
                 return nil
             }
@@ -223,11 +235,15 @@ extension MedtrumPumpManager {
 
     /// The patch raised its own alarm - an occlusion, a fault, its reservoir empty - or its session ended, the patch
     /// deactivated or replaced: that tells of the boluses warned of as stalled better, or they are over with their patch.
-    /// Their warnings are retracted, and the running bolus, if any, is not warned of from here on. In one step with the
+    /// Their warnings are retracted, and the running bolus, if any - or the pending one - is not warned of from here on:
+    /// by the watch there is, and by its `sentAt` for one built later (`bolusStallSilencedSentAt`). In one step with the
     /// stall check: it takes the dose lock - recursive, so a caller may hold it.
     internal func retractBolusStallAlerts(because reason: String) {
         let stalled = doseReportLock.withLock { () -> [UncertainDelivery] in
             bolusStallWatch?.silenced = true
+            if let sentAt = state.bolusDose.map({ UncertainDelivery.DoseKey($0).sentAt }) ?? state.pendingBolus?.sentAt {
+                bolusStallSilencedSentAt = sentAt
+            }
             return state.uncertainDeliveries.filter { $0.kind == .bolus && $0.stalledFor != nil && !$0.stallResumed }
         }
         guard !stalled.isEmpty else {
@@ -244,6 +260,11 @@ extension MedtrumPumpManager {
         pumpDelegate.notify { delegate in
             delegate?.retractAlert(identifier: identifier)
         }
+    }
+
+    /// Whether the patch's alarm, or its session's end, came for `dose` - see `bolusStallSilencedSentAt`
+    private func isBolusStallSilenced(_ dose: UnfinalizedDose) -> Bool {
+        bolusStallSilencedSentAt == UncertainDelivery.DoseKey(dose).sentAt
     }
 
     /// Whether `dose` was warned of as stalled - in this run or one before

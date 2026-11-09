@@ -73,6 +73,12 @@ public class MedtrumPumpManager: DeviceManager {
     /// What the stall check keeps of the running bolus - see `checkBolusStall`. Never saved. Only under `doseReportLock`.
     var bolusStallWatch: BolusStallWatch?
 
+    /// The bolus the patch's own alarm, or its session's end, came for - by its `sentAt`, the pending one's if it was not
+    /// answered yet: not warned of as stalled from there on, whichever watch judges it - one built after the alarm, on
+    /// the first status after a restart or once a step confirms it, too (`retractBolusStallAlerts`). Never saved. Only
+    /// under `doseReportLock`.
+    var bolusStallSilencedSentAt: Date?
+
     /// The temp basal segments none of ours is that the host was warned of in this run, by their start on the patch
     /// clock - see `noteSegmentOfNoTempBasalOfOurs`. Only under `doseReportLock`.
     var unknownTempBasalSegments: Set<Date> = []
