@@ -530,7 +530,7 @@ extension MedtrumKitSettingsViewModel {
             )
         }
 
-        let cause: String
+        var cause: String
         switch delivery.cause {
         case .unanswered:
             cause = String(localized: "The patch did not confirm the command.", comment: "uncertain delivery cause: unconfirmed")
@@ -551,6 +551,25 @@ extension MedtrumKitSettingsViewModel {
                 localized: "A status showed the patch running a temp basal the app has no record of.",
                 comment: "uncertain delivery cause: a temp basal running that the app did not know of"
             )
+        case .stalled:
+            cause = ""
+        }
+        // A bolus that stood still while the patch kept answering - its cause, or told of with another
+        if let stalledFor = delivery.stalledFor {
+            let stall = delivery.stallResumed ? String(
+                format: String(
+                    localized: "Delivered slowly: up to %lld s between the patch's steps, then at its pace to the end.",
+                    comment: "uncertain delivery cause: a bolus that stalled, then went on at the patch's pace (longest gap in seconds)"
+                ),
+                Int(stalledFor)
+            ) : String(
+                format: String(
+                    localized: "The bolus stalled: no progress for %lld s while the patch kept answering. Possible occlusion: the patch counts the insulin whether it went in or not.",
+                    comment: "uncertain delivery cause: a bolus that stalled (longest time without progress in seconds)"
+                ),
+                Int(stalledFor)
+            )
+            cause = cause.isEmpty ? stall : cause + " " + stall
         }
 
         var status: String
@@ -658,7 +677,7 @@ extension MedtrumKitSettingsViewModel {
             ) + " " + status
         }
 
-        let advice: String?
+        var advice: String?
         let isUncertain: Bool
         switch phase {
         case .countedInFull,
@@ -691,6 +710,13 @@ extension MedtrumKitSettingsViewModel {
              .settled:
             isUncertain = false
             advice = nil
+        }
+        // Its record will not tell: the patch records what it was set to deliver
+        if delivery.stalledFor != nil, !delivery.stallResumed {
+            advice = String(
+                localized: "Check the infusion site and your glucose. If it keeps rising, replace the patch: its record will not tell whether the insulin went in.",
+                comment: "uncertain delivery advice for a bolus that stalled"
+            )
         }
 
         return UncertainDeliveryNotice(

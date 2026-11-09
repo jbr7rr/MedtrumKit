@@ -100,9 +100,12 @@ public class UnfinalizedDose {
         /// When the dose stopped, if we saw it happen
         public fileprivate(set) var observedEndDate: Date?
         /// The last change of the delivered amount of a running bolus, and that amount: an end we never saw is
-        /// extrapolated from there
+        /// extrapolated from there. When the status telling it was received, not when it was handled.
         public fileprivate(set) var lastProgressAt: Date?
         public fileprivate(set) var lastProgressUnits: Double?
+        /// `lastProgressAt` on the monotonic clock, never saved - as `sentUptime`: what the time since the last step of
+        /// the bolus is judged on (`MedtrumPumpManager.checkBolusStall`), a change of the wall clock faking or hiding none
+        public fileprivate(set) var lastProgressUptime: TimeInterval?
 
         /// No record may finalize this temp basal: a basal profile was set while it ran, and the patch split it into a
         /// record per segment. Also one whose command went unanswered that a status first showed restarted so, or that
@@ -727,9 +730,14 @@ public class UnfinalizedDose {
     }
 
     /// Progress of a running bolus: it never lowers the amount, and confirms one whose command went unanswered - the
-    /// patch is delivering it. Once it finished, only raises the amount it ended with, until its final. Returns whether
-    /// it was taken as progress, and whether that confirmed it.
-    @discardableResult func updateProgress(delivered: Double, at now: Date = Date.now) -> (taken: Bool, confirmed: Bool) {
+    /// patch is delivering it. Once it finished, only raises the amount it ended with, until its final. `now`: when the
+    /// status telling it was received, `uptime` the same on the monotonic clock. Returns whether it was taken as
+    /// progress, and whether that confirmed it.
+    @discardableResult func updateProgress(
+        delivered: Double,
+        at now: Date = Date.now,
+        uptime: TimeInterval? = nil
+    ) -> (taken: Bool, confirmed: Bool) {
         transition { state -> (taken: Bool, confirmed: Bool) in
             guard !state.isFinished else {
                 state.raiseAfterEnd(to: delivered)
@@ -742,6 +750,7 @@ public class UnfinalizedDose {
             if delivered != state.lastProgressUnits {
                 state.lastProgressAt = now
                 state.lastProgressUnits = delivered
+                state.lastProgressUptime = uptime
             }
             state.deliveredUnits = delivered
             let confirmed = state.confirmation != .confirmed

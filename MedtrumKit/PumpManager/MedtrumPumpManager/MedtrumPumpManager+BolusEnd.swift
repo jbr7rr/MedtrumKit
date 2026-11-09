@@ -18,7 +18,7 @@ public extension MedtrumPumpManager {
                 return nil
             }
 
-            let progress = doseEntry.updateProgress(delivered: delivered)
+            let progress = doseEntry.updateProgress(delivered: delivered, at: receivedAt, uptime: receivedUptime)
             return progress.taken ? (doseEntry, progress.confirmed) : nil
         }
 
@@ -55,6 +55,13 @@ public extension MedtrumPumpManager {
 
             var events = runningTempBasal()
             events.append(contentsOf: awaitRecord(doseEntry, .completed, deliveredUnits: delivered, endedAt: endedAt ?? Date.now))
+            endBolusStallWatch(
+                doseEntry,
+                delivered: doseEntry.deliveredUnits,
+                receivedAt: receivedAt,
+                receivedUptime: receivedUptime,
+                "completed"
+            )
             state.bolusDose = nil
             state.lastSync = Date.now
             emitBolusEvents(events)
@@ -263,6 +270,13 @@ public extension MedtrumPumpManager {
             )
             var events = runningTempBasal()
             events.append(contentsOf: awaitRecord(doseEntry, .completed, deliveredUnits: delivered, endedAt: nil))
+            endBolusStallWatch(
+                doseEntry,
+                delivered: doseEntry.deliveredUnits,
+                receivedAt: receivedAt,
+                receivedUptime: receivedUptime,
+                "its completion not seen, its record written"
+            )
             state.bolusDose = nil
             state.lastSync = Date.now
             emitBolusEvents(events)
@@ -292,6 +306,15 @@ public extension MedtrumPumpManager {
 
             var events = runningTempBasal()
             events.append(contentsOf: awaitRecord(doseEntry, .completionNotSeen, endedAt: nil))
+            // How it ended is not known: a stall's warning stands
+            endBolusStallWatch(
+                doseEntry,
+                delivered: doseEntry.deliveredUnits,
+                receivedAt: receivedAt,
+                receivedUptime: receivedUptime,
+                "past its deadline",
+                endSeen: false
+            )
             // The released driver's, in flight as the app was upgraded: its record is among those it wrote before, read
             // next - uncertain only if it is not found (`finalizeFromEstimate`)
             if !Self.isReleasedDriversBolus(doseEntry, running) {
@@ -514,6 +537,15 @@ public extension MedtrumPumpManager {
                 (countsInFull ? " - forced: its patch may deliver it still, it is final in full" : "")
         )
 
+        // The session's end retracts a stall's warning (`endPatchSession`, `startPatchSession`)
+        endBolusStallWatch(
+            doseEntry,
+            delivered: doseEntry.deliveredUnits,
+            receivedAt: now(),
+            receivedUptime: uptime(),
+            "its patch session ended",
+            endSeen: false
+        )
         state.bolusDose = nil
 
         if countsInFull {

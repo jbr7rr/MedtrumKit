@@ -53,6 +53,7 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
     private var recordedErrors: [PumpManagerError] = []
     private var recordedReservoirReads: [ReservoirRead] = []
     private var recordedAlerts: [Alert] = []
+    private var recordedRetractions: [Alert.Identifier] = []
     private var recordedLogEntries: [LogEntry] = []
     private var recordedHeartbeats = 0
     private var afterSaving: ((PumpManager.RawStateValue) -> Void)?
@@ -144,6 +145,11 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
 
     var alerts: [Alert] {
         lock.withLock { recordedAlerts }
+    }
+
+    /// Every alert retracted, by its identifier, in order
+    var retractedAlerts: [Alert.Identifier] {
+        lock.withLock { recordedRetractions }
     }
 
     var logEntries: [LogEntry] {
@@ -307,7 +313,11 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
         }
     }
 
-    func retractAlert(identifier _: Alert.Identifier) {}
+    func retractAlert(identifier: Alert.Identifier) {
+        lock.withLock {
+            recordedRetractions.append(identifier)
+        }
+    }
 
     // MARK: PersistedAlertStore
 

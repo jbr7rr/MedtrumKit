@@ -1465,6 +1465,21 @@
         }
       }
     },
+    "Bolus delivery stalled" : {
+      "comment" : "Title bolus stalled notification"
+    },
+    "Check the infusion site and your glucose. If it keeps rising, replace the patch: its record will not tell whether the insulin went in." : {
+      "comment" : "uncertain delivery advice for a bolus that stalled"
+    },
+    "Delivered slowly: up to %lld s between the patch's steps, then at its pace to the end." : {
+      "comment" : "uncertain delivery cause: a bolus that stalled, then went on at the patch's pace (longest gap in seconds)"
+    },
+    "The bolus of %1$@ U has not moved past %2$@ U for %3$lld s, while the patch keeps answering. Possible occlusion: the insulin may not be going in, though the patch counts it. Check the infusion site and your glucose." : {
+      "comment" : "Body bolus stalled notification (bolus size, delivered so far, seconds without progress)"
+    },
+    "The bolus stalled: no progress for %lld s while the patch kept answering. Possible occlusion: the patch counts the insulin whether it went in or not." : {
+      "comment" : "uncertain delivery cause: a bolus that stalled (longest time without progress in seconds)"
+    },
     "×%lld" : {
 
     },

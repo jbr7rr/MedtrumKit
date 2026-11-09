@@ -18,6 +18,10 @@ enum MedtrumAlert {
     case bolusNotCounted(units: Double, at: Date)
     /// A bolus of ours final from our estimate, `counted`, whose record came after all, `delivered` - started at `at`
     case bolusMiscounted(counted: Double, delivered: Double, at: Date)
+    /// The running bolus of ours, its command sent at `sentAt`, stood still at `delivered` of `units` for `stalledFor`
+    /// while the patch kept answering - a possible occlusion it has not raised. A warning only: no pump event, nothing it
+    /// counts changed - see `MedtrumPumpManager.checkBolusStall`.
+    case bolusStalled(delivered: Double, units: Double, stalledFor: TimeInterval, sentAt: Date)
 
     var title: String? {
         switch self {
@@ -129,6 +133,12 @@ enum MedtrumAlert {
             return Alert.Identifier(
                 managerIdentifier: MedtrumAlert.managerIdentifier,
                 alertIdentifier: "com.nightscout.medtrumkit.bolus-miscounted.\(Int(at.timeIntervalSince1970))"
+            )
+        case let .bolusStalled(_, _, _, sentAt):
+            // One for each: retracted by it once the bolus went on at its pace, ended short, or the patch raised its own
+            return Alert.Identifier(
+                managerIdentifier: MedtrumAlert.managerIdentifier,
+                alertIdentifier: "com.nightscout.medtrumkit.bolus-stalled.\(Int(sentAt.timeIntervalSince1970))"
             )
         }
     }
@@ -289,6 +299,23 @@ enum MedtrumAlert {
                     at.formatted(date: .abbreviated, time: .shortened),
                     counted.rounded(toPlaces: 2).formatted(),
                     (counted - delivered).rounded(toPlaces: 2).formatted()
+                ),
+                acknowledgeActionButtonLabel: String(
+                    localized: "OK",
+                    comment: "Acknoledge alert"
+                )
+            )
+        case let .bolusStalled(delivered, units, stalledFor, _):
+            return Alert.Content(
+                title: String(localized: "Bolus delivery stalled", comment: "Title bolus stalled notification"),
+                body: String(
+                    format: String(
+                        localized: "The bolus of %1$@ U has not moved past %2$@ U for %3$lld s, while the patch keeps answering. Possible occlusion: the insulin may not be going in, though the patch counts it. Check the infusion site and your glucose.",
+                        comment: "Body bolus stalled notification (bolus size, delivered so far, seconds without progress)"
+                    ),
+                    units.rounded(toPlaces: 2).formatted(),
+                    delivered.rounded(toPlaces: 2).formatted(),
+                    Int(stalledFor)
                 ),
                 acknowledgeActionButtonLabel: String(
                     localized: "OK",

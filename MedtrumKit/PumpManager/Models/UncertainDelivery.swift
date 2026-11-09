@@ -25,6 +25,9 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
         case patchDeactivated
         /// A status showed the patch running a temp basal that is none of ours: one the app was gone before saving, say
         case unknownSegment
+        /// The running bolus stopped advancing while the patch kept answering - a possible occlusion the patch has not
+        /// raised: it counts what it was set to deliver, whether it went in or not. See `stalledFor`.
+        case stalled
     }
 
     public enum Outcome: String {
@@ -63,7 +66,8 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
     }
 
     public let kind: Kind
-    public let cause: Cause
+    /// Why. The first stays - but a stall's (`stalled`), which a later cause replaces: how the bolus ended says more
+    public internal(set) var cause: Cause
     /// When the command of its dose went out: with the kind, which dose it is
     public let sentAt: Date
     /// Units, or units per hour for a temp basal
@@ -81,6 +85,12 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
     /// A cancel's: a status showed its temp basal still running after it - told of once settled too. False in a state
     /// saved before it was kept.
     public internal(set) var cancelDidNotStop = false
+    /// A bolus's: the longest time its progress stood still while the patch kept answering, past
+    /// `MedtrumPumpManager.bolusStallThreshold` - nil, it never stalled. Kept with any cause: the first stays.
+    public internal(set) var stalledFor: TimeInterval?
+    /// A stalled bolus's: its progress went on at the patch's pace and it completed in full - delivered slowly, the
+    /// warning retracted
+    public internal(set) var stallResumed = false
 
     public init(kind: Kind, cause: Cause, sentAt: Date, amount: Double, duration: TimeInterval? = nil, notedAt: Date) {
         self.kind = kind
@@ -112,6 +122,8 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
         record = rawValue["record"] as? Int
         settledAt = rawValue["settledAt"] as? Date
         cancelDidNotStop = rawValue["cancelDidNotStop"] as? Bool ?? false
+        stalledFor = rawValue["stalledFor"] as? TimeInterval
+        stallResumed = rawValue["stallResumed"] as? Bool ?? false
     }
 
     public var rawValue: RawValue {
@@ -129,6 +141,10 @@ public struct UncertainDelivery: RawRepresentable, Equatable {
         raw["settledAt"] = settledAt
         if cancelDidNotStop {
             raw["cancelDidNotStop"] = true
+        }
+        raw["stalledFor"] = stalledFor
+        if stallResumed {
+            raw["stallResumed"] = true
         }
         return raw
     }

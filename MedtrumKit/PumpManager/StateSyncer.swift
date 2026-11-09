@@ -268,6 +268,14 @@ enum StateSyncer {
             endedTempBasal = true
         }
 
+        // A status that failed validation, or came in cut short, shows nothing - not that no bolus is delivering, nor
+        // that we are in touch with the patch
+        let isUsable = !syncResponse.invalidPayload && !syncResponse.truncated
+
+        // Whether the running bolus stalled - before the step this status carries is taken: it closes the gap since the
+        // last one
+        pumpManager.checkBolusStall(syncResponse, usable: isUsable, duringReconnect: duringReconnect, fullSync: fullSync)
+
         // Progress, from any status, is the running bolus's. A completion only from a notification: a full status
         // repeats the last bolus's completion for hours - and with no bolus running, the notification after a cancel
         // tells what the cancelled one delivered.
@@ -290,10 +298,6 @@ enum StateSyncer {
                 )
             }
         }
-
-        // A status that failed validation, or came in cut short, shows nothing - not that no bolus is delivering, nor
-        // that we are in touch with the patch
-        let isUsable = !syncResponse.invalidPayload && !syncResponse.truncated
 
         // A full status showing no bolus delivering, naming the running bolus's record written - or past its deadline:
         // we lost its end
@@ -750,12 +754,15 @@ enum StateSyncer {
         case .hourlyMaxSuspended:
             pumpManager.emitAlert(alertType: .patchHourlyMaxNotification)
         case .occlusion:
+            pumpManager.retractBolusStallAlerts(because: "the patch raised an occlusion")
             pumpManager.emitAlert(alertType: .occlusionNotification)
         case .baseFault,
              .patchFault,
              .patchFaultd2:
+            pumpManager.retractBolusStallAlerts(because: "the patch raised a fault")
             pumpManager.emitAlert(alertType: .patchFaultNotification)
         case .reservoirEmpty:
+            pumpManager.retractBolusStallAlerts(because: "the patch raised its reservoir empty")
             pumpManager.emitAlert(alertType: .reservoirEmptyNotification)
         default:
             break

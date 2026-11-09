@@ -70,6 +70,9 @@ public class MedtrumPumpManager: DeviceManager {
     /// `reportBolusFromLastRun`. Only under `doseReportLock`.
     var bolusFromLastRun: UnfinalizedDose?
 
+    /// What the stall check keeps of the running bolus - see `checkBolusStall`. Never saved. Only under `doseReportLock`.
+    var bolusStallWatch: BolusStallWatch?
+
     /// The temp basal segments none of ours is that the host was warned of in this run, by their start on the patch
     /// clock - see `noteSegmentOfNoTempBasalOfOurs`. Only under `doseReportLock`.
     var unknownTempBasalSegments: Set<Date> = []

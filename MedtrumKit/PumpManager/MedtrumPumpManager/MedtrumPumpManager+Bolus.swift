@@ -170,6 +170,8 @@ public extension MedtrumPumpManager {
             let writtenUptime = self.uptime()
             let writeResult = self.link.write(SetBolusPacket(bolusAmount: units))
             let outcome = MedtrumCommandOutcome(writeResult)
+            // Where an answered bolus's progress is judged from (`checkBolusStall`)
+            let answeredUptime = self.uptime()
 
             var writeError: MedtrumWriteError?
             if case let .failure(error) = writeResult {
@@ -226,6 +228,10 @@ public extension MedtrumPumpManager {
                 }
                 self.state.bolusDose = doseEntry
                 self.state.pendingBolus = nil
+                // Known to run: watched for a stall from its answer on. One unanswered is once a step confirms it.
+                if outcome == .accepted {
+                    self.startBolusStallWatch(doseEntry, answeredUptime: answeredUptime)
+                }
                 self.emitPumpEvents([NewPumpEvent.bolus(unfinalizedDose: doseEntry)], replacePendingEvents: false)
                 defer { self.earlyBolusCompletion = nil }
                 return (true, self.earlyBolusCompletion)
@@ -434,6 +440,13 @@ public extension MedtrumPumpManager {
 
                 var events = self.runningTempBasal()
                 events.append(contentsOf: self.awaitRecord(doseEntry, .cancelled, endedAt: Date.now))
+                self.endBolusStallWatch(
+                    doseEntry,
+                    delivered: doseEntry.deliveredUnits,
+                    receivedAt: self.now(),
+                    receivedUptime: self.uptime(),
+                    "cancelled"
+                )
                 self.state.bolusDose = nil
                 self.state.lastSync = Date.now
                 self.emitBolusEvents(events)

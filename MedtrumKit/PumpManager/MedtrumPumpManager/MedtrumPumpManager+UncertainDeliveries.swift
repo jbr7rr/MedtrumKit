@@ -5,8 +5,9 @@ public extension MedtrumPumpManager {
     internal static let uncertainDeliveriesKept = 20
 
     /// `dose` became uncertain, as `kind` - for the settings screen, see `UncertainDelivery`. Once per dose and kind: the
-    /// first cause stays. A cancel's note noted again is for a later cancel: its `cancelDidNotStop` is cleared, that
-    /// cancel's own still to be shown. Only under `doseReportLock`.
+    /// first cause stays - but a stall's, which a later cause replaces, its `stalledFor` kept. A cancel's note noted again
+    /// is for a later cancel: its `cancelDidNotStop` is cleared, that cancel's own still to be shown. Only under
+    /// `doseReportLock`.
     internal func noteUncertainDelivery(_ kind: UncertainDelivery.Kind, _ cause: UncertainDelivery.Cause, of dose: UnfinalizedDose) {
         // Final, nothing would settle it
         guard !dose.isFinalized else {
@@ -28,6 +29,10 @@ public extension MedtrumPumpManager {
                 // running marks it again (`noteCancelDidNotStop`), so the settled note tells of the last cancel
                 if kind == .tempBasalCancel {
                     deliveries[index].cancelDidNotStop = false
+                }
+                // A stalled bolus whose end was then not seen, or whose session ended under it: that says more
+                if deliveries[index].cause == .stalled, cause != .stalled {
+                    deliveries[index].cause = cause
                 }
                 return
             }
@@ -70,6 +75,33 @@ public extension MedtrumPumpManager {
                 where deliveries[index].kind == .tempBasalCancel && !deliveries[index].isSettled && deliveries[index].isOf(key)
             {
                 deliveries[index].cancelDidNotStop = true
+            }
+        }
+    }
+
+    /// The running bolus `dose` stood still for `stalledFor` while the patch kept answering - see `checkBolusStall`: noted
+    /// as stalled, or its note of another cause says so too - the longest it stood still. Only under `doseReportLock`.
+    internal func noteBolusStalled(_ dose: UnfinalizedDose, for stalledFor: TimeInterval) {
+        noteUncertainDelivery(.bolus, .stalled, of: dose)
+        let key = UncertainDelivery.DoseKey(dose)
+        state.mutateUncertainDeliveries { deliveries in
+            for index in deliveries.indices
+                where deliveries[index].kind == .bolus && !deliveries[index].isSettled && deliveries[index].isOf(key)
+            {
+                deliveries[index].stalledFor = max(deliveries[index].stalledFor ?? 0, stalledFor)
+            }
+        }
+    }
+
+    /// The stalled bolus `dose` went on at the patch's pace and completed in full: delivered slowly. Settled or not - its
+    /// record may be in. Only under `doseReportLock`.
+    internal func noteBolusStallResumed(_ dose: UnfinalizedDose) {
+        let key = UncertainDelivery.DoseKey(dose)
+        state.mutateUncertainDeliveries { deliveries in
+            for index in deliveries.indices
+                where deliveries[index].kind == .bolus && deliveries[index].stalledFor != nil && deliveries[index].isOf(key)
+            {
+                deliveries[index].stallResumed = true
             }
         }
     }

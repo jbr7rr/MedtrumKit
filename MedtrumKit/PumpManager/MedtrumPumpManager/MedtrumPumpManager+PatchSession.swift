@@ -343,6 +343,7 @@ public extension MedtrumPumpManager {
                 releaseHeldForTheSessionEnd()
                 events.append(contentsOf: finalizedTempBasal(endedAt: start))
                 events.append(contentsOf: finalizeInterruptedBolus())
+                retractBolusStallAlerts(because: "a new patch was activated")
                 events.append(contentsOf: finalizeAllAwaitingDoses(because: "a new patch was activated"))
             } else {
                 // Ended, the session finalized every dose of it then, and the state taken up with none any left: a
@@ -455,6 +456,16 @@ public extension MedtrumPumpManager {
     /// them - or, as the state is taken up, they go out with the first batch.
     internal func finalizeBolusesLeftByTheEndedSession() -> [NewPumpEvent] {
         let left = ([state.bolusDose].compactMap { $0 } + state.awaitingRecord).filter { $0.type == .bolus && !$0.isFinalized }
+        if let running = state.bolusDose {
+            endBolusStallWatch(
+                running,
+                delivered: running.deliveredUnits,
+                receivedAt: now(),
+                receivedUptime: uptime(),
+                "its patch session ended",
+                endSeen: false
+            )
+        }
         state.bolusDose = nil
         var events: [NewPumpEvent] = []
         for dose in left {
@@ -500,6 +511,8 @@ public extension MedtrumPumpManager {
 
         var events = finalizedTempBasal(endedAt: stoppedAt)
         events.append(contentsOf: finalizeInterruptedBolus(countsInFull: forced))
+        // Over with their patch: deactivated, forced off, or its base reset
+        retractBolusStallAlerts(because: "the patch session ended")
         events.append(contentsOf: finalizeAllAwaitingDoses(because: "the patch session ended"))
         if !hasStopped {
             var suspendStart = stoppedAt
