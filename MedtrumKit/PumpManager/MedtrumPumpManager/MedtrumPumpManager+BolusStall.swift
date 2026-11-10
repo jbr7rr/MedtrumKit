@@ -80,20 +80,21 @@ extension MedtrumPumpManager {
     /// `bolusStallThreshold` while the patch kept answering, the link up: it stalled. Warned of once. Judged on the
     /// status's receipt, on the monotonic clock: statuses are handled on different queues. Not on one of a reconnect -
     /// the link was gone - nor after a silence of `bolusLinkSilence`, nor on the first status after a restart: from it on.
+    /// Warned of under the dose lock, in order with the retraction an end of the bolus sends - see `emitStallWarning`.
     internal func checkBolusStall(_ status: SynchronizePacketResponse, usable: Bool, duringReconnect: Bool, fullSync: Bool) {
         let receivedUptime = status.receivedUptime
 
-        let warning = doseReportLock.withLock { () -> MedtrumAlert? in
+        doseReportLock.withLock {
             guard let dose = state.bolusDose else {
                 bolusStallWatch = nil
-                return nil
+                return
             }
             let running = dose.snapshot
             // Not one to judge - yet - nor a status that is evidence of anything
             guard usable, !running.isFinished, running.confirmation == .confirmed,
                   !Self.statusPredatesCommand(of: running, receivedAt: status.receivedAt, receivedUptime: receivedUptime)
             else {
-                return nil
+                return
             }
 
             guard var watch = bolusStallWatch, watch.dose === dose else {
@@ -106,11 +107,11 @@ extension MedtrumPumpManager {
                     stalled: isNotedStalled(dose),
                     silenced: isBolusStallSilenced(dose)
                 )
-                return nil
+                return
             }
             defer { bolusStallWatch = watch }
             guard !watch.silenced else {
-                return nil
+                return
             }
 
             // The link was down before this, or the patch halted - its own alarm tells: from here on
@@ -122,7 +123,7 @@ extension MedtrumPumpManager {
                 }
                 watch.judgedFrom = receivedUptime
                 watch.statusesSinceStep = 0
-                return nil
+                return
             }
 
             let lastStep = running.lastProgressUnits ?? running.deliveredUnits
@@ -134,24 +135,22 @@ extension MedtrumPumpManager {
             let judged = RecordSyncer.steps(dose.value) >= RecordSyncer.steps(Self.bolusStallMinimumUnits) &&
                 RecordSyncer.steps(lastStep) < RecordSyncer.steps(dose.value)
 
-            var alert: MedtrumAlert?
             if judged, gap > Self.bolusStallThreshold {
                 noteBolusStalled(dose, for: gap)
                 if !watch.stalled {
                     watch.stalled = true
-                    let key = UncertainDelivery.DoseKey(dose)
-                    alert = .bolusStalled(delivered: lastStep, units: dose.value, stalledFor: gap, sentAt: key.sentAt)
                     log.warning(
                         "Bolus stalled: no progress past \(lastStep) U of \(dose.value) U for \(Int(gap)) s, the patch " +
                             "answering (\(watch.statusesSinceStep) statuses since the last step\(closes ? ", this one a step" : "")) " +
                             "- possible occlusion. Warned of; counted as before"
                     )
+                    emitStallWarning(.bolusStalled(delivered: lastStep, units: dose.value, stalledFor: gap), of: dose)
                 }
             }
 
             guard closes else {
                 watch.statusesSinceStep += 1
-                return alert
+                return
             }
             if gap > Self.bolusSlowStepGap {
                 log.info(
@@ -164,11 +163,6 @@ extension MedtrumPumpManager {
                 watch.stepsAtPaceSinceStall = gap <= Self.bolusSlowStepGap ? watch.stepsAtPaceSinceStall + 1 : 0
             }
             watch.statusesSinceStep = 0
-            return alert
-        }
-
-        if let warning {
-            emitAlert(alertType: warning)
         }
     }
 
@@ -210,12 +204,11 @@ extension MedtrumPumpManager {
             log.warning("The stalled bolus of \(dose.startDate) ended unseen - \(ending): its warning stands")
             return
         }
-        let key = UncertainDelivery.DoseKey(dose)
         guard RecordSyncer.steps(delivered) >= RecordSyncer.steps(dose.value) else {
             log.info(
                 "The stalled bolus of \(dose.startDate) ended short, at \(delivered) U: its warning retracted, the end tells"
             )
-            retractBolusStallAlert(sentAt: key.sentAt)
+            retractBolusStallAlert()
             return
         }
         guard let watch, watch.stepsAtPaceSinceStall >= Self.bolusStallResumeSteps else {
@@ -230,36 +223,56 @@ extension MedtrumPumpManager {
                 "its warning retracted"
         )
         noteBolusStallResumed(dose)
-        retractBolusStallAlert(sentAt: key.sentAt)
+        retractBolusStallAlert()
     }
 
     /// The patch raised its own alarm - an occlusion, a fault, its reservoir empty - or its session ended, the patch
     /// deactivated or replaced: that tells of the boluses warned of as stalled better, or they are over with their patch.
-    /// Their warnings are retracted, and the running bolus, if any - or the pending one - is not warned of from here on:
-    /// by the watch there is, and by its `sentAt` for one built later (`bolusStallSilencedSentAt`). In one step with the
-    /// stall check: it takes the dose lock - recursive, so a caller may hold it.
+    /// Their warning is retracted - one identifier for all - and the running bolus, if any - or the pending one - is not
+    /// warned of from here on: by the watch there is, and by its `sentAt` for one built later (`bolusStallSilencedSentAt`).
+    /// In one step with the stall check: it takes the dose lock - recursive, so a caller may hold it.
     internal func retractBolusStallAlerts(because reason: String) {
-        let stalled = doseReportLock.withLock { () -> [UncertainDelivery] in
+        let stalled = doseReportLock.withLock { () -> Int in
             bolusStallWatch?.silenced = true
             if let sentAt = state.bolusDose.map({ UncertainDelivery.DoseKey($0).sentAt }) ?? state.pendingBolus?.sentAt {
                 bolusStallSilencedSentAt = sentAt
             }
-            return state.uncertainDeliveries.filter { $0.kind == .bolus && $0.stalledFor != nil && !$0.stallResumed }
+            return stallWarningsNoted
         }
-        guard !stalled.isEmpty else {
+        guard stalled > 0 else {
             return
         }
-        log.info("Stall warnings of \(stalled.count) bolus(es) retracted: \(reason)")
-        for delivery in stalled {
-            retractBolusStallAlert(sentAt: delivery.sentAt)
+        log.info("The stall warning retracted, \(stalled) bolus(es) noted stalled: \(reason)")
+        retractBolusStallAlert()
+    }
+
+    private func retractBolusStallAlert() {
+        pumpDelegate.notify { delegate in
+            delegate?.retractAlert(identifier: MedtrumAlert.bolusStalledIdentifier)
         }
     }
 
-    private func retractBolusStallAlert(sentAt: Date) {
-        let identifier = MedtrumAlert.bolusStalled(delivered: 0, units: 0, stalledFor: 0, sentAt: sentAt).alert.identifier
-        pumpDelegate.notify { delegate in
-            delegate?.retractAlert(identifier: identifier)
+    /// `warning`, of `dose`, goes to the host - its pump event with it. A warning of a bolus before it may stand - one that
+    /// completed in full stalled stays warned of, through the SMBs and boluses after it - under the same identifier: it
+    /// is retracted first, in the same delegate block, the new one issued right after. Trio drops the same identifier
+    /// issued again within 5 min unless it was retracted first. Told by the notes - a stalled bolus other than `dose`
+    /// not delivered slowly - and retracted again if it was already: harmless. Under `doseReportLock`: an end of the
+    /// bolus that retracts its warning (`endBolusStallWatch`) reaches the delegate queue after it, not before.
+    private func emitStallWarning(_ warning: MedtrumAlert, of dose: UnfinalizedDose) {
+        let key = UncertainDelivery.DoseKey(dose)
+        let replacing = state.uncertainDeliveries.contains {
+            $0.kind == .bolus && $0.stalledFor != nil && !$0.stallResumed && !$0.isOf(key)
         }
+        if replacing {
+            log.info("The stall warning of a bolus before it retracted, to be issued again")
+        }
+        emitAlert(alertType: warning, retractingFirst: replacing)
+    }
+
+    /// The boluses noted stalled, not delivered slowly - their warning standing, or retracted since for their end or an
+    /// alarm of the patch's. Only under `doseReportLock`.
+    private var stallWarningsNoted: Int {
+        state.uncertainDeliveries.filter { $0.kind == .bolus && $0.stalledFor != nil && !$0.stallResumed }.count
     }
 
     /// Whether the patch's alarm, or its session's end, came for `dose` - see `bolusStallSilencedSentAt`

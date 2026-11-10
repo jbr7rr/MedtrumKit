@@ -83,15 +83,18 @@ public extension NewPumpEvent {
         )
     }
 
-    internal static func alert(type: MedtrumAlert) -> NewPumpEvent? {
+    /// An alarm of `type` raised at `date` - nil for an alert that is none. Each its own event: its `raw` carries its date
+    /// as well as its title. Loop keeps one pump event per `raw` and iAPS keys them by its hash - by its title alone,
+    /// every alarm of a kind would be the first one to the host, a later one merged into it or dropped.
+    internal static func alert(type: MedtrumAlert, date: Date = Date.now) -> NewPumpEvent? {
         guard let alertTitle = type.title, let alertType = type.type else {
             return nil
         }
 
         return NewPumpEvent(
-            date: Date.now,
+            date: date,
             dose: nil,
-            raw: alertTitle.data(using: .utf8) ?? Data([]),
+            raw: "\(alertTitle) \(Int(date.timeIntervalSince1970))".data(using: .utf8) ?? Data([]),
             title: alertTitle,
             type: .alarm,
             alarmType: alertType

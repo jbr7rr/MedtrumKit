@@ -54,6 +54,7 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
     private var recordedReservoirReads: [ReservoirRead] = []
     private var recordedAlerts: [Alert] = []
     private var recordedRetractions: [Alert.Identifier] = []
+    private var recordedAlertActions: [AlertAction] = []
     private var recordedLogEntries: [LogEntry] = []
     private var recordedHeartbeats = 0
     private var afterSaving: ((PumpManager.RawStateValue) -> Void)?
@@ -150,6 +151,17 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
     /// Every alert retracted, by its identifier, in order
     var retractedAlerts: [Alert.Identifier] {
         lock.withLock { recordedRetractions }
+    }
+
+    /// An alert issued or retracted
+    enum AlertAction: Equatable {
+        case issued(Alert.Identifier)
+        case retracted(Alert.Identifier)
+    }
+
+    /// Every alert issued and retracted, in the order they came
+    var alertActions: [AlertAction] {
+        lock.withLock { recordedAlertActions }
     }
 
     var logEntries: [LogEntry] {
@@ -310,12 +322,14 @@ final class FakePumpManagerDelegate: PumpManagerDelegate {
     func issueAlert(_ alert: Alert) {
         lock.withLock {
             recordedAlerts.append(alert)
+            recordedAlertActions.append(.issued(alert.identifier))
         }
     }
 
     func retractAlert(identifier: Alert.Identifier) {
         lock.withLock {
             recordedRetractions.append(identifier)
+            recordedAlertActions.append(.retracted(identifier))
         }
     }
 

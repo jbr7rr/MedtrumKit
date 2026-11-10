@@ -37,9 +37,15 @@ public extension MedtrumPumpManager {
         }
     }
 
-    internal func emitAlert(alertType: MedtrumAlert) {
+    /// `alertType` issued, and its pump event, if it has one. `retractingFirst`: the same identifier retracted just
+    /// before, in the same block - a host that throttles an identifier issued again takes it as new.
+    internal func emitAlert(alertType: MedtrumAlert, retractingFirst: Bool = false) {
+        let alert = alertType.alert
         pumpDelegate.notify { delegate in
-            delegate?.issueAlert(alertType.alert)
+            if retractingFirst {
+                delegate?.retractAlert(identifier: alert.identifier)
+            }
+            delegate?.issueAlert(alert)
 
             if let pumpEvent = NewPumpEvent.alert(type: alertType) {
                 delegate?.pumpManager(

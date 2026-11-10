@@ -35,14 +35,22 @@ extension ManagerBolusScenarioTests {
         (190, 4.8), (194, 4.9), (198, 5)
     ]
 
-    private static let stallAlertPrefix = "com.nightscout.medtrumkit.bolus-stalled."
+    private static let stallAlertIdentifier = Alert.Identifier(
+        managerIdentifier: "Medtrum",
+        alertIdentifier: "com.nightscout.medtrumkit.bolus-stalled"
+    )
 
     private var stallAlerts: [Alert] {
-        delegate.alerts.filter { $0.identifier.alertIdentifier.hasPrefix(Self.stallAlertPrefix) }
+        delegate.alerts.filter { $0.identifier.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-stalled") }
     }
 
     private var stallRetractions: [Alert.Identifier] {
-        delegate.retractedAlerts.filter { $0.alertIdentifier.hasPrefix(Self.stallAlertPrefix) }
+        delegate.retractedAlerts.filter { $0.alertIdentifier.hasPrefix("com.nightscout.medtrumkit.bolus-stalled") }
+    }
+
+    /// The pump events of the stall warnings the host was handed, in order
+    private var stallEvents: [NewPumpEvent] {
+        delegate.batches.flatMap(\.events).filter { $0.type == .alarm && $0.alarmType == .other("Bolus delivery stalled") }
     }
 
     private var stallNote: UncertainDelivery? {
@@ -127,14 +135,18 @@ extension ManagerBolusScenarioTests {
 
         XCTAssertEqual(replay(Self.stalledBolus), [171])
         let alert = try XCTUnwrap(stallAlerts.first)
+        XCTAssertEqual(alert.identifier, Self.stallAlertIdentifier, "fixed: a host's catalog gives it its tone")
+        XCTAssertEqual(alert.interruptionLevel, .critical, "not muted by a snooze: the patch raises nothing for it")
         XCTAssertEqual(alert.foregroundContent?.title, "Bolus delivery stalled")
         // In the locale the alert is formatted in
         XCTAssertTrue(alert.foregroundContent?.body.contains(3.5.formatted()) == true, alert.foregroundContent?.body ?? "-")
         XCTAssertTrue(alert.foregroundContent?.body.contains("32 s") == true, alert.foregroundContent?.body ?? "-")
         XCTAssertEqual(pumpManager.state.bolusState, .inProgress, "a warning only")
-        // No pump event: a retracted warning leaves nothing behind in the history
-        XCTAssertTrue(delegate.batches.flatMap(\.events).filter { $0.type == .alarm }.isEmpty)
-        XCTAssertNil(NewPumpEvent.alert(type: .bolusStalled(delivered: 3.5, units: 5, stalledFor: 32, sentAt: Date.now)))
+        // A pump event with the warning - for caregivers too - the only alarm
+        XCTAssertEqual(delegate.batches.flatMap(\.events).filter { $0.type == .alarm }.count, 1)
+        let event = try XCTUnwrap(stallEvents.first)
+        XCTAssertEqual(event.title, "Alert: Bolus stalled")
+        XCTAssertNil(event.dose)
         XCTAssertEqual(reports(of: .bolus).last?.programmedUnits ?? 0, 5.0, accuracy: 0.001)
 
         let note = try XCTUnwrap(stallNote)
@@ -146,6 +158,7 @@ extension ManagerBolusScenarioTests {
         XCTAssertNil(pumpManager.state.bolusDose)
         XCTAssertEqual(stallAlerts.count, 1)
         XCTAssertEqual(stallRetractions, [], "completed in full, never at the patch's pace again")
+        XCTAssertEqual(stallEvents.count, 1, "not again for the same bolus")
         XCTAssertEqual(stallNote?.stallResumed, false)
         XCTAssertEqual(reports(of: .bolus).last?.deliveredUnits ?? 0, 5.0, accuracy: 0.001, "counted as the patch says")
     }
@@ -263,6 +276,7 @@ extension ManagerBolusScenarioTests {
 
         XCTAssertEqual(stallAlerts.count, 1)
         XCTAssertEqual(stallRetractions, stallAlerts.map(\.identifier))
+        XCTAssertEqual(stallEvents.count, 1, "the record that a stall was seen: none on its retraction, none taken back")
         let note = try XCTUnwrap(stallNote)
         XCTAssertTrue(note.stallResumed)
         XCTAssertEqual(note.stalledFor ?? 0, 34, accuracy: 1)
@@ -314,6 +328,7 @@ extension ManagerBolusScenarioTests {
             delegate.alerts.last?.identifier.alertIdentifier,
             MedtrumAlert.occlusionNotification.alert.identifier.alertIdentifier
         )
+        XCTAssertEqual(delegate.alerts.last?.interruptionLevel, .timeSensitive, "the stall's alone is critical")
     }
 
     /// The patch raised its own occlusion alarm before any stall was seen: the running bolus is not warned of after it,
@@ -440,8 +455,73 @@ extension ManagerBolusScenarioTests {
         XCTAssertEqual(stallAlerts.count, 1, "judged again once heard from")
     }
 
-    /// Two boluses stalled: two warnings, each its own - retracting one leaves the other
-    func testEachStalledBolusIsWarnedOfOnItsOwn() {
+    /// Stalled, completed in full: its warning stands through an SMB and a normal bolus after it - neither retracts it,
+    /// the user asleep still sees it
+    func testAStandingStallWarningSurvivesTheBolusesAfterIt() {
+        makeBolusManager()
+        startBolus(1.0)
+        steps(from: 0, to: 0.3, every: 4)
+        advanceClock(by: 30)
+        notifyNoProgress()
+        notifyCompletion(1.0)
+        XCTAssertEqual(stallAlerts.count, 1)
+
+        // A dose's identity is its start to the second
+        Thread.sleep(forTimeInterval: 1.05)
+        advanceClock(by: 5 * Self.minute)
+        startBolus(0.2, record: 124)
+        notifyProgress(0.1)
+        advanceClock(by: 4)
+        notifyCompletion(0.2)
+
+        Thread.sleep(forTimeInterval: 1.05)
+        advanceClock(by: Self.minute)
+        startBolus(2.0, record: 125)
+        steps(from: 0, to: 1.9, every: 4)
+        advanceClock(by: 4)
+        notifyCompletion(2.0)
+
+        XCTAssertNil(pumpManager.state.bolusDose)
+        XCTAssertEqual(stallRetractions, [], "still warned of")
+        XCTAssertEqual(stallAlerts.count, 1)
+        XCTAssertEqual(stallEvents.count, 1)
+    }
+
+    /// Two boluses stalled into the same blocked line: the first completed in full stalled, its warning standing. The
+    /// second's stall retracts it just before it is issued again - Trio drops the same identifier issued again within
+    /// 5 min unless it was retracted - with a pump event of its own.
+    func testAStallOfALaterBolusRetractsTheStandingWarningThenIssuesItAgain() {
+        makeBolusManager()
+        startBolus(1.0)
+        steps(from: 0, to: 0.3, every: 4)
+        advanceClock(by: 30)
+        notifyNoProgress()
+        notifyCompletion(1.0)
+        XCTAssertEqual(stallRetractions, [], "completed in full stalled: still warned of")
+
+        // A dose's identity is its start to the second
+        Thread.sleep(forTimeInterval: 1.05)
+        startBolus(1.0, record: 124)
+        steps(from: 0, to: 0.3, every: 4)
+        XCTAssertEqual(stallRetractions, [], "not as it starts")
+        advanceClock(by: 30)
+        notifyNoProgress()
+
+        let stall = Self.stallAlertIdentifier
+        XCTAssertEqual(
+            delegate.alertActions.filter { $0 == .issued(stall) || $0 == .retracted(stall) },
+            [.issued(stall), .retracted(stall), .issued(stall)],
+            "retracted just before it is issued again"
+        )
+        XCTAssertEqual(stallAlerts.count, 2)
+        XCTAssertEqual(stallEvents.count, 2)
+        XCTAssertEqual(Set(stallEvents.map(\.raw)).count, 2, "two events to the host, not one")
+        XCTAssertEqual(pumpManager.state.uncertainDeliveries.filter { $0.cause == .stalled }.count, 2)
+    }
+
+    /// The later bolus's answer lost, watched once a step confirms it: its stall retracts the standing warning and
+    /// issues it again all the same
+    func testAStallOfALaterBolusConfirmedByAStepIssuesTheWarningAgain() {
         makeBolusManager()
         startBolus(1.0)
         steps(from: 0, to: 0.3, every: 4)
@@ -449,15 +529,58 @@ extension ManagerBolusScenarioTests {
         notifyNoProgress()
         notifyCompletion(1.0)
 
-        // A dose's identity is its start to the second
         Thread.sleep(forTimeInterval: 1.05)
-        startBolus(1.0, record: 124)
+        link.script(CommandType.SET_BOLUS, .timeout)
+        XCTAssertTrue(isUncertainDelivery(commandBolus(1.0)))
+        settle()
         steps(from: 0, to: 0.3, every: 4)
+        XCTAssertEqual(stallRetractions, [])
         advanceClock(by: 30)
         notifyNoProgress()
 
+        XCTAssertEqual(stallRetractions, [Self.stallAlertIdentifier])
         XCTAssertEqual(stallAlerts.count, 2)
-        XCTAssertEqual(Set(stallAlerts.map(\.identifier.alertIdentifier)).count, 2, "one identifier per bolus")
-        XCTAssertEqual(pumpManager.state.uncertainDeliveries.filter { $0.cause == .stalled }.count, 2)
+        XCTAssertEqual(stallEvents.count, 2)
+    }
+
+    /// Stalled, the app restarted: the watch rebuilt for the same bolus leaves its warning standing
+    func testARestartDoesNotRetractTheStallWarningOfTheRunningBolus() throws {
+        makeBolusManager()
+        startBolus(3.0)
+        steps(from: 0, to: 0.5, every: 4)
+        advanceClock(by: 30)
+        notifyNoProgress()
+        XCTAssertEqual(stallAlerts.count, 1)
+
+        try restart(from: delegate.savedState)
+        pumpManager.state.isConnected = true
+        advanceClock(by: 4)
+        notifyProgress(0.6)
+        advanceClock(by: 4)
+        notifyProgress(0.7)
+
+        XCTAssertNotNil(pumpManager.bolusStallWatch)
+        XCTAssertEqual(stallRetractions, [])
+        // A new host since the restart: what it was handed
+        XCTAssertEqual(stallAlerts.count, 0, "warned of in the run before: not again")
+        XCTAssertTrue(stallEvents.isEmpty)
+    }
+
+    /// Two alarms of one kind at different times are two pump events: Loop keeps one per `raw`, iAPS keys them by it
+    func testAlarmEventsOfOneKindAreEachTheirOwn() throws {
+        let first = Date(timeIntervalSince1970: 1_800_000_000)
+        let later = first.addingTimeInterval(3 * 86400)
+        let occlusion = try XCTUnwrap(NewPumpEvent.alert(type: .occlusionNotification, date: first))
+        let again = try XCTUnwrap(NewPumpEvent.alert(type: .occlusionNotification, date: later))
+
+        XCTAssertNotEqual(occlusion.raw, again.raw)
+        XCTAssertEqual(occlusion.date, first)
+        XCTAssertEqual(occlusion.raw, NewPumpEvent.alert(type: .occlusionNotification, date: first)?.raw, "the same occurrence")
+        XCTAssertEqual(occlusion.alarmType, .occlusion)
+
+        let stall = try XCTUnwrap(NewPumpEvent.alert(type: .bolusStalled(delivered: 3.5, units: 5, stalledFor: 32), date: first))
+        XCTAssertEqual(stall.alarmType, .other("Bolus delivery stalled"))
+        XCTAssertNotEqual(stall.raw, occlusion.raw)
+        XCTAssertNil(NewPumpEvent.alert(type: .lowReservoir(level: 20), date: first), "a warning, not an alarm")
     }
 }

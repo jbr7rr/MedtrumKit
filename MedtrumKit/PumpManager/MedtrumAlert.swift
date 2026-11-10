@@ -18,10 +18,11 @@ enum MedtrumAlert {
     case bolusNotCounted(units: Double, at: Date)
     /// A bolus of ours final from our estimate, `counted`, whose record came after all, `delivered` - started at `at`
     case bolusMiscounted(counted: Double, delivered: Double, at: Date)
-    /// The running bolus of ours, its command sent at `sentAt`, stood still at `delivered` of `units` for `stalledFor`
-    /// while the patch kept answering - a possible occlusion it has not raised. A warning only: no pump event, nothing it
-    /// counts changed - see `MedtrumPumpManager.checkBolusStall`.
-    case bolusStalled(delivered: Double, units: Double, stalledFor: TimeInterval, sentAt: Date)
+    /// The running bolus of ours stood still at `delivered` of `units` for `stalledFor` while the patch kept answering -
+    /// a possible occlusion it has not raised. A warning, critical: the patch raises nothing for it. Goes out with a pump
+    /// event, the record that a stall was seen - for caregivers too - kept if the bolus recovers. Nothing it counts
+    /// changed - see `MedtrumPumpManager.checkBolusStall`.
+    case bolusStalled(delivered: Double, units: Double, stalledFor: TimeInterval)
 
     var title: String? {
         switch self {
@@ -37,6 +38,8 @@ enum MedtrumAlert {
             return String(localized: "Alert: Reservoir empty", comment: "alert reservoir empty")
         case .baseResetNotification:
             return String(localized: "Alert: Pump base restarted", comment: "alert pump base reset")
+        case .bolusStalled:
+            return String(localized: "Alert: Bolus stalled", comment: "alert bolus stalled")
         default:
             return nil
         }
@@ -53,6 +56,8 @@ enum MedtrumAlert {
             return .occlusion
         case .reservoirEmptyNotification:
             return .noInsulin
+        case .bolusStalled:
+            return .other("Bolus delivery stalled")
         default:
             return nil
         }
@@ -65,10 +70,31 @@ enum MedtrumAlert {
             foregroundContent: content,
             backgroundContent: content,
             trigger: trigger,
+            interruptionLevel: interruptionLevel,
         )
     }
 
+    /// A stall is what the patch raises nothing for: not to be muted - Trio mutes every alert below critical while
+    /// snoozed
+    private var interruptionLevel: Alert.InterruptionLevel {
+        switch self {
+        case .bolusStalled:
+            return .critical
+        default:
+            return .timeSensitive
+        }
+    }
+
     private static let managerIdentifier = "Medtrum"
+
+    /// The stall warning's, fixed: a host gives an alert its tone by its identifier (Trio's alert catalog), and one
+    /// bolus runs at a time. Retracted once the bolus went on at its pace, ended short, or the patch raised its own. One
+    /// that completed in full stalled stays warned of until a later bolus stalls: retracted just before that one's is
+    /// issued - Trio drops the same identifier issued again within 5 min unless it was retracted first.
+    static let bolusStalledIdentifier = Alert.Identifier(
+        managerIdentifier: MedtrumAlert.managerIdentifier,
+        alertIdentifier: "com.nightscout.medtrumkit.bolus-stalled"
+    )
     private var identifier: Alert.Identifier {
         switch self {
         case .patchExpiredNotification:
@@ -134,12 +160,8 @@ enum MedtrumAlert {
                 managerIdentifier: MedtrumAlert.managerIdentifier,
                 alertIdentifier: "com.nightscout.medtrumkit.bolus-miscounted.\(Int(at.timeIntervalSince1970))"
             )
-        case let .bolusStalled(_, _, _, sentAt):
-            // One for each: retracted by it once the bolus went on at its pace, ended short, or the patch raised its own
-            return Alert.Identifier(
-                managerIdentifier: MedtrumAlert.managerIdentifier,
-                alertIdentifier: "com.nightscout.medtrumkit.bolus-stalled.\(Int(sentAt.timeIntervalSince1970))"
-            )
+        case .bolusStalled:
+            return MedtrumAlert.bolusStalledIdentifier
         }
     }
 
@@ -305,7 +327,7 @@ enum MedtrumAlert {
                     comment: "Acknoledge alert"
                 )
             )
-        case let .bolusStalled(delivered, units, stalledFor, _):
+        case let .bolusStalled(delivered, units, stalledFor):
             return Alert.Content(
                 title: String(localized: "Bolus delivery stalled", comment: "Title bolus stalled notification"),
                 body: String(
