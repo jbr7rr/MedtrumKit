@@ -5985,6 +5985,12 @@
         }
       }
     },
+    "Allow camera access in Settings to scan the serial number, or type it in instead." : {
+
+    },
+    "Another app is using the camera, or the phone needs a moment. Try again shortly, or type the serial number in instead." : {
+
+    },
     "APPLY PATCH" : {
 
     },
@@ -8262,6 +8268,12 @@
           }
         }
       }
+    },
+    "Camera Access Is Off" : {
+
+    },
+    "Camera Is Busy" : {
+
     },
     "Cancel" : {
       "comment" : "cancel force remove",
@@ -14931,6 +14943,9 @@
         }
       }
     },
+    "Find it on the back of the pump base, or on the product box." : {
+
+    },
     "Fold down and break the tab of the patch, then push the pump base up from the bottom to remove it." : {
 
     },
@@ -16241,6 +16256,9 @@
           }
         }
       }
+    },
+    "Illustration of the pump base, showing the serial number sticker on its back." : {
+
     },
     "Information" : {
       "comment" : "The title for patch/pump information",
@@ -22414,6 +22432,9 @@
 
     },
     "Once the patch is off your skin, do not press the needle button again. Doing so will result in injury." : {
+
+    },
+    "Open Settings" : {
 
     },
     "Patch activation" : {
@@ -30700,6 +30721,9 @@
           }
         }
       }
+    },
+    "Scan Serial Number" : {
+
     },
     "Scheduled Basal" : {
       "comment" : "Title of insulin delivery section",
