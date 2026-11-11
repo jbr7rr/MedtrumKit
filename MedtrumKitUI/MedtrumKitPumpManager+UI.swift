@@ -87,7 +87,7 @@ extension MedtrumPumpManager: PumpManagerUI {
                 imageName: "exclamationmark.circle.fill",
                 state: .critical
             )
-        } else if state.pumpState.isSuspended || state.pumpState.isTerminated {
+        } else if state.pumpState.isTerminated {
             return PumpStatusHighlight(
                 localizedMessage: String(
                     localized: "Patch Error",
@@ -96,15 +96,29 @@ extension MedtrumPumpManager: PumpManagerUI {
                 imageName: "exclamationmark.circle.fill",
                 state: .critical
             )
-        } else if state.basalDose.type == .suspend {
-            return PumpStatusHighlight(
-                localizedMessage: String(
-                    localized: "Insulin Suspended",
-                    comment: "Status highlight that insulin delivery was suspended."
-                ),
-                imageName: "pause.circle.fill",
-                state: .warning
-            )
+        } else if state.pumpState.isSuspended || state.basalDose.type == .suspend {
+            switch state.pumpState {
+            case .autoSuspended,
+                 .dailyMaxSuspended,
+                 .hourlyMaxSuspended,
+                 .lowBgSuspended,
+                 .lowBgSuspended2:
+                // Suspended by the patch itself, show the reason
+                return PumpStatusHighlight(
+                    localizedMessage: state.pumpState.description,
+                    imageName: "pause.circle.fill",
+                    state: .warning
+                )
+            default:
+                return PumpStatusHighlight(
+                    localizedMessage: String(
+                        localized: "Insulin Suspended",
+                        comment: "Status highlight that insulin delivery was suspended."
+                    ),
+                    imageName: "pause.circle.fill",
+                    state: .warning
+                )
+            }
         } else if state.expiryMode == .extended, let expiresAt = state.patchExpiresAt, Date.now > expiresAt {
             return PumpStatusHighlight(
                 localizedMessage: String(
