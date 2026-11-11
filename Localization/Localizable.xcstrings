@@ -778,7 +778,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ enheter kvar på %@"
+            "value" : "%@ enheter kvar kl. %@"
           }
         },
         "tr" : {
@@ -3682,7 +3682,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Aktivera ny Patch"
+            "value" : "Aktivera ny patch"
           }
         },
         "tr" : {
@@ -3820,7 +3820,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Activare pompă"
+            "value" : "Activați pompa"
           }
         },
         "ru" : {
@@ -4168,7 +4168,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch aktiverad den"
+            "value" : "Patchen aktiverades den"
           }
         },
         "tr" : {
@@ -4657,7 +4657,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Alarm inställning"
+            "value" : "Larminställning"
           }
         },
         "tr" : {
@@ -4819,7 +4819,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Alarm inställning"
+            "value" : "Larminställning"
           }
         },
         "tr" : {
@@ -5629,7 +5629,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Varning: Blockering"
+            "value" : "Varning: Ocklusion"
           }
         },
         "tr" : {
@@ -5791,7 +5791,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Varning: Fel i uppdateringen"
+            "value" : "Varning: Fel i patchen"
           }
         },
         "tr" : {
@@ -5956,7 +5956,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Varning: Behållaren är tom"
+            "value" : "Varning: Reservoaren är tom"
           }
         },
         "tr" : {
@@ -6592,7 +6592,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Autentificare și dezactivare pompă"
+            "value" : "Autentificați-vă & dezactivați pompa"
           }
         },
         "ru" : {
@@ -7617,9 +7617,6 @@
         }
       }
     },
-    "Bluetooth is unavailable. Restart the app if this persists." : {
-
-    },
     "Bolus" : {
       "comment" : "Pump Event title for UnfinalizedDose with doseType of .bolus",
       "extractionState" : "manual",
@@ -8075,7 +8072,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bolusproblem. Patch är redan bolus"
+            "value" : "Bolusproblem. Patchen ger redan en bolus"
           }
         },
         "tr" : {
@@ -8237,7 +8234,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bolusproblem. Patchen är avbruten. Återuppta leverans"
+            "value" : "Bolusproblem. Patchen är pausad. Återuppta leverans"
           }
         },
         "tr" : {
@@ -8561,7 +8558,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Det går inte att avbryta medan en bolusdos pågår"
+            "value" : "Det går inte att inaktivera patchen medan en bolus pågår"
           }
         },
         "tr" : {
@@ -8723,7 +8720,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ålder på kanyl"
+            "value" : "Kanylens ålder"
           }
         },
         "tr" : {
@@ -8885,7 +8882,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ändra din patch nu. Insulintillförseln kommer att upphöra om %@ eller när det inte finns mer insulin kvar."
+            "value" : "Byt patch nu. Insulintillförseln upphör om %@ eller när insulinet tar slut."
           }
         },
         "tr" : {
@@ -9047,7 +9044,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ändra din patch nu. Insulintillförseln kommer att upphöra om %@ eller när det inte finns mer insulin kvar."
+            "value" : "Byt patch nu. Insulintillförseln upphör om %@ eller när insulinet tar slut."
           }
         },
         "tr" : {
@@ -9209,7 +9206,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kontrollerad vid"
+            "value" : "Kontrollerad"
           }
         },
         "tr" : {
@@ -9372,7 +9369,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tydlig varning"
+            "value" : "Kvittera larm"
           }
         },
         "tr" : {
@@ -10186,7 +10183,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ansluter till pumpens bas..."
+            "value" : "Ansluter till pumpbasen..."
           }
         },
         "tr" : {
@@ -10510,7 +10507,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "För närvarande använder du INTE ett hjärtslagsläge. Ett hjärtslag behövs för att hålla %%1$@ igång i bakgrunden. Det rekommenderas att behålla den här funktionen"
+            "value" : "För närvarande använder du INTE ett heartbeat-läge. Ett heartbeat behövs för att hålla %%1$@ igång i bakgrunden. Det rekommenderas att behålla den här funktionen"
           }
         },
         "tr" : {
@@ -10672,7 +10669,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "För närvarande använder du ett hjärtslagsläge. Detta behövs för att hålla %%1$@ igång i bakgrunden. Detta kan vara intressant om din CGM redan ger ett hjärtslag. Det rekommenderas att hålla denna funktion aktiverad"
+            "value" : "För närvarande använder du ett heartbeat-läge. Detta behövs för att hålla %%1$@ igång i bakgrunden. Detta kan vara intressant om din CGM redan ger ett heartbeat. Det rekommenderas att hålla denna funktion aktiverad"
           }
         },
         "tr" : {
@@ -11320,7 +11317,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Inaktivera Patch"
+            "value" : "Inaktivera patch"
           }
         },
         "tr" : {
@@ -11482,7 +11479,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Avaktiverad den"
+            "value" : "Inaktiverad den"
           }
         },
         "tr" : {
@@ -11644,7 +11641,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Avaktivering"
+            "value" : "Inaktivering"
           }
         },
         "tr" : {
@@ -12133,7 +12130,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Disabled"
+            "value" : "Av"
           }
         },
         "tr" : {
@@ -12622,7 +12619,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fäst inte plåstret till kroppen ännu"
+            "value" : "Fäst inte patchen på kroppen ännu"
           }
         },
         "tr" : {
@@ -12952,7 +12949,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utkastad"
+            "value" : "Utmatad"
           }
         },
         "tr" : {
@@ -13114,7 +13111,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utskjutning"
+            "value" : "Matas ut"
           }
         },
         "tr" : {
@@ -13600,7 +13597,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utgått"
+            "value" : "Utgången"
           }
         },
         "tr" : {
@@ -13762,7 +13759,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Upphör att gälla:"
+            "value" : "Går ut om:"
           }
         },
         "tr" : {
@@ -13924,7 +13921,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Extended Patch har gått ut. Endast Basal."
+            "value" : "Förlängd patch har gått ut. Endast basal."
           }
         },
         "tr" : {
@@ -14578,7 +14575,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fyll plåstret med insulin. OBS: För aktivering krävs minst 70U."
+            "value" : "Fyll patchen med insulin. OBS: För aktivering krävs minst 70 E."
           }
         },
         "tr" : {
@@ -16045,7 +16042,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hur länge vill du avbryta ditt patchmaximum? Den kommer att återupptas automatiskt efter denna tid."
+            "value" : "Hur länge vill du som längst pausa patchen? Den återupptas automatiskt efter denna tid."
           }
         },
         "tr" : {
@@ -16552,7 +16549,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insulin\navstängd"
+            "value" : "Insulin\npausat"
           }
         },
         "tr" : {
@@ -16714,7 +16711,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insulin Leverans"
+            "value" : "Insulintillförsel"
           }
         },
         "tr" : {
@@ -16876,7 +16873,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insulinet har stängts av!"
+            "value" : "Insulintillförseln har pausats!"
           }
         },
         "tr" : {
@@ -17200,7 +17197,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insulin suspenderat"
+            "value" : "Insulintillförsel pausad"
           }
         },
         "tr" : {
@@ -17524,7 +17521,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insulin används"
+            "value" : "Använt insulin"
           }
         },
         "tr" : {
@@ -17686,7 +17683,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Insulin används"
+            "value" : "Använt insulin"
           }
         },
         "tr" : {
@@ -17848,7 +17845,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vi rekommenderar att du avaktiverar först"
+            "value" : "Vi rekommenderar att du inaktiverar först"
           }
         },
         "tr" : {
@@ -18496,7 +18493,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ljus och vibrera"
+            "value" : "Ljus och vibration"
           }
         },
         "tr" : {
@@ -18820,7 +18817,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ljus, vibrerar och pip"
+            "value" : "Ljus, vibration och pip"
           }
         },
         "tr" : {
@@ -18982,7 +18979,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "lastning"
+            "value" : "laddar"
           }
         },
         "tr" : {
@@ -19304,7 +19301,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Manuell basaldos"
+            "value" : "Manuell tillfällig basal"
           }
         },
         "tr" : {
@@ -19790,7 +19787,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Max timvis insulin"
+            "value" : "Max insulin per timme"
           }
         },
         "tr" : {
@@ -20763,7 +20760,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ingen anslutning till pumpens bas"
+            "value" : "Ingen anslutning till pumpbasen"
           }
         },
         "tr" : {
@@ -20925,7 +20922,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ingen leverans"
+            "value" : "Insulintillförseln upphör den"
           }
         },
         "tr" : {
@@ -20949,7 +20946,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "不送货"
+            "value" : "停止输注"
           }
         }
       }
@@ -21411,7 +21408,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nej, behåll som är"
+            "value" : "Nej, behåll som det är"
           }
         },
         "tr" : {
@@ -21573,7 +21570,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nej, behåll pumpen i befintligt skick"
+            "value" : "Nej, behåll pumpens tid"
           }
         },
         "tr" : {
@@ -21900,7 +21897,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Avisering för utgång patch"
+            "value" : "Avisering när patchen går ut"
           }
         },
         "tr" : {
@@ -22062,7 +22059,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anmälan om låg reservoar"
+            "value" : "Avisering vid låg reservoar"
           }
         },
         "tr" : {
@@ -22384,7 +22381,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Okej"
+            "value" : "OK"
           }
         },
         "tr" : {
@@ -22552,7 +22549,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch aktivering"
+            "value" : "Patchaktivering"
           }
         },
         "tr" : {
@@ -22714,7 +22711,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch aktivering"
+            "value" : "Patchaktivering"
           }
         },
         "tr" : {
@@ -22876,7 +22873,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch Detaljer"
+            "value" : "Patchinformation"
           }
         },
         "tr" : {
@@ -23038,7 +23035,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fel på lapp"
+            "value" : "Fel på patch"
           }
         },
         "tr" : {
@@ -23362,7 +23359,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plåstret har gått ut. Endast basal."
+            "value" : "Patchen har gått ut. Endast basal."
           }
         },
         "tr" : {
@@ -23498,7 +23495,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Eroare de patch: %@"
+            "value" : "Eroare plasture: %@"
           }
         },
         "ru" : {
@@ -23684,7 +23681,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch ID"
+            "value" : "Patch-ID"
           }
         },
         "tr" : {
@@ -23820,7 +23817,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch-ul este complet și gata de utilizare"
+            "value" : "Plasturele este umplut și gata de utilizare"
           }
         },
         "ru" : {
@@ -23844,7 +23841,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Lappen är fylld och klar"
+            "value" : "Patchen är fylld och klar"
           }
         },
         "tr" : {
@@ -23980,7 +23977,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch-ul nu a fost încă completat"
+            "value" : "Plasturele nu a fost încă umplut"
           }
         },
         "ru" : {
@@ -24004,7 +24001,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Lappen är inte ifylld ännu"
+            "value" : "Patchen är inte fylld ännu"
           }
         },
         "tr" : {
@@ -24166,7 +24163,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patchen är upphävd. Gränsen för %lld U överskreds. Om du höjer gränsen kan du ta bort varningen nu. Om du väntar kommer patchen att återupptas när tillräckligt med tid har gått."
+            "value" : "Patchen är pausad. Gränsen för %lld U överskreds. Om du höjer gränsen kan du ta bort varningen nu. Om du väntar kommer patchen att återupptas när tillräckligt med tid har gått."
           }
         },
         "tr" : {
@@ -24328,7 +24325,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch livslängd"
+            "value" : "Patchens livslängd"
           }
         },
         "tr" : {
@@ -24490,7 +24487,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch livslängd"
+            "value" : "Patchens livslängd"
           }
         },
         "tr" : {
@@ -24652,7 +24649,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Förbered pump"
+            "value" : "Priming av patch"
           }
         },
         "tr" : {
@@ -24814,7 +24811,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Förbered pump"
+            "value" : "Priming av patch"
           }
         },
         "tr" : {
@@ -24976,7 +24973,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Patch byt ut"
+            "value" : "Byt patch"
           }
         },
         "tr" : {
@@ -25786,7 +25783,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tid för patchning"
+            "value" : "Patchtid"
           }
         },
         "tr" : {
@@ -25948,7 +25945,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tid för patchning"
+            "value" : "Patchtid"
           }
         },
         "tr" : {
@@ -26278,7 +26275,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Placera sprutan i plåstret och dra ut 1 till 2 streck luft."
+            "value" : "Sätt sprutan i patchen och dra ut 1–2 streck luft."
           }
         },
         "tr" : {
@@ -26446,7 +26443,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tryck på nålknappen och starta priming processen."
+            "value" : "Tryck på nålknappen och starta primingprocessen."
           }
         },
         "tr" : {
@@ -26773,7 +26770,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tidigare Patch Detaljer"
+            "value" : "Föregående patch"
           }
         },
         "tr" : {
@@ -26938,7 +26935,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Förberedd"
+            "value" : "Primad"
           }
         },
         "tr" : {
@@ -27260,7 +27257,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Förberedelsen kunde inte påbörjas"
+            "value" : "Priming kunde inte startas"
           }
         },
         "tr" : {
@@ -27426,7 +27423,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Förbereder..."
+            "value" : "Priming pågår..."
           }
         },
         "tr" : {
@@ -27750,7 +27747,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pump basmodell"
+            "value" : "Pumpbasens modell"
           }
         },
         "tr" : {
@@ -27912,7 +27909,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pump basinställningar"
+            "value" : "Pumpbasinställningar"
           }
         },
         "tr" : {
@@ -28074,7 +28071,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pumpbas SN"
+            "value" : "Pumpbasens serienummer"
           }
         },
         "tr" : {
@@ -28237,7 +28234,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Betyg"
+            "value" : "Basaldos"
           }
         },
         "tr" : {
@@ -28894,7 +28891,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ta bort skyddskåpet från plåstret."
+            "value" : "Ta bort skyddslocket från patchen."
           }
         },
         "tr" : {
@@ -29056,7 +29053,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Byt ut din patch nu!"
+            "value" : "Byt patch nu!"
           }
         },
         "tr" : {
@@ -29542,7 +29539,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reservoaren låg (%lld U)"
+            "value" : "Låg reservoar (%lld E)"
           }
         },
         "tr" : {
@@ -29702,7 +29699,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Behållare: %@ U"
+            "value" : "Reservoar: %@ E"
           }
         },
         "tr" : {
@@ -29864,7 +29861,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Meritförteckning"
+            "value" : "Återuppta"
           }
         },
         "tr" : {
@@ -30026,7 +30023,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Leverans av CV"
+            "value" : "Återuppta leverans"
           }
         },
         "tr" : {
@@ -30188,7 +30185,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Leverans av CV"
+            "value" : "Återuppta insulintillförsel"
           }
         },
         "tr" : {
@@ -31647,7 +31644,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dela Medtrum-patch loggar"
+            "value" : "Dela Medtrum-patchloggar"
           }
         },
         "tr" : {
@@ -31785,7 +31782,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pierderea semnalului"
+            "value" : "Pierdere de semnal"
           }
         },
         "ru" : {
@@ -31971,7 +31968,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tystnad"
+            "value" : "Tyst"
           }
         },
         "tr" : {
@@ -32136,7 +32133,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Börja prima"
+            "value" : "Starta priming"
           }
         },
         "tr" : {
@@ -32787,7 +32784,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Avbryta leverans"
+            "value" : "Pausa leverans"
           }
         },
         "tr" : {
@@ -32949,7 +32946,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Avbryt insulintillförseln"
+            "value" : "Pausa insulintillförsel"
           }
         },
         "tr" : {
@@ -33111,7 +33108,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Upphäv patch"
+            "value" : "Pausa patchen"
           }
         },
         "tr" : {
@@ -33273,7 +33270,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Upphävd"
+            "value" : "Pausad"
           }
         },
         "tr" : {
@@ -33435,7 +33432,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Avstängd - Auto"
+            "value" : "Pausad - Auto"
           }
         },
         "tr" : {
@@ -33597,7 +33594,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Upphävd - Daglig max"
+            "value" : "Pausad - Daglig max"
           }
         },
         "tr" : {
@@ -33759,7 +33756,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Avstängd - Max per timme"
+            "value" : "Pausad - Max per timme"
           }
         },
         "tr" : {
@@ -33921,7 +33918,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Avstängd - Låg BG"
+            "value" : "Pausad - Lågt glukos"
           }
         },
         "tr" : {
@@ -34245,7 +34242,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Temp Basal"
+            "value" : "Tillfällig basal"
           }
         },
         "tr" : {
@@ -34407,7 +34404,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plåstret är avsett att användas i endast 3 dagar och 8 timmar. Om denna tid överskrids kan det leda till att plåstret blir opålitligt. Detta är INTE rekommenderat. Överväg att använda normal livslängd. Tänk på att ny firmware i den senaste generationen pumpbaser kan blockera boluskommandon efter 5 dagar (120 timmar). "
+            "value" : "Patchen är avsedd att användas i endast 3 dagar och 8 timmar. Om denna tid överskrids kan det leda till att patchen blir opålitlig. Detta är INTE rekommenderat. Överväg att använda normal livslängd. Tänk på att ny firmware i den senaste generationen pumpbaser kan blockera boluskommandon efter 5 dagar (120 timmar)."
           }
         },
         "tr" : {
@@ -34896,7 +34893,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tidsändring detekterad"
+            "value" : "Tidsändring upptäckt"
           }
         },
         "tr" : {
@@ -35058,7 +35055,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Växla hjärtslag läge"
+            "value" : "Heartbeat-läge"
           }
         },
         "tr" : {
@@ -35382,7 +35379,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "U/timme"
+            "value" : "E/h"
           }
         },
         "tr" : {
@@ -35709,7 +35706,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Använd förlängd livstid "
+            "value" : "Använd förlängd livslängd"
           }
         },
         "tr" : {
@@ -36033,7 +36030,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vibrera och pipa"
+            "value" : "Vibration och pip"
           }
         },
         "tr" : {
@@ -36195,7 +36192,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Endast vibrerande"
+            "value" : "Endast vibration"
           }
         },
         "tr" : {
@@ -36525,7 +36522,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "När du klickar på knappen får du en Biometrics prompt. När den är klar, kommer patchen att inaktiveras och du kommer att uppmanas att para ihop en ny patch."
+            "value" : "När du trycker på knappen ombeds du bekräfta med Face ID eller Touch ID. Därefter inaktiveras patchen och du uppmanas att para ihop en ny patch."
           }
         },
         "tr" : {
@@ -36690,7 +36687,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ja, inaktivera hjärtslag läge"
+            "value" : "Ja, stäng av heartbeat-läge"
           }
         },
         "tr" : {
@@ -36852,7 +36849,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ja, Aktivera hjärtslagsläge"
+            "value" : "Ja, slå på heartbeat-läge"
           }
         },
         "tr" : {
@@ -37014,7 +37011,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ja, synkroniseras med aktuell tid"
+            "value" : "Ja, synkronisera till aktuell tid"
           }
         },
         "tr" : {
@@ -37152,7 +37149,7 @@
         "ro" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Veți începe prin a alege tipul de insulină & setările de bază ale pompei înainte de activarea acestuia."
+            "value" : "Veți începe prin a alege tipul de insulină & setările de bază ale pompei înainte de activarea acesteia."
           }
         },
         "ru" : {
@@ -37986,7 +37983,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Din patch är i felsituationer!"
+            "value" : "Din patch har ett fel!"
           }
         },
         "tr" : {
@@ -38148,7 +38145,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Din patch har inte längre insulin!"
+            "value" : "Din patch har slut på insulin!"
           }
         },
         "tr" : {
@@ -38310,7 +38307,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your patch is running out of insulin!"
+            "value" : "Din patch har snart slut på insulin!"
           }
         },
         "tr" : {
@@ -38472,7 +38469,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Din patch kommer snart att upphöra att gälla!"
+            "value" : "Din patch går snart ut!"
           }
         },
         "tr" : {
