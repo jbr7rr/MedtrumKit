@@ -45,17 +45,16 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
     /// change it; `pumpManager` is the authority everywhere else.
     private let identifierAtLaunch: UUID?
 
-    init(knownPeripheralIdentifier: UUID?) {
+    init(knownPeripheralIdentifier: UUID?, restoresState: Bool = true) {
         identifierAtLaunch = knownPeripheralIdentifier
 
         super.init()
 
+        let options: [String: Any] = restoresState
+            ? [CBCentralManagerOptionRestoreIdentifierKey: "com.nightscout.MedtrumKit.bluetoothManager"]
+            : [:]
         managerQueue.sync {
-            self.manager = CBCentralManager(
-                delegate: self,
-                queue: managerQueue,
-                options: [CBCentralManagerOptionRestoreIdentifierKey: "com.nightscout.MedtrumKit.bluetoothManager"]
-            )
+            self.manager = CBCentralManager(delegate: self, queue: managerQueue, options: options)
         }
     }
 
