@@ -1,3 +1,4 @@
+import CoreBluetooth
 import LoopKit
 
 public enum BasalState: Int {
@@ -291,6 +292,8 @@ public class MedtrumPumpState: RawRepresentable {
     public var isConnected: Bool = false
     // if it was persisted, and we happen to restore a date - there will be nothing left to reset it to `nil`
     public var cancelingBolusSince: Date?
+    // last state CoreBluetooth reported
+    public var bluetoothState: CBManagerState = .unknown
     // **** END ****
 
     public var bolusDose: UnfinalizedDose?
@@ -404,7 +407,8 @@ public class MedtrumPumpState: RawRepresentable {
             "* insulinType: \(String(describing: insulinType))",
             "* reservoirLevel: \(reservoir)",
             "* lowReservoirWarning: \(String(describing: lowReservoirWarning))",
-            "* bolusState: \(bolusState.rawValue)"
+            "* bolusState: \(bolusState.rawValue)",
+            "* bluetoothState: \(bluetoothState.rawValue)"
         ].joined(separator: "\n")
     }
 }
