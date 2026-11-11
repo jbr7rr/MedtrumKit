@@ -4,7 +4,7 @@ import LoopKitUI
 import SwiftUI
 import UIKit
 
-enum MedtrumUIScreen {
+enum MedtrumUIScreen: Equatable {
     case welcomeScreen
     case insulinTypeScreen
     case patchSettingsScreen
@@ -16,6 +16,9 @@ enum MedtrumUIScreen {
     case manualTempBasalScreen
     case patchDetailsScreen
     case patchPreviousDetailsScreen
+    case pumpRecordsScreen
+    /// The records kept of one patch - the current one, or the one before
+    case patchHistoryScreen(patchId: UInt64, isCurrentPatch: Bool)
 }
 
 class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, CompletionNotifying,
@@ -83,7 +86,11 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
     }
 
     func getInitialScreens() -> [MedtrumUIScreen] {
-        guard let pumpManager = self.pumpManager else {
+        Self.initialScreens(for: pumpManager)
+    }
+
+    static func initialScreens(for pumpManager: MedtrumPumpManager?) -> [MedtrumUIScreen] {
+        guard let pumpManager else {
             return [.settingsScreen]
         }
 
@@ -102,6 +109,12 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
         }
 
         if pumpState.hasCompletedPriming {
+            return [.patchActivationScreen]
+        }
+
+        // Running with no session: activated, its answer lost, the sheet dismissed - back to the activation, whose retry
+        // starts the session. Nothing else does, but a status after it (`MedtrumPumpManager.startSessionOfActivatedPatchSoon`).
+        if pumpManager.state.isActivatedWithNoSession {
             return [.patchActivationScreen]
         }
 
@@ -243,6 +256,9 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
             let toPreviousPatchDetails: () -> Void = { [weak self] in
                 self?.navigateTo(.patchPreviousDetailsScreen)
             }
+            let toPumpRecords: () -> Void = { [weak self] in
+                self?.navigateTo(.pumpRecordsScreen)
+            }
             let toInsulinType: () -> Void = { [weak self] in
                 self?.navigateTo(.insulinTypeScreen)
             }
@@ -258,6 +274,7 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                 toTempBasal,
                 toPatchDetails,
                 toPreviousPatchDetails,
+                toPumpRecords,
                 toInsulinType,
                 { [weak self] in self?.pumpRemoval() },
                 toActivatePatch
@@ -288,10 +305,38 @@ class MedtrumKitUICoordinator: UINavigationController, PumpManagerOnboarding, Co
                 title: String(localized: "Patch Details", comment: "header patch details")
             )
         case .patchPreviousDetailsScreen:
-            let viewModel = PreviousPatchDetailsViewModel(pumpManager: pumpManager)
+            let viewModel = PreviousPatchDetailsViewModel(
+                pumpManager: pumpManager,
+                showHistory: { [weak self] patchId in
+                    self?.navigateTo(.patchHistoryScreen(patchId: patchId, isCurrentPatch: false))
+                }
+            )
             return hostingController(
                 rootView: PreviousPatchDetailsView(viewModel: viewModel),
                 title: String(localized: "Previous Patch Details", comment: "header patch details")
+            )
+
+        case .pumpRecordsScreen:
+            let viewModel = PumpRecordsViewModel(
+                pumpManager: pumpManager,
+                showHistory: { [weak self] patchId in
+                    self?.navigateTo(.patchHistoryScreen(patchId: patchId, isCurrentPatch: true))
+                }
+            )
+            return hostingController(
+                rootView: PumpRecordsView(
+                    viewModel: viewModel,
+                    // The store is observed directly - a nested ObservableObject would not republish
+                    store: pumpManager?.recordStore ?? PumpRecordStore()
+                ),
+                title: "Patch Records"
+            )
+
+        case let .patchHistoryScreen(patchId, isCurrentPatch):
+            let viewModel = PatchHistoryViewModel(patchId: patchId, isCurrentPatch: isCurrentPatch, source: pumpManager)
+            return hostingController(
+                rootView: PatchHistoryView(viewModel: viewModel),
+                title: String(localized: "Patch History", comment: "header patch history")
             )
         }
     }

@@ -11,7 +11,7 @@ class PeripheralManager: NSObject {
     private var readCharacteristic: CBCharacteristic?
     private var writeCharacteristic: CBCharacteristic?
 
-    // access is serialized by the semaphore inside writePacket
+    // access is serialized by `writer` inside writePacket
     private var writeSequence: UInt8 = 0
 
     /// Guards the four fields below. writePacket runs on the caller's thread while the response
@@ -28,7 +28,7 @@ class PeripheralManager: NSObject {
     private var isReadyStorage = false
     /* end */
 
-    private let semaphore = DispatchSemaphore(value: 1)
+    private let writer = LinkWriter()
 
     /* access must be serialized with stateLock, prevents concurrent `considerFullSync` runs */
     private var isFullSyncInFlight = false
@@ -62,7 +62,9 @@ class PeripheralManager: NSObject {
         queue?.leave()
     }
 
-    private func disconnectIfActive() {
+    /// Reports why the connect flow failed, then drops the link.
+    private func failConnect(_ error: MedtrumConnectError) {
+        completion?(error)
         bluetoothManager?.disconnect(ifCurrent: self)
     }
 
@@ -78,15 +80,40 @@ class PeripheralManager: NSObject {
         return isInvalidated
     }
 
-    func writePacket(_ packet: any MedtrumBasePacketProtocol) -> MedtrumWriteResult<Any> {
+    /// How long a command waits for its answer, unless its caller has less time
+    static let writeTimeout: TimeInterval = 30
+
+    /// `timeout`: how long the caller has, for the link to be free of the write ahead of it as well as for the answer -
+    /// not written at all, and timed out, if the link is not free by then. Nil: as long as the write ahead takes, then
+    /// `writeTimeout` for the answer.
+    func writePacket(_ packet: any MedtrumBasePacketProtocol, timeout: TimeInterval? = nil) -> MedtrumWriteResult<Any> {
         guard let characteristic = writeCharacteristic else {
             log.error("No write characteristic found... Device might be disconnected...")
             return .failure(error: .noWriteCharacteristic)
         }
 
-        semaphore.wait()
-        defer {
-            semaphore.signal()
+        let result = writer.exclusively(within: timeout) { left in
+            writeExclusively(packet, to: characteristic, timeout: left)
+        }
+        guard let result else {
+            log.warning("The link was busy with another write for all of \(timeout ?? 0) s, not writing")
+            return .failure(error: .timeout)
+        }
+
+        return result
+    }
+
+    /// The write itself, the only one on the link - see `writer`
+    private func writeExclusively(
+        _ packet: any MedtrumBasePacketProtocol,
+        to characteristic: CBCharacteristic,
+        timeout: TimeInterval
+    ) -> MedtrumWriteResult<Any> {
+        // The link may be gone before CoreBluetooth has told us, and a write onto it is swallowed: it would wait out its
+        // timeout as a command that may have gone out. Down already as far as CoreBluetooth knows, it is not written.
+        guard peripheral.state == .connected else {
+            log.error("The peripheral is not connected (state \(peripheral.state.rawValue)), not writing")
+            return .failure(error: .notConnected)
         }
 
         let writeQ = MedtrumKitDispatchGroup()
@@ -117,7 +144,7 @@ class PeripheralManager: NSObject {
         }
 
         // Wait for response or timeout timer...
-        _ = writeQ.wait(timeout: .now() + .seconds(30))
+        _ = writeQ.wait(timeout: .now() + max(0, timeout))
 
         // Tear down as one step: on timeout the delegate may still be mid-flight, and this is
         // what tells it the command is no longer current.
@@ -134,6 +161,29 @@ class PeripheralManager: NSObject {
         }
 
         return response
+    }
+}
+
+/// One write on the link at a time: each waits for its answer before the next goes out
+final class LinkWriter {
+    private let semaphore = DispatchSemaphore(value: 1)
+
+    /// Runs `body` as the only writer, with how long it has left for the answer: what is left of `timeout` after
+    /// waiting for the writer ahead, or `PeripheralManager.writeTimeout` when there is no `timeout` - then the wait for
+    /// the writer ahead is as long as it takes. Nil, not having run it, if the writer ahead is not done by `timeout`.
+    func exclusively<T>(within timeout: TimeInterval?, _ body: (_ left: TimeInterval) -> T) -> T? {
+        guard let timeout else {
+            semaphore.wait()
+            defer { semaphore.signal() }
+            return body(PeripheralManager.writeTimeout)
+        }
+
+        let deadline = Date.now.addingTimeInterval(timeout)
+        guard semaphore.wait(timeout: .now() + max(0, timeout)) == .success else {
+            return nil
+        }
+        defer { semaphore.signal() }
+        return body(max(0, deadline.timeIntervalSinceNow))
     }
 }
 
@@ -158,14 +208,12 @@ extension PeripheralManager {
             }
 
             log.error("Failed to complete authorization flow: \(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
+            failConnect(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case let .success(data):
             guard let authResponse = data as? AuthorizeResponse else {
                 log.error("Failed to complete authorization flow: invalid response")
-                disconnectIfActive()
-                completion?(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
+                failConnect(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
                 return
             }
 
@@ -183,14 +231,12 @@ extension PeripheralManager {
         switch syncData {
         case let .failure(error):
             log.error("Failed to synchronize: \(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
+            failConnect(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case let .success(data):
             guard let syncResponse = data as? SynchronizePacketResponse else {
                 log.error("Failed to Synchronize packet: invalid response")
-                disconnectIfActive()
-                completion?(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
+                failConnect(.failedToCompleteAuthorizationFlow(localizedError: "invalid response"))
                 return
             }
 
@@ -206,8 +252,7 @@ extension PeripheralManager {
         switch subscribeData {
         case let .failure(error):
             log.error("Failed to subscribe: \(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
+            failConnect(.failedToCompleteAuthorizationFlow(localizedError: error.localizedDescription))
 
         case .success:
             guard !isInvalidatedLocked else {
@@ -223,6 +268,9 @@ extension PeripheralManager {
             pumpManager?.state.isConnected = true
             pumpManager?.notifyStateDidChange()
             completion?(nil)
+
+            // No record sync here: the caller is about to send its command over this link. Records are read with
+            // the next full sync, or the next heartbeat while doses wait on them.
         }
     }
 
@@ -242,15 +290,7 @@ extension PeripheralManager {
             log.warning("State update: Failed to encode JSON - \(error)")
         }
 
-        StateSyncer.sync(
-            syncResponse: syncResponse,
-            state: pumpManager.state,
-            pumpManager: pumpManager,
-            duringReconnect: duringReconnect,
-            fullSync: fullSync
-        )
-
-        pumpManager.issueHeartbeatIfNeeded()
+        pumpManager.handleStatus(syncResponse, duringReconnect: duringReconnect, fullSync: fullSync)
     }
 }
 
@@ -258,8 +298,7 @@ extension PeripheralManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error = error {
             log.error("\(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToDiscoverServices(localizedError: error.localizedDescription))
+            failConnect(.failedToDiscoverServices(localizedError: error.localizedDescription))
             return
         }
 
@@ -268,8 +307,7 @@ extension PeripheralManager: CBPeripheralDelegate {
             let localizedError = "No Medtrum service found - " +
                 (peripheral.services?.map(\.uuid.uuidString).joined(separator: ", ") ?? "No services discovered")
             log.error(localizedError)
-            disconnectIfActive()
-            completion?(.failedToDiscoverServices(localizedError: localizedError))
+            failConnect(.failedToDiscoverServices(localizedError: localizedError))
             return
         }
 
@@ -279,8 +317,7 @@ extension PeripheralManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         if let error = error {
             log.error("\(error.localizedDescription)")
-            disconnectIfActive()
-            completion?(.failedToDiscoverCharacteristics(localizedError: error.localizedDescription))
+            failConnect(.failedToDiscoverCharacteristics(localizedError: error.localizedDescription))
             return
         }
 
@@ -292,8 +329,7 @@ extension PeripheralManager: CBPeripheralDelegate {
                 (service.characteristics?.map(\.uuid.uuidString).joined(separator: ", ") ?? "No characteristics discovered")
 
             log.error(localizedError)
-            disconnectIfActive()
-            completion?(.failedToDiscoverCharacteristics(localizedError: localizedError))
+            failConnect(.failedToDiscoverCharacteristics(localizedError: localizedError))
             return
         }
 
@@ -389,15 +425,17 @@ extension PeripheralManager: CBPeripheralDelegate {
         }
 
         let response: MedtrumWriteResult<Any>
-        if packet.responseCode != 0 {
+        if packet.failed {
+            // Before the response code: in a frame that fails its checks the code is as garbled as the rest, and an
+            // error code reads as the patch turning the command down when it may well have taken it
+            log.error("Failed to parse message, either wrong command type or CRC check failed...")
+            response = .failure(error: .invalidData)
+        } else if packet.responseCode != 0 {
             // Examples for invalid codes:
             // 7 -> Invalid authorization: propably wrong session token used
             // 8 -> Invalid state: The patch is not in state 32 (active), which is required for that command
             log.error("Invalid responseCode: \(packet.responseCode)")
             response = .failure(error: .invalidResponse(code: packet.responseCode))
-        } else if packet.failed {
-            log.error("Failed to parse message, either wrong command type or CRC check failed...")
-            response = .failure(error: .invalidData)
         } else if !packet.hasEnoughData {
             let message =
                 "Packet has too little data - expected: \(packet.mimimumDataSize), data: \(packet.totalData.hexEncodedString())"
@@ -439,19 +477,11 @@ extension PeripheralManager: CBPeripheralDelegate {
     }
 
     private func considerFullSync() {
-        guard let pumpManager else {
+        // Between full syncs, read the records doses are waiting on as soon as the patch has written them
+        guard let pumpManager, let sync = pumpManager.heartbeatSync() else {
             return
         }
-
-        let age = Date.now.timeIntervalSince(pumpManager.state.lastSync)
-        guard age > MedtrumPumpManager.heartbeatSyncFreshnessInterval else {
-            return
-        }
-
-        guard pumpManager.state.bolusState == .noBolus else {
-            log.debug("Skipping sync, pump is currently bolusing")
-            return
-        }
+        let isFullSyncDue = sync == .full
 
         stateLock.lock()
         guard !isFullSyncInFlight else {
@@ -472,24 +502,36 @@ extension PeripheralManager: CBPeripheralDelegate {
                 self.stateLock.unlock()
             }
 
-            let response = self.writePacket(SynchronizePacket())
-            switch response {
-            case let .failure(error):
-                self.log.error("Failed to get synchronize: \(error.localizedDescription)")
-                return
-
-            case let .success(data):
-                guard let syncResponse = data as? SynchronizePacketResponse else {
-                    self.log.error("Failed to Synchronize packet: invalid response")
+            if isFullSyncDue {
+                // Between commands: a temp basal's records, read by the one that ended it after `heartbeatSync` said
+                // to sync, are not held up by it
+                guard let response = self.pumpManager?.betweenCommands({ self.writePacket(SynchronizePacket()) }) else {
                     return
                 }
+                switch response {
+                case let .failure(error):
+                    self.log.error("Failed to get synchronize: \(error.localizedDescription)")
+                    return
 
-                self.parseStateUpdate(syncResponse, duringReconnect: false, fullSync: true)
+                case let .success(data):
+                    guard let syncResponse = data as? SynchronizePacketResponse else {
+                        self.log.error("Failed to Synchronize packet: invalid response")
+                        return
+                    }
 
-                if let pumpManager = self.pumpManager {
-                    StateSyncer.fetchPatchTimeIfStale(pumpManager: pumpManager)
+                    self.parseStateUpdate(syncResponse, duringReconnect: false, fullSync: true)
                 }
             }
+
+            guard let pumpManager = self.pumpManager, !self.isInvalidatedLocked else {
+                return
+            }
+
+            if isFullSyncDue {
+                StateSyncer.fetchPatchTimeIfStale(pumpManager: pumpManager)
+            }
+
+            RecordSyncer.syncRecords(pumpManager: pumpManager, trigger: isFullSyncDue ? .fullSync : .awaitingDoses)
         }
     }
 }

@@ -45,6 +45,23 @@ struct PreviousPatchDetailsView: View {
                     )
                 }
             }
+
+            if viewModel.historyPatch != nil {
+                Section {
+                    HStack {
+                        Text("History", comment: "previous patch details: the row opening the patch's record history")
+                            .foregroundColor(Color.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: UIFont.systemFontSize, weight: .medium))
+                            .opacity(0.3)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        viewModel.toHistory()
+                    }
+                }
+            }
         }
         .listStyle(InsetGroupedListStyle())
     }

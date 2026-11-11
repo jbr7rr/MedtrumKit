@@ -13,6 +13,8 @@ class PreviousPatchDetailsViewModel: PatchLifetimeFormatting, ObservableObject {
     @Published var patchLifetime: String = ""
     @Published var reservoirLevel: Double? = nil
     @Published var initialReservoirLevel: Double? = nil
+    /// The previous patch, if its records' file is there to show (`recordHistoryPatches`). Nil, no history offered.
+    @Published var historyPatch: UInt64? = nil
 
     let reservoirVolumeFormatter: QuantityFormatter = {
         let formatter = QuantityFormatter(for: .internationalUnit())
@@ -42,8 +44,11 @@ class PreviousPatchDetailsViewModel: PatchLifetimeFormatting, ObservableObject {
     }()
 
     private let pumpManager: MedtrumPumpManager?
-    init(pumpManager: MedtrumPumpManager?) {
+    private let showHistory: (UInt64) -> Void
+
+    init(pumpManager: MedtrumPumpManager?, showHistory: @escaping (UInt64) -> Void = { _ in }) {
         self.pumpManager = pumpManager
+        self.showHistory = showHistory
         super.init()
 
         guard let pumpManager = pumpManager else {
@@ -56,6 +61,14 @@ class PreviousPatchDetailsViewModel: PatchLifetimeFormatting, ObservableObject {
 
     deinit {
         pumpManager?.removeStatusObserver(self)
+    }
+
+    /// Opens the record history of the previous patch - offered only if its file is there
+    func toHistory() {
+        guard let historyPatch else {
+            return
+        }
+        showHistory(historyPatch)
     }
 
     func batteryText(for voltage: Double) -> String {
@@ -92,6 +105,15 @@ extension PreviousPatchDetailsViewModel: PumpManagerStatusObserver {
             self.battery = previousPatch.battery
             self.reservoirLevel = previousPatch.reservoirLevel
             self.initialReservoirLevel = previousPatch.initialReservoirLevel
+        }
+
+        // Whether its file is there: a look at the files - off the main queue
+        let patchId = previousPatch.patchId.toUInt64()
+        processQueue.async {
+            let historyPatch = pumpManager.recordHistoryPatches().contains(patchId) ? patchId : nil
+            DispatchQueue.main.async {
+                self.historyPatch = historyPatch
+            }
         }
     }
 }

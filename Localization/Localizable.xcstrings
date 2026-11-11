@@ -1129,6 +1129,29 @@
         }
       }
     },
+    "%lld could not be read" : {
+      "comment" : "patch history: the numbers kept without their record",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld could not be read"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld could not be read"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld hr %lld min" : {
       "comment" : "temp basal remaining hours+minutes",
       "extractionState" : "manual",
@@ -1452,6 +1475,62 @@
           }
         }
       }
+    },
+    "%lld records · %lld missing" : {
+      "comment" : "patch history: the records kept, and the numbers with none",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%#@records@ · %#@missing@"
+          },
+          "substitutions" : {
+            "missing" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg missing"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg missing"
+                    }
+                  }
+                }
+              }
+            },
+            "records" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg record"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg records"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "×%lld" : {
+
     },
     "1 hour" : {
       "comment" : "suspend for 1h",
@@ -3549,6 +3628,12 @@
         }
       }
     },
+    "A status showed the patch running a temp basal the app has no record of." : {
+      "comment" : "uncertain delivery cause: a temp basal running that the app did not know of"
+    },
+    "A status shows the temp basal still running: the cancel did not stop it." : {
+      "comment" : "uncertain delivery status: temp basal still running"
+    },
     "Activate new Patch" : {
       "comment" : "activate patch",
       "extractionState" : "manual",
@@ -4847,6 +4932,9 @@
           }
         }
       }
+    },
+    "Alert: Bolus stalled" : {
+      "comment" : "alert bolus stalled"
     },
     "Alert: Daily Insulin Limit" : {
       "comment" : "alert daily limit",
@@ -7779,6 +7867,15 @@
         }
       }
     },
+    "Bolus counted as delivered" : {
+
+    },
+    "Bolus counted too high" : {
+      "comment" : "Title bolus over-counted notification"
+    },
+    "Bolus delivery stalled" : {
+      "comment" : "Title bolus stalled notification"
+    },
     "Bolus in progress..." : {
       "localizations" : {
         "ar" : {
@@ -7938,6 +8035,9 @@
           }
         }
       }
+    },
+    "Bolus issue. Bolus is below the minimum of 0.05U" : {
+      "comment" : "MedtrumError bolus below minimum"
     },
     "Bolus issue. Patch is already bolussing" : {
       "comment" : "MedtrumError patch bolussing",
@@ -8263,6 +8363,15 @@
         }
       }
     },
+    "Bolus not counted" : {
+      "comment" : "Title bolus not counted notification"
+    },
+    "Bolus not fully counted" : {
+      "comment" : "Title bolus under-counted notification"
+    },
+    "Bolus of %1$@ U (%2$@)" : {
+      "comment" : "uncertain delivery notice: the bolus, and when"
+    },
     "Cancel" : {
       "comment" : "cancel force remove",
       "extractionState" : "manual",
@@ -8424,6 +8533,9 @@
           }
         }
       }
+    },
+    "Cancel of the temp basal of %1$@ U/h (%2$@)" : {
+      "comment" : "uncertain delivery notice: the cancel of a temp basal, and when"
     },
     "Cannot deactivate while a bolus is in progress" : {
       "comment" : "Wait for bolus to complete",
@@ -9073,6 +9185,12 @@
         }
       }
     },
+    "Check the infusion site and your glucose. If it keeps rising, replace the patch: its record will not tell whether the insulin went in." : {
+      "comment" : "uncertain delivery advice for a bolus that stalled"
+    },
+    "Check the patch's basal. Setting or cancelling a temp basal from the app replaces it." : {
+      "comment" : "uncertain delivery advice for an unknown temp basal"
+    },
     "Checked at" : {
       "comment" : "Text for pump time synced at",
       "extractionState" : "manual",
@@ -9397,6 +9515,9 @@
           }
         }
       }
+    },
+    "Clear settled" : {
+      "comment" : "button clearing the settled uncertain deliveries"
     },
     "Configuration" : {
       "comment" : "Configuration section",
@@ -10373,6 +10494,15 @@
           }
         }
       }
+    },
+    "Counted as running until a status shows whether the cancel stopped it." : {
+      "comment" : "uncertain delivery status: temp basal counted running"
+    },
+    "Counted as the %@ U the patch reported until its record says what it delivered." : {
+      "comment" : "uncertain delivery status: bolus counted as reported"
+    },
+    "Counted as the full %@ U until the patch's record says what it delivered." : {
+      "comment" : "uncertain delivery status: bolus counted in full"
     },
     "Currently, you are NOT using a heartbeat mode. A heartbeat is needed to keep %1$@ running in the background. It is recommended to keep enable this feature" : {
       "comment" : "Message warning heartbeat disable (1: app name)",
@@ -11997,6 +12127,9 @@
         }
       }
     },
+    "Delivered slowly: up to %lld s between the patch's steps, then at its pace to the end." : {
+      "comment" : "uncertain delivery cause: a bolus that stalled, then went on at the patch's pace (longest gap in seconds)"
+    },
     "Disabled" : {
       "comment" : "Label for disabled",
       "extractionState" : "manual",
@@ -12654,6 +12787,9 @@
     "Do not inject air into the fill port. It may cause unintended or interrupted insulin delivery." : {
 
     },
+    "Don't bolus again to make up for it. Keep the phone near the patch: its record is usually read within minutes." : {
+      "comment" : "uncertain delivery advice for a bolus"
+    },
     "Done" : {
       "comment" : "Button for closing settings",
       "extractionState" : "manual",
@@ -13301,6 +13437,9 @@
           }
         }
       }
+    },
+    "Every record of this patch kept on the phone, not only the newest 200." : {
+      "comment" : "patch records: footer of the full history row"
     },
     "Expiration" : {
       "comment" : "Text for expiresAt",
@@ -14931,6 +15070,16 @@
         }
       }
     },
+    "final" : {
+      "comment" : "A label for a dose that has been sent to the pump.",
+      "isCommentAutoGenerated" : true
+    },
+    "Final without its record: counted as %@ U." : {
+      "comment" : "uncertain delivery status: settled by estimate"
+    },
+    "Final: %@ U." : {
+      "comment" : "uncertain delivery status: final, how not known"
+    },
     "Fold down and break the tab of the patch, then push the pump base up from the bottom to remove it." : {
 
     },
@@ -15095,6 +15244,9 @@
           }
         }
       }
+    },
+    "Full history" : {
+      "comment" : "patch records: the row opening the current patch's full record history"
     },
     "Gently remove the entire patch from your body." : {
 
@@ -15423,6 +15575,9 @@
         }
       }
     },
+    "Group by dose" : {
+
+    },
     "h" : {
       "comment" : "Hour unit",
       "extractionState" : "manual",
@@ -15584,6 +15739,9 @@
           }
         }
       }
+    },
+    "History" : {
+      "comment" : "previous patch details: the row opening the patch's record history"
     },
     "hour" : {
       "comment" : "Unit for singular hour",
@@ -16241,6 +16399,10 @@
           }
         }
       }
+    },
+    "In flight" : {
+      "comment" : "A heading for the list of doses that the pump is currently sending.",
+      "isCommentAutoGenerated" : true
     },
     "Information" : {
       "comment" : "The title for patch/pump information",
@@ -17874,6 +18036,12 @@
         }
       }
     },
+    "Keep the phone near the patch: a status or its record settles it. If its records cannot be read, it may stay uncertain." : {
+      "comment" : "uncertain delivery advice for a temp basal not reported"
+    },
+    "Keep the phone near the patch: the next status settles it." : {
+      "comment" : "uncertain delivery advice for a cancel"
+    },
     "Last sync" : {
       "comment" : "Text for last sync",
       "extractionState" : "manual",
@@ -19008,6 +19176,9 @@
         }
       }
     },
+    "Lost the connection" : {
+      "comment" : "patch history: the fill stopped as the link was lost"
+    },
     "Make sure the Serial Number is correct before connecting it to the patch." : {
       "comment" : "Label for checking SN",
       "extractionState" : "manual",
@@ -20140,6 +20311,17 @@
         }
       }
     },
+    "mutable" : {
+      "comment" : "A label that indicates a dose is editable.",
+      "isCommentAutoGenerated" : true
+    },
+    "Newest first, kept in memory only - cleared when the patch changes or the app restarts." : {
+      "comment" : "A description of the list of patch records.",
+      "isCommentAutoGenerated" : true
+    },
+    "Newest first." : {
+      "comment" : "patch history: footer of the records"
+    },
     "Next" : {
 
     },
@@ -21113,6 +21295,9 @@
         }
       }
     },
+    "No longer tracked." : {
+      "comment" : "uncertain delivery status: its dose no longer tracked"
+    },
     "No patch" : {
       "comment" : "Status highlight when no patch is active.",
       "extractionState" : "manual",
@@ -21274,6 +21459,15 @@
           }
         }
       }
+    },
+    "No patch is active. Activate a patch first." : {
+      "comment" : "MedtrumError no patch session runs"
+    },
+    "No records kept" : {
+      "comment" : "patch history: the patch has no record kept"
+    },
+    "No records read yet" : {
+
     },
     "No, Keep as is" : {
       "comment" : "Button text to cancel actionsheet",
@@ -21761,8 +21955,27 @@
         }
       }
     },
+    "Not counted until a status or its record shows that the patch ran it." : {
+      "comment" : "uncertain delivery status: temp basal not reported"
+    },
+    "Not counted: the patch never showed it running, but may have run it - %1$@ U/h for up to %2$@." : {
+      "comment" : "uncertain delivery status: temp basal never confirmed, not counted"
+    },
+    "Not counted: what it delivered is not known." : {
+      "comment" : "uncertain delivery status: an unknown temp basal, not counted"
+    },
+    "Not while a bolus is running" : {
+      "comment" : "patch history: the fill stopped for a bolus"
+    },
     "Note" : {
 
+    },
+    "Nothing more to read" : {
+      "comment" : "patch history: the fill read every missing record"
+    },
+    "Nothing reported yet" : {
+      "comment" : "A message displayed when the patch has not yet reported any records.",
+      "isCommentAutoGenerated" : true
     },
     "Notification for expirate patch" : {
       "comment" : "Label for expired patch notification",
@@ -22415,6 +22628,9 @@
     },
     "Once the patch is off your skin, do not press the needle button again. Doing so will result in injury." : {
 
+    },
+    "Patch %@" : {
+      "comment" : "patch history: header with the patch id"
     },
     "Patch activation" : {
       "comment" : "Patch activation header",
@@ -23547,6 +23763,9 @@
           }
         }
       }
+    },
+    "Patch History" : {
+      "comment" : "header patch history"
     },
     "Patch ID" : {
       "comment" : "Text for patchId",
@@ -24839,6 +25058,13 @@
           }
         }
       }
+    },
+    "Patch records" : {
+      "comment" : "A heading for the patch records.",
+      "isCommentAutoGenerated" : true
+    },
+    "Patch Records" : {
+
     },
     "Patch replace" : {
       "comment" : "Pump Event title for replace patch",
@@ -28263,6 +28489,15 @@
         }
       }
     },
+    "Read missing records" : {
+      "comment" : "patch history: button reading the missing records off the patch"
+    },
+    "Reading… %lld of %lld missing" : {
+      "comment" : "patch history: a fill of the missing records running"
+    },
+    "Reads the missing records off the patch, %lld at a time, while this screen is open." : {
+      "comment" : "patch history: footer explaining the read of the missing records"
+    },
     "Reconnect" : {
       "comment" : "reconnect to patch",
       "extractionState" : "manual",
@@ -28586,6 +28821,12 @@
           }
         }
       }
+    },
+    "Record %lld could not be read" : {
+      "comment" : "patch history: a record number kept without its record"
+    },
+    "Records" : {
+      "comment" : "patch history: header of the records"
     },
     "REMOVE AIR" : {
 
@@ -29081,6 +29322,19 @@
           }
         }
       }
+    },
+    "report %lld/%lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "report %1$lld/%2$lld"
+          }
+        }
+      }
+    },
+    "Reported to the host" : {
+
     },
     "Reservoir empty" : {
       "comment" : "Patch state for reservoirEmpty",
@@ -31511,6 +31765,15 @@
         }
       }
     },
+    "Settled by the patch's record #%1$lld: %2$@ U delivered." : {
+      "comment" : "uncertain delivery status: settled by a numbered record"
+    },
+    "Settled by the patch's records: %@ U delivered." : {
+      "comment" : "uncertain delivery status: settled by records"
+    },
+    "Share" : {
+      "comment" : "patch history: button sharing the patch's record file"
+    },
     "Share Medtrum patch logs" : {
       "comment" : "Share logs",
       "extractionState" : "manual",
@@ -32327,6 +32590,9 @@
     "Step %1$d of %2$d" : {
 
     },
+    "Stop" : {
+      "comment" : "patch history: button stopping the read of the missing records"
+    },
     "Stop Temp Basal" : {
       "comment" : "Stop temp basal",
       "extractionState" : "manual",
@@ -32650,6 +32916,9 @@
           }
         }
       }
+    },
+    "Stopping…" : {
+      "comment" : "patch history: a stopped fill finishing the page it reads"
     },
     "Suspend delivery" : {
       "comment" : "Suspend patch",
@@ -33947,6 +34216,10 @@
         }
       }
     },
+    "Sync" : {
+      "comment" : "A section of the PumpRecordsView that shows the sync state.",
+      "isCommentAutoGenerated" : true
+    },
     "Sync Patch Data" : {
       "comment" : "sync pump",
       "extractionState" : "manual",
@@ -34271,6 +34544,39 @@
         }
       }
     },
+    "Temp basal of %1$@ U/h (%2$@)" : {
+      "comment" : "uncertain delivery notice: the temp basal, and when"
+    },
+    "The app did not save the pump state in time: nothing was sent to the patch" : {
+      "comment" : "MedtrumError state not saved"
+    },
+    "The app did not save the pump state in time: the running temp basal was cancelled, the new one was not sent" : {
+      "comment" : "MedtrumError state not saved after the temp basal was cancelled"
+    },
+    "The app was restarted while the command was out." : {
+      "comment" : "uncertain delivery cause: app restarted"
+    },
+    "The bolus of %1$@ U has not moved past %2$@ U for %3$lld s, while the patch keeps answering. Possible occlusion: the insulin may not be going in, though the patch counts it. Check the infusion site and your glucose." : {
+      "comment" : "Body bolus stalled notification (bolus size, delivered so far, seconds without progress)"
+    },
+    "The bolus stalled: no progress for %lld s while the patch kept answering. Possible occlusion: the patch counts the insulin whether it went in or not." : {
+      "comment" : "uncertain delivery cause: a bolus that stalled (longest time without progress in seconds)"
+    },
+    "The cancel did not stop it: the patch kept running it." : {
+      "comment" : "uncertain delivery status: settled cancel, its temp basal shown still running after it"
+    },
+    "The end of the bolus was not seen." : {
+      "comment" : "uncertain delivery cause: end not seen"
+    },
+    "The patch changed" : {
+      "comment" : "patch history: the fill stopped as the patch changed"
+    },
+    "The patch did not answer the command for a bolus of %@ U, and its records do not show it. The full amount was counted as delivered." : {
+
+    },
+    "The patch did not confirm the command." : {
+      "comment" : "uncertain delivery cause: unconfirmed"
+    },
     "The patch is intended to be used for only 3 days and 8 hours. Exceeding this time may cause the patch to become unreliable. This is NOT recommended. Consider using normal lifetime. Please be aware that new firmware in the latest generation of pump bases may block bolus commands after 5 days (120 hours)." : {
       "comment" : "warning body",
       "extractionState" : "manual",
@@ -34433,8 +34739,38 @@
         }
       }
     },
+    "The patch ran it. Final once its record is read." : {
+      "comment" : "uncertain delivery status: awaiting record"
+    },
+    "The patch session ended before the patch told how much of the bolus of %@ U it delivered. The full amount was counted as delivered." : {
+      "comment" : "Body bolus counted as delivered at the patch session end notification"
+    },
+    "The patch session ended during the bolus." : {
+      "comment" : "uncertain delivery cause: the patch session ended"
+    },
+    "The patch will go back to your scheduled basal rate." : {
+
+    },
+    "The patch's records show %1$@ U delivered by the bolus at %2$@, the app counted %3$@ U. Add the %4$@ U missing manually." : {
+      "comment" : "Body bolus under-counted notification"
+    },
+    "The patch's records show %1$@ U delivered by the bolus at %2$@, the app counted %3$@ U. Insulin on board is overstated by %4$@ U." : {
+      "comment" : "Body bolus over-counted notification"
+    },
+    "The patch's records show a bolus of %1$@ U delivered at %2$@ that is not in the app. Add it manually." : {
+      "comment" : "Body bolus not counted notification"
+    },
+    "The patch's records show it never ran: 0 U." : {
+      "comment" : "uncertain delivery status: never ran"
+    },
     "The pump beeps 4 times. Check that the serial number on the pump base matches the one in the pump base settings." : {
 
+    },
+    "The pump is busy — try again in a moment" : {
+      "comment" : "patch history: the fill gave way to another command"
+    },
+    "The temp basal ended. Final once its record is read." : {
+      "comment" : "uncertain delivery status: cancelled temp basal awaiting record"
     },
     "The time on your pump is different from the current time. Do you want to update the time on your pump to the current time?" : {
       "comment" : "Message for pod sync time action sheet",
@@ -35407,6 +35743,9 @@
           }
         }
       }
+    },
+    "Uncertain delivery" : {
+      "comment" : "title for the uncertain delivery notice"
     },
     "Use a medical adhesive remover or baby oil if necessary." : {
 
@@ -36388,6 +36727,10 @@
           }
         }
       }
+    },
+    "What the driver currently believes is being delivered, and the finished doses still waiting on their record." : {
+      "comment" : "A description of the list of doses that the pump has reported.",
+      "isCommentAutoGenerated" : true
     },
     "When clicking on the button, you will get a Biometrics prompt. Once completed, the patch will be deactivated and you will be prompted to pair a new patch." : {
       "comment" : "Instructions for deactivate patch",
@@ -38502,5 +38845,5 @@
 
     }
   },
-  "version" : "1.0"
+  "version" : "1.1"
 }

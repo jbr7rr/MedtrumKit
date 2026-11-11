@@ -2,6 +2,19 @@ import LoopKit
 import LoopKitUI
 import SwiftUI
 
+/// One dose the driver could not be sure of, as the settings screen tells of it - see `UncertainDelivery`
+struct UncertainDeliveryNotice: Identifiable {
+    let id: String
+    let title: String
+    let cause: String
+    let status: String
+    /// What to do meanwhile, while it is not settled
+    let advice: String?
+    let isSettled: Bool
+    /// Still uncertain: what the host counts may not be what the patch delivered
+    let isUncertain: Bool
+}
+
 enum PatchLifecycleState {
     case noPatch
     case active
@@ -23,6 +36,9 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
     @Published var pumpTime = Date.distantPast
     @Published var pumpTimeSyncedAt = Date.distantPast
     @Published var patchState: PatchState = .none
+    /// The "Activate Patch" row with a patch shown: one being set up, or one running whose session never started - its
+    /// activation's answer lost, the sheet dismissed since - for the activation's retry, which starts it
+    @Published var showsActivatePatch = false
     @Published var patchStateString: String = PatchState.none.description
     @Published var basalType: DoseType = .basal
     @Published var basalRate: String = ""
@@ -46,8 +62,11 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
     @Published var showingHeartbeatWarning = false
     @Published var showingDeleteConfirmation = false
     @Published var showingSuspendPicker = false
+    @Published var showingStopTempBasalConfirmation = false
     @Published var hasPreviousPatch = false
     @Published var isClearingAlert = false
+    /// Newest first
+    @Published var uncertainDeliveries: [UncertainDeliveryNotice] = []
 
     @Published var useSilentTones = false {
         didSet {
@@ -94,6 +113,23 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
         return formatter
     }()
 
+    let noticeDateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        formatter.doesRelativeDateFormatting = true
+        return formatter
+    }()
+
+    let unitsFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 2
+        formatter.minimumIntegerDigits = 1
+        return formatter
+    }()
+
     let timeRemainingFormatter: DateComponentsFormatter = {
         let dateComponentsFormatter = DateComponentsFormatter()
         dateComponentsFormatter.allowedUnits = [.hour, .minute]
@@ -108,6 +144,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
     let toTempBasal: () -> Void
     let toPatchDetails: () -> Void
     let toPreviousPatchDetails: () -> Void
+    let toPumpRecords: () -> Void
     let toInsulinType: () -> Void
     let pumpActivationAction: (Bool) -> Void
     let activatePatchAction: () -> Void
@@ -121,6 +158,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
         _ toTempBasal: @escaping () -> Void,
         _ toPatchDetails: @escaping () -> Void,
         _ toPreviousPatchDetails: @escaping () -> Void,
+        _ toPumpRecords: @escaping () -> Void,
         _ toInsulinType: @escaping () -> Void,
         _ pumpRemovalAction: @escaping () -> Void,
         _ activatePatchAction: @escaping () -> Void
@@ -132,6 +170,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
         self.toInsulinType = toInsulinType
         self.toPatchDetails = toPatchDetails
         self.toPreviousPatchDetails = toPreviousPatchDetails
+        self.toPumpRecords = toPumpRecords
         self.toSettings = toSettings
         self.toTempBasal = toTempBasal
         self.activatePatchAction = activatePatchAction
@@ -141,7 +180,8 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
             return
         }
 
-        isConnected = pumpManager.bluetooth.isConnected
+        // Not the BLE link in the tests
+        isConnected = pumpManager.bluetooth?.isConnected ?? false
         updateState(pumpManager.state)
         pumpManager.addStatusObserver(self, queue: processQueue)
     }
@@ -260,7 +300,8 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
         if let pumpManager = self.pumpManager {
             log.info(pumpManager.state.debugDescription)
         }
-        return log.getDebugLogs()
+        // After the log files: the record history of the current patch and the previous one, written out first
+        return log.getDebugLogs() + (pumpManager?.recordHistoryFilesForSharing() ?? [])
     }
 
     func toPumpActivation() {
@@ -269,7 +310,19 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
             return
         }
 
-        pumpActivationAction(pumpManager.state.pumpState.hasCompletedPriming)
+        // Activated with no session: the activation's retry, not priming
+        let state = pumpManager.state
+        pumpActivationAction(state.pumpState.hasCompletedPriming || state.isActivatedWithNoSession)
+    }
+
+    /// The "Activate Patch" row with no patch shown - none activated, or its id not named yet: a patch running whose
+    /// session never started goes to the activation's retry, not to setting up a new one from the base
+    func activatePatchPressed() {
+        guard pumpManager?.state.isActivatedWithNoSession == true else {
+            activatePatchAction()
+            return
+        }
+        toPumpActivation()
     }
 
     func suspendDelivery(duration: TimeInterval) {
@@ -277,6 +330,7 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
             return
         }
 
+        isUpdatingSuspend = true
         pumpManager.suspendPatch(duration: duration) { error in
             DispatchQueue.main.async {
                 self.isUpdatingSuspend = false
@@ -315,6 +369,9 @@ class MedtrumKitSettingsViewModel: PatchLifetimeFormatting, ObservableObject, Pu
             return
         }
 
+        // This goes straight to the pump manager, so the host never sees it and never logs it. Say so
+        // here, or a temp basal cancelled from this screen looks like it came out of nowhere.
+        log.info("Stop temp basal (from settings)")
         isUpdatingTempBasal = true
         pumpManager.enactTempBasal(unitsPerHour: 0, for: 0) { error in
             DispatchQueue.main.async {
@@ -381,7 +438,7 @@ extension MedtrumKitSettingsViewModel {
         }
 
         DispatchQueue.main.async {
-            self.isConnected = pumpManager.bluetooth.isConnected
+            self.isConnected = pumpManager.bluetooth?.isConnected ?? false
             self.updateState(pumpManager.state)
         }
     }
@@ -399,6 +456,7 @@ extension MedtrumKitSettingsViewModel {
 
         showPumpTimeSyncWarning = state.shouldShowTimeWarning()
         patchState = state.pumpState
+        showsActivatePatch = state.pumpState.isAwaitingActivation || state.isActivatedWithNoSession
         useSilentTones = state.useSilentTones
         patchStateString = state.pumpState.description
         pumpTime = state.pumpTime
@@ -437,6 +495,244 @@ extension MedtrumKitSettingsViewModel {
         if let insulinType = state.insulinType {
             self.insulinType = insulinType
         }
+
+        uncertainDeliveries = state.uncertainDeliveries.reversed().map { notice(for: $0, phase: state.phase(of: $0)) }
+    }
+
+    func notice(for delivery: UncertainDelivery, phase: UncertainDelivery.Phase) -> UncertainDeliveryNotice {
+        let amount = unitsFormatter.string(from: delivery.amount as NSNumber) ?? "\(delivery.amount)"
+        let delivered = delivery.delivered.map { unitsFormatter.string(from: $0 as NSNumber) ?? "\($0)" } ?? "-"
+
+        let title: String
+        switch delivery.kind {
+        case .bolus:
+            title = String(
+                format: String(localized: "Bolus of %1$@ U (%2$@)", comment: "uncertain delivery notice: the bolus, and when"),
+                amount,
+                noticeDateFormatter.string(from: delivery.sentAt)
+            )
+        case .tempBasal:
+            title = String(
+                format: String(
+                    localized: "Temp basal of %1$@ U/h (%2$@)",
+                    comment: "uncertain delivery notice: the temp basal, and when"
+                ),
+                amount,
+                noticeDateFormatter.string(from: delivery.sentAt)
+            )
+        case .tempBasalCancel:
+            title = String(
+                format: String(
+                    localized: "Cancel of the temp basal of %1$@ U/h (%2$@)",
+                    comment: "uncertain delivery notice: the cancel of a temp basal, and when"
+                ),
+                amount,
+                noticeDateFormatter.string(from: delivery.notedAt)
+            )
+        }
+
+        var cause: String
+        switch delivery.cause {
+        case .unanswered:
+            cause = String(localized: "The patch did not confirm the command.", comment: "uncertain delivery cause: unconfirmed")
+        case .endNotSeen:
+            cause = String(localized: "The end of the bolus was not seen.", comment: "uncertain delivery cause: end not seen")
+        case .appRestarted:
+            cause = String(
+                localized: "The app was restarted while the command was out.",
+                comment: "uncertain delivery cause: app restarted"
+            )
+        case .patchDeactivated:
+            cause = String(
+                localized: "The patch session ended during the bolus.",
+                comment: "uncertain delivery cause: the patch session ended"
+            )
+        case .unknownSegment:
+            cause = String(
+                localized: "A status showed the patch running a temp basal the app has no record of.",
+                comment: "uncertain delivery cause: a temp basal running that the app did not know of"
+            )
+        case .stalled:
+            cause = ""
+        }
+        // A bolus that stood still while the patch kept answering - its cause, or told of with another
+        if let stalledFor = delivery.stalledFor {
+            let stall = delivery.stallResumed ? String(
+                format: String(
+                    localized: "Delivered slowly: up to %lld s between the patch's steps, then at its pace to the end.",
+                    comment: "uncertain delivery cause: a bolus that stalled, then went on at the patch's pace (longest gap in seconds)"
+                ),
+                Int(stalledFor)
+            ) : String(
+                format: String(
+                    localized: "The bolus stalled: no progress for %lld s while the patch kept answering. Possible occlusion: the patch counts the insulin whether it went in or not.",
+                    comment: "uncertain delivery cause: a bolus that stalled (longest time without progress in seconds)"
+                ),
+                Int(stalledFor)
+            )
+            cause = cause.isEmpty ? stall : cause + " " + stall
+        }
+
+        var status: String
+        switch phase {
+        case .countedInFull:
+            status = String(
+                format: String(
+                    localized: "Counted as the full %@ U until the patch's record says what it delivered.",
+                    comment: "uncertain delivery status: bolus counted in full"
+                ),
+                amount
+            )
+        case let .countedAs(units):
+            status = String(
+                format: String(
+                    localized: "Counted as the %@ U the patch reported until its record says what it delivered.",
+                    comment: "uncertain delivery status: bolus counted as reported"
+                ),
+                unitsFormatter.string(from: units as NSNumber) ?? "\(units)"
+            )
+        case .notReported:
+            status = String(
+                localized: "Not counted until a status or its record shows that the patch ran it.",
+                comment: "uncertain delivery status: temp basal not reported"
+            )
+        case .awaitingRecord:
+            status = delivery.kind == .tempBasalCancel ? String(
+                localized: "The temp basal ended. Final once its record is read.",
+                comment: "uncertain delivery status: cancelled temp basal awaiting record"
+            ) : String(
+                localized: "The patch ran it. Final once its record is read.",
+                comment: "uncertain delivery status: awaiting record"
+            )
+        case .countedRunning:
+            status = String(
+                localized: "Counted as running until a status shows whether the cancel stopped it.",
+                comment: "uncertain delivery status: temp basal counted running"
+            )
+        case .stillRunning:
+            status = String(
+                localized: "A status shows the temp basal still running: the cancel did not stop it.",
+                comment: "uncertain delivery status: temp basal still running"
+            )
+        case .settled(.byRecord):
+            status = delivery.record.map { record in
+                String(
+                    format: String(
+                        localized: "Settled by the patch's record #%1$lld: %2$@ U delivered.",
+                        comment: "uncertain delivery status: settled by a numbered record"
+                    ),
+                    record,
+                    delivered
+                )
+            } ?? String(
+                format: String(
+                    localized: "Settled by the patch's records: %@ U delivered.",
+                    comment: "uncertain delivery status: settled by records"
+                ),
+                delivered
+            )
+        case .settled(.byEstimate):
+            status = String(
+                format: String(
+                    localized: "Final without its record: counted as %@ U.",
+                    comment: "uncertain delivery status: settled by estimate"
+                ),
+                delivered
+            )
+        case .settled(.neverRan):
+            status = String(
+                localized: "The patch's records show it never ran: 0 U.",
+                comment: "uncertain delivery status: never ran"
+            )
+        case .settled(.notConfirmed):
+            let duration = delivery.duration.flatMap { timeRemainingFormatter.string(from: $0) } ?? "-"
+            status = String(
+                format: String(
+                    localized: "Not counted: the patch never showed it running, but may have run it - %1$@ U/h for up to %2$@.",
+                    comment: "uncertain delivery status: temp basal never confirmed, not counted"
+                ),
+                amount,
+                duration
+            )
+        case .settled(.final):
+            status = String(
+                format: String(localized: "Final: %@ U.", comment: "uncertain delivery status: final, how not known"),
+                delivered
+            )
+        case .settled(.untracked):
+            status = String(
+                localized: "No longer tracked.",
+                comment: "uncertain delivery status: its dose no longer tracked"
+            )
+        case .settled(.notCounted):
+            status = String(
+                localized: "Not counted: what it delivered is not known.",
+                comment: "uncertain delivery status: an unknown temp basal, not counted"
+            )
+        }
+        // A cancel the patch did not act on: still so once its temp basal ended, waiting on its record or settled
+        if delivery.cancelDidNotStop, phase != .stillRunning {
+            status = String(
+                localized: "The cancel did not stop it: the patch kept running it.",
+                comment: "uncertain delivery status: settled cancel, its temp basal shown still running after it"
+            ) + " " + status
+        }
+
+        var advice: String?
+        let isUncertain: Bool
+        switch phase {
+        case .countedInFull,
+             .countedAs:
+            isUncertain = true
+            advice = String(
+                localized: "Don't bolus again to make up for it. Keep the phone near the patch: its record is usually read within minutes.",
+                comment: "uncertain delivery advice for a bolus"
+            )
+        case .notReported:
+            isUncertain = true
+            advice = String(
+                localized: "Keep the phone near the patch: a status or its record settles it. If its records cannot be read, it may stay uncertain.",
+                comment: "uncertain delivery advice for a temp basal not reported"
+            )
+        case .countedRunning:
+            isUncertain = true
+            advice = String(
+                localized: "Keep the phone near the patch: the next status settles it.",
+                comment: "uncertain delivery advice for a cancel"
+            )
+        case .settled(.notCounted):
+            isUncertain = true
+            advice = String(
+                localized: "Check the patch's basal. Setting or cancelling a temp basal from the app replaces it.",
+                comment: "uncertain delivery advice for an unknown temp basal"
+            )
+        case .awaitingRecord,
+             .stillRunning,
+             .settled:
+            isUncertain = false
+            advice = nil
+        }
+        // Its record will not tell: the patch records what it was set to deliver
+        if delivery.stalledFor != nil, !delivery.stallResumed {
+            advice = String(
+                localized: "Check the infusion site and your glucose. If it keeps rising, replace the patch: its record will not tell whether the insulin went in.",
+                comment: "uncertain delivery advice for a bolus that stalled"
+            )
+        }
+
+        return UncertainDeliveryNotice(
+            id: "\(delivery.kind.rawValue)-\(delivery.sentAt.timeIntervalSince1970)-\(delivery.notedAt.timeIntervalSince1970)",
+            title: title,
+            cause: cause,
+            status: status,
+            advice: advice,
+            isSettled: delivery.isSettled,
+            isUncertain: isUncertain
+        )
+    }
+
+    func clearSettledUncertainDeliveries() {
+        pumpManager?.clearSettledUncertainDeliveries()
     }
 
     private func getLifecycleState(state: MedtrumPumpState) -> PatchLifecycleState {

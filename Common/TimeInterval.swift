@@ -1,6 +1,14 @@
 import Foundation
 
 extension TimeInterval {
+    /// Seconds on the monotonic clock that keeps counting while the device sleeps (`CLOCK_MONOTONIC_RAW`, as
+    /// `mach_continuous_time`) and that a change of the wall clock does not move. Not `systemUptime`, which stops
+    /// while the system sleeps, so an interval that spans a sleep measured on it falls short.
+    /// Every uptime stamp that is compared with another is taken on this one. Not comparable across a reboot.
+    static var continuousUptime: TimeInterval {
+        Double(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)) / 1_000_000_000
+    }
+
     static func days(_ days: Double) -> TimeInterval {
         self.init(days: days)
     }

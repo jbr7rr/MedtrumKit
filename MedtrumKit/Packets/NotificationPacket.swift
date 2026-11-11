@@ -15,6 +15,13 @@ struct SynchronizePacketResponse: Codable {
     var truncated: Bool = false
     var invalidPayload: Bool = false
 
+    /// When it came in, taken as it is parsed: a command written after it can't be in it, whenever it is applied -
+    /// see `MedtrumPumpManager.statusPredatesCommand`
+    var receivedAt = Date.now
+    /// `receivedAt` on the monotonic clock, which a change of the wall clock does not move - the one
+    /// `MedtrumPumpManager.uptime` stamps commands on
+    var receivedUptime = TimeInterval.continuousUptime
+
     func validated(expectedPatchId: UInt64 = 0) -> SynchronizePacketResponse {
         let invalidBolus = bolus.map { !(0 ... 50).contains($0.delivered) } ?? false
         let invalidBasal = basal.map { !(0 ... 40).contains($0.rate) } ?? false
@@ -24,7 +31,9 @@ struct SynchronizePacketResponse: Codable {
 
         guard !invalidBolus, !invalidBasal, !invalidReservoir, !wrongBasalPatch, !wrongStoragePatch else {
             MedtrumLogger(category: "NotificationPacket").error("Rejecting mismatched notification payload")
-            return SynchronizePacketResponse(state: state, activeAlarms: [], invalidPayload: true)
+            return SynchronizePacketResponse(
+                state: state, activeAlarms: [], invalidPayload: true, receivedAt: receivedAt, receivedUptime: receivedUptime
+            )
         }
         return self
     }
@@ -121,12 +130,25 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
             magnetoPlacement: nil
         )
 
-        let expectedLength = NotificationPacket.fields
-            .filter { fieldMask & $0.mask != 0 }
-            .reduce(0) { $0 + $1.size }
+        let present = NotificationPacket.fields.filter { fieldMask & $0.mask != 0 }
+        let expectedLength = present.reduce(0) { $0 + $1.size }
+
+        // A basal field of type none can come as its type byte alone - device 2026-10-26 10:08:55, a halt as the reservoir
+        // ran dry: 16 bytes for the 27 its mask announces, storage and the rest in their places after it. Told by the
+        // length: exactly that much short, the type byte none. It carries no basal: none is taken from it.
+        let basalOffset = present.prefix(while: { $0.mask != MASK_BASAL }).reduce(0) { $0 + $1.size }
+        let isBasalTypeOnly = fieldMask & MASK_BASAL != 0 &&
+            syncData.count == expectedLength - (NotificationPacket.basalSize - 1) &&
+            syncData.count > basalOffset && syncData[basalOffset] == BasalType.NONE.rawValue
+        if isBasalTypeOnly {
+            NotificationPacket.log.info(
+                "Notification basal field of type none is its type byte alone, no basal taken from it - mask: " +
+                    "\(String(fieldMask, radix: 2)), \(syncData.count) bytes: \(syncData.hexEncodedString())"
+            )
+        }
 
         // validate the entire mask before parsing, short payload -> keep only the state
-        guard syncData.count >= expectedLength else {
+        guard isBasalTypeOnly || syncData.count >= expectedLength else {
             NotificationPacket.log.error(
                 "Notification payload too short - mask: \(String(fieldMask, radix: 2)) expects " +
                     "\(expectedLength) bytes, got \(syncData.count): \(syncData.hexEncodedString())"
@@ -135,7 +157,12 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
             return output
         }
 
-        for field in NotificationPacket.fields where fieldMask & field.mask != 0 {
+        for field in present {
+            if isBasalTypeOnly, field.mask == MASK_BASAL {
+                offset += 1
+                continue
+            }
+
             guard offset + field.size <= syncData.count else {
                 output.truncated = true
                 break
@@ -154,6 +181,9 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
         let parse: (Data, Int, inout SynchronizePacketResponse) -> Void
     }
 
+    /// The basal field in full - see `handle` for the one of type none that is its type byte alone
+    private static let basalSize = 12
+
     private static let fields: [Field] = [
         Field(mask: MASK_SUSPEND, size: 4) { data, offset, output in
             output.suspendTime = Date.fromMedtrumSeconds(data.subdata(in: offset ..< offset + 4).toUInt64())
@@ -167,7 +197,7 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
         },
         // Just ignore this flag
         Field(mask: MASK_EXTENDED_BOLUS, size: 3) { _, _, _ in },
-        Field(mask: MASK_BASAL, size: 12) { data, offset, output in
+        Field(mask: MASK_BASAL, size: basalSize) { data, offset, output in
             let rateDelivery = UInt32(data.subdata(in: offset + 9 ..< offset + 12).toDouble())
             let delivery = rateDelivery >> 12
             let rate = rateDelivery & 0x0FFF
@@ -206,13 +236,14 @@ class NotificationPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
         },
         Field(mask: MASK_ALARM, size: 4) { data, offset, output in
             let flags = UInt16(data.subdata(in: offset ..< offset + 2).toUInt64())
-            if flags != AlarmState.None.rawValue {
-                // Alarms list available, only need to check the first 3
-                for i in 0 ..< 3 {
-                    if flags & (1 << i) != 0, let alarmState = AlarmState(rawValue: 1 << i) {
-                        output.activeAlarms.append(alarmState)
-                    }
-                }
+            // Bit i is the i-th alarm state as AAPS lists them, none at 0: bits 1 to 3 are the warnings, the rest comes
+            // from the patch state. Not the raw values - those only number the cases. Bit 8 is reservoir empty, which
+            // AAPS doesn't map: device 2026-10-26 09:08:55, 0x0104 with state 98, and the alarm record #1643 of bit 8.
+            let warnings: [(bit: UInt16, alarm: AlarmState)] = [
+                (1, .PumpLowBattery), (2, .PumpLowReservoir), (3, .PumpExpiresSoon), (8, .ReservoirEmpty)
+            ]
+            for (bit, alarm) in warnings where flags & (1 << bit) != 0 {
+                output.activeAlarms.append(alarm)
             }
 
             // Unused parameter

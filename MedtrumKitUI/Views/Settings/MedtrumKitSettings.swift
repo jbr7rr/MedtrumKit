@@ -52,6 +52,69 @@ struct MedtrumKitSettings: View {
         )
     }
 
+    var stopTempBasalSheet: ActionSheet {
+        ActionSheet(
+            title: Text("Stop Temp Basal", comment: "Title for stop temp basal action"),
+            message: Text(
+                "The patch will go back to your scheduled basal rate.",
+                comment: "Message for stop temp basal action"
+            ),
+            buttons: [
+                .destructive(Text("Stop Temp Basal", comment: "Stop temp basal")) {
+                    self.viewModel.stopTempBasal()
+                },
+                .cancel(Text("Cancel", comment: "button cancel"))
+            ]
+        )
+    }
+
+    /// What the warnings of uncertain delivery were about, and how each was settled
+    private var uncertainDeliveries: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Uncertain delivery", comment: "title for the uncertain delivery notice")
+                .font(Font.subheadline.weight(.bold))
+
+            ForEach(viewModel.uncertainDeliveries) { notice in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(notice.title)
+                        .font(Font.footnote.weight(.semibold))
+                    Text(notice.cause)
+                        .font(.footnote)
+                    Text(notice.status)
+                        .font(.footnote)
+                        .foregroundColor(notice.isUncertain ? .orange : .secondary)
+                    if let advice = notice.advice {
+                        Text(advice)
+                            .font(.footnote)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button {
+                    viewModel.toPumpRecords()
+                } label: {
+                    Text("Patch Records")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                if viewModel.uncertainDeliveries.contains(where: \.isSettled) {
+                    Button {
+                        viewModel.clearSettledUncertainDeliveries()
+                    } label: {
+                        Text("Clear settled", comment: "button clearing the settled uncertain deliveries")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(.top, 4)
+        }
+        .padding(.vertical, 8)
+    }
+
     var body: some View {
         List {
             Section {
@@ -149,6 +212,10 @@ struct MedtrumKitSettings: View {
                         .disabled(viewModel.isClearingAlert)
                     }.padding(.vertical, 8)
                 }
+
+                if !viewModel.uncertainDeliveries.isEmpty {
+                    uncertainDeliveries
+                }
             }
 
             Section {
@@ -178,22 +245,26 @@ struct MedtrumKitSettings: View {
                         }
                     }
 
-                    if viewModel.basalType == .tempBasal {
-                        Button(action: {
-                            viewModel.stopTempBasal()
-                        }) {
-                            HStack {
-                                Text("Stop Temp Basal", comment: "Stop temp basal")
-                                Spacer()
-                                if viewModel.isUpdatingTempBasal {
-                                    ActivityIndicator()
-                                }
+                    // Always present, disabled when there is no temp basal to stop. Showing it only
+                    // while one runs made every row below shift as temp basals came and went, so a tap
+                    // aimed at Sync could land here and cancel a temp basal instead.
+                    Button(action: {
+                        viewModel.showingStopTempBasalConfirmation = true
+                    }) {
+                        HStack {
+                            Text("Stop Temp Basal", comment: "Stop temp basal")
+                            Spacer()
+                            if viewModel.isUpdatingTempBasal {
+                                ActivityIndicator()
                             }
                         }
-                        .disabled(
-                            viewModel.isUpdatingPumpState || viewModel.isUpdatingTempBasal || viewModel
-                                .isUpdatingSuspend || viewModel.isClearingAlert
-                        )
+                    }
+                    .disabled(
+                        viewModel.basalType != .tempBasal || viewModel.isUpdatingPumpState || viewModel
+                            .isUpdatingTempBasal || viewModel.isUpdatingSuspend || viewModel.isClearingAlert
+                    )
+                    .actionSheet(isPresented: $viewModel.showingStopTempBasalConfirmation) {
+                        stopTempBasalSheet
                     }
 
                     Button(action: { viewModel.syncData() }) {
@@ -222,7 +293,7 @@ struct MedtrumKitSettings: View {
                         }
                     }
 
-                    if viewModel.patchState.isAwaitingActivation {
+                    if viewModel.showsActivatePatch {
                         Button(action: { viewModel.toPumpActivation() }) {
                             HStack {
                                 Text("Activate Patch", comment: "label for activate patch")
@@ -292,7 +363,7 @@ struct MedtrumKitSettings: View {
                         }
                     }
                 } else {
-                    Button(action: { viewModel.activatePatchAction() }) {
+                    Button(action: { viewModel.activatePatchPressed() }) {
                         HStack {
                             Text("Activate Patch", comment: "activate patch")
                             Spacer()
@@ -426,6 +497,19 @@ struct MedtrumKitSettings: View {
                     if viewModel.hasPreviousPatch {
                         viewModel.toPreviousPatchDetails()
                     }
+                }
+
+                HStack {
+                    Text("Patch Records")
+                        .foregroundColor(Color.primary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: UIFont.systemFontSize, weight: .medium))
+                        .opacity(0.3)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    viewModel.toPumpRecords()
                 }
 
             } header: {
