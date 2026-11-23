@@ -1,6 +1,5 @@
 class PumpBaseSettingsViewModel: ObservableObject {
     @Published var isOnboarded = false
-    @Published var is300u = false
     @Published var serialNumber: String = ""
     @Published var errorMessage: String = ""
 
@@ -20,10 +19,6 @@ class PumpBaseSettingsViewModel: ObservableObject {
 
         isOnboarded = pumpManager.state.isOnboarded
         serialNumber = pumpManager.state.pumpSN.hexEncodedString().uppercased()
-        if !pumpManager.state.pumpSN.isEmpty {
-            // Only try to decrypt pumpSN if it is valid
-            is300u = pumpManager.state.pumpName.contains("300U")
-        }
     }
 
     func saveAndContinue() {
