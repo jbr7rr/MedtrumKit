@@ -91,6 +91,23 @@ extension ManagerBolusScenarioTests {
         XCTAssertEqual(delegate.batches.count, 0)
     }
 
+    /// 1.00 U, on a step: written as its 20 steps, and the bolus running, and reported, is 1.00 U - nothing floored
+    func testBolusOnAStepIsSentAsItIs() {
+        _ = makeManagerForTheBolusOfRecord123()
+
+        link.script(CommandType.SET_BOLUS, fragments: "0f13280000007b00ec009786a8178900")
+        XCTAssertNil(commandBolus(1.0))
+        settle()
+
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_BOLUS])
+        XCTAssertEqual(steps(of: link.writes.first?.packet), 20)
+        XCTAssertEqual((link.writes.first?.packet as? SetBolusPacket)?.bolusAmount ?? 0, 1.0, accuracy: 1e-9)
+        XCTAssertEqual(pumpManager.state.bolusDose?.value ?? 0, 1.0, accuracy: 1e-9)
+        XCTAssertEqual(reports(of: .bolus).first?.programmedUnits ?? 0, 1.0, accuracy: 1e-9)
+        XCTAssertEqual(delegate.errors.count, 0)
+        XCTAssertTrue(uncertain.isEmpty, "nothing was uncertain")
+    }
+
     /// An amount a hair below a step - floating point noise - keeps that step: 0.05 U is sent, not refused
     func testBolusAHairBelowAStepKeepsIt() {
         let units = 0.05 - 1e-12

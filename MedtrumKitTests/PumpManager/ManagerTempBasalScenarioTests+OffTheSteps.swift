@@ -57,6 +57,29 @@ extension ManagerTempBasalScenarioTests {
         XCTAssertEqual(pumpManager.state.basalDose.pumpStartTime, Self.ourStart)
     }
 
+    /// 1.25 U/h, on a step: written as its 25 steps, and the temp basal running, and reported, is 1.25 U/h - nothing
+    /// floored
+    func testTempBasalOnAStepIsSentAsItIs() {
+        scriptSetOffTheSteps(answeredRate: 1.25)
+
+        XCTAssertNil(commandTempBasal(1.25, duration: 30 * Self.minute))
+        settle()
+
+        XCTAssertEqual(link.writtenCommands, [CommandType.SET_TEMP_BASAL])
+        let packet = written(CommandType.SET_TEMP_BASAL)?.packet
+        XCTAssertEqual(steps(of: packet), 25)
+        XCTAssertEqual((packet as? SetTempBasalPacket)?.rate ?? 0, 1.25, accuracy: 1e-9)
+        XCTAssertEqual(uncertainDeliveryErrors, 0)
+        XCTAssertNil(pumpManager.state.unconfirmedTempBasal)
+
+        XCTAssertEqual(pumpManager.state.basalDose.type, .tempBasal)
+        XCTAssertEqual(pumpManager.state.basalDose.value, 1.25, accuracy: 1e-9)
+        let event = delegate.batches.first?.events.first
+        XCTAssertEqual(event?.dose?.type, .tempBasal)
+        XCTAssertEqual(event?.dose?.unitsPerHour ?? 0, 1.25, accuracy: 1e-9)
+        XCTAssertEqual(rate(inIdentityOf: event), "1.25")
+    }
+
     /// The reviewer's case on #224, Trio dev: 0.23 U/h went out as 0.25, the dose kept 0.23, and the next status of the
     /// patch's own temp basal was "none of ours" - an uncertain delivery. Sent as 0.20 now, and the status at 0.20 is it.
     func testTempBasalOffTheStepsIsOursInTheStatusThatShowsIt() {

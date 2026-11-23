@@ -250,12 +250,6 @@ public class MedtrumPumpManager: DeviceManager {
         link.pumpManager = self
     }
 
-    /// The manager on a `BluetoothManager` given - a subclass of a test's, as upstream's tests inject one
-    /// (jbr7rr/MedtrumKit#222): driven over it as over any `link`, nothing global registered, no record history kept.
-    convenience init(state: MedtrumPumpState, bluetooth: BluetoothManager) {
-        self.init(state: state, link: bluetooth, recordHistory: nil)
-    }
-
     deinit {
         NotificationCenter.default.removeObserver(self)
         log.info("MedtrumPumpManager deallocated")
