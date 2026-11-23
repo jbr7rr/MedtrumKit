@@ -32,7 +32,7 @@ struct MedtrumSerialScannerView: UIViewControllerRepresentable {
     }
 
     #if targetEnvironment(simulator)
-    static let simulatedSerial = "1234ABCD"
+    static let simulatedSerial = "4A12D828" // or 52DF1614 for a 300U model
     #endif
 
     func makeUIViewController(context: Context) -> DataScannerViewController {
