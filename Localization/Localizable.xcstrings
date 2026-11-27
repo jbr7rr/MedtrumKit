@@ -6073,6 +6073,12 @@
         }
       }
     },
+    "Allow camera access in Settings to scan the serial number, or type it in instead." : {
+
+    },
+    "Another app is using the camera, or the phone needs a moment. Try again shortly, or type the serial number in instead." : {
+
+    },
     "APPLY PATCH" : {
 
     },
@@ -7705,6 +7711,9 @@
         }
       }
     },
+    "Bluetooth is unavailable. Restart the app if this persists." : {
+
+    },
     "Bolus" : {
       "comment" : "Pump Event title for UnfinalizedDose with doseType of .bolus",
       "extractionState" : "manual",
@@ -8379,6 +8388,12 @@
     },
     "Bolus of %1$@ U (%2$@)" : {
       "comment" : "uncertain delivery notice: the bolus, and when"
+    },
+    "Camera Access Is Off" : {
+
+    },
+    "Camera Is Busy" : {
+
     },
     "Cancel" : {
       "comment" : "cancel force remove",
@@ -15088,6 +15103,9 @@
     "Final: %@ U." : {
       "comment" : "uncertain delivery status: final, how not known"
     },
+    "Find it on the back of the pump base, or on the product box." : {
+
+    },
     "Fold down and break the tab of the patch, then push the pump base up from the bottom to remove it." : {
 
     },
@@ -16407,6 +16425,9 @@
           }
         }
       }
+    },
+    "Illustration of the pump base, showing the serial number sticker on its back." : {
+
     },
     "In flight" : {
       "comment" : "A heading for the list of doses that the pump is currently sending.",
@@ -22635,6 +22656,9 @@
 
     },
     "Once the patch is off your skin, do not press the needle button again. Doing so will result in injury." : {
+
+    },
+    "Open Settings" : {
 
     },
     "Patch %@" : {
@@ -30962,6 +30986,9 @@
           }
         }
       }
+    },
+    "Scan Serial Number" : {
+
     },
     "Scheduled Basal" : {
       "comment" : "Title of insulin delivery section",
