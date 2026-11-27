@@ -36,6 +36,15 @@ extension Data {
         return result
     }
 
+    /// Little-endian IEEE 754 single precision, as the pump stores the values in its TDD records
+    func toFloat() -> Float {
+        guard count == 4 else {
+            preconditionFailure("Cannot convert Data to Float, expected 4 bytes, got \(count)")
+        }
+
+        return Float(bitPattern: UInt32(toUInt64()))
+    }
+
     func toInt64() -> Int64 {
         guard count <= 8 else {
             preconditionFailure("Cannot convert Data to Int64, size too long")

@@ -1,6 +1,8 @@
 import Foundation
 import LoopKit
 
+/// The `raw` of an event is its permanent identity: LoopKit derives `DoseEntry.syncIdentifier` from it.
+/// It has to stay byte-for-byte identical for the whole life of a dose.
 public extension NewPumpEvent {
     private static let dateFormatter = ISO8601DateFormatter()
 
@@ -26,6 +28,21 @@ public extension NewPumpEvent {
                 .data(using: .utf8) ?? Data([]),
             title: String(localized: "Temp Basal", comment: "Pump Event title for UnfinalizedDose with doseType of .tempBasal")
         )
+    }
+
+    /// A bolus or temp basal reported off its `UnfinalizedDose`, as `entry` - nil for any other kind of dose. Same
+    /// identity for every report of the dose, mutable or final.
+    internal static func finishedDose(_ dose: UnfinalizedDose, entry: DoseEntry) -> NewPumpEvent? {
+        switch dose.type {
+        case .bolus:
+            return NewPumpEvent.bolus(dose: entry)
+        case .tempBasal:
+            return NewPumpEvent.tempBasal(dose: entry)
+        case .basal,
+             .resume,
+             .suspend:
+            return nil
+        }
     }
 
     static func basal(dose: DoseEntry) -> NewPumpEvent {
@@ -66,15 +83,18 @@ public extension NewPumpEvent {
         )
     }
 
-    internal static func alert(type: MedtrumAlert) -> NewPumpEvent? {
+    /// An alarm of `type` raised at `date` - nil for an alert that is none. Each its own event: its `raw` carries its date
+    /// as well as its title. Loop keeps one pump event per `raw` and iAPS keys them by its hash - by its title alone,
+    /// every alarm of a kind would be the first one to the host, a later one merged into it or dropped.
+    internal static func alert(type: MedtrumAlert, date: Date = Date.now) -> NewPumpEvent? {
         guard let alertTitle = type.title, let alertType = type.type else {
             return nil
         }
 
         return NewPumpEvent(
-            date: Date.now,
+            date: date,
             dose: nil,
-            raw: alertTitle.data(using: .utf8) ?? Data([]),
+            raw: "\(alertTitle) \(Int(date.timeIntervalSince1970))".data(using: .utf8) ?? Data([]),
             title: alertTitle,
             type: .alarm,
             alarmType: alertType

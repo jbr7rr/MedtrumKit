@@ -1,6 +1,35 @@
 import CoreBluetooth
 
-class BluetoothManager: NSObject, CBCentralManagerDelegate {
+/// The connection to the patch as the pump manager drives it: connect, send a command and wait for its
+/// answer, drop the link. The statuses the patch pushes travel the other way, to `pumpManager`.
+///
+/// `BluetoothManager` is the only real one - this exists so the manager can be driven without
+/// CoreBluetooth, which the unit tests do with a scripted link. The UI keeps the concrete
+/// `BluetoothManager` for scanning, pairing and the connection state.
+protocol MedtrumLink: AnyObject {
+    /// Receives the statuses the patch pushes. The real link holds it weakly.
+    var pumpManager: MedtrumPumpManager? { get set }
+
+    /// Calls back once the session is usable, or with why it is not
+    func ensureConnected(_ completion: @escaping (MedtrumConnectError?) -> Void)
+
+    /// Sends a command and blocks until its answer arrives or `timeout` passes - which covers the wait for a write
+    /// ahead of it on the link too: not sent, and timed out, if that is not done by then. Nil: no limit on that wait, and
+    /// `PeripheralManager.writeTimeout` for the answer. A late answer is dropped: its sequence byte is no longer the one
+    /// awaited.
+    func write(_ packet: any MedtrumBasePacketProtocol, timeout: TimeInterval?) -> MedtrumWriteResult<Any>
+
+    func disconnect(force: Bool)
+}
+
+extension MedtrumLink {
+    /// Sends a command and blocks until its answer arrives or the write times out
+    func write(_ packet: any MedtrumBasePacketProtocol) -> MedtrumWriteResult<Any> {
+        write(packet, timeout: nil)
+    }
+}
+
+class BluetoothManager: NSObject, CBCentralManagerDelegate, MedtrumLink {
     public weak var pumpManager: MedtrumPumpManager? {
         didSet {
             // The first state report usually arrives before this is set - see `identifierAtLaunch` -
@@ -413,14 +442,14 @@ class BluetoothManager: NSObject, CBCentralManagerDelegate {
         }
     }
 
-    func write(_ packet: any MedtrumBasePacketProtocol) -> MedtrumWriteResult<Any> {
-        // Only the lookup is serialised. writePacket blocks for up to 30s waiting for a response
+    func write(_ packet: any MedtrumBasePacketProtocol, timeout: TimeInterval?) -> MedtrumWriteResult<Any> {
+        // Only the lookup is serialised. writePacket blocks for up to `timeout` waiting for a response
         // that is delivered on managerQueue, so it must not be holding the queue while it waits.
         guard let peripheralManager = managerQueue.sync(execute: { self.peripheralManager }) else {
             return .failure(error: .noManager)
         }
 
-        return peripheralManager.writePacket(packet)
+        return peripheralManager.writePacket(packet, timeout: timeout)
     }
 
     func disconnect(force: Bool = false) {

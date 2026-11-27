@@ -1,4 +1,11 @@
-struct SetBolusResponse {}
+/// The answer carries the record the patch allocated for this bolus and when it started it, on its own clock. Nil
+/// when the answer is too short for them: a bolus is never turned down over what it tells us of its record.
+struct SetBolusResponse {
+    let recordSequence: Int?
+    /// The low two bytes of the patch id, as in a record
+    let patchId: UInt64?
+    let startTime: Date?
+}
 
 class SetBolusPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = SetBolusResponse
@@ -26,6 +33,14 @@ class SetBolusPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     }
 
     func parseResponse() -> SetBolusResponse {
-        SetBolusResponse()
+        guard totalData.count >= 14 else {
+            return SetBolusResponse(recordSequence: nil, patchId: nil, startTime: nil)
+        }
+
+        return SetBolusResponse(
+            recordSequence: Int(totalData.subdata(in: 6 ..< 8).toUInt64()),
+            patchId: totalData.subdata(in: 8 ..< 10).toUInt64(),
+            startTime: Date.fromMedtrumSeconds(totalData.subdata(in: 10 ..< 14).toUInt64())
+        )
     }
 }
